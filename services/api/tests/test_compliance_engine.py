@@ -149,8 +149,8 @@ def test_compliance_conflicting_verified_values_review_required():
 
 def test_compliance_claim_vs_verification_mismatch():
     req = make_requirement(OperatorEnum.GTE, 100000000)
-    facts = [make_fact(150000000)]  # Claimed 15 Cr
-    ver = [make_verification(VerificationStatus.VERIFIED, verified_value=120000000)]  # Verified 12 Cr
+    facts = [make_fact(150000000)]
+    ver = [make_verification(VerificationStatus.VERIFIED, verified_value=120000000)]
     eval_res = ComplianceEngine.evaluate(req, facts, ver)
     assert eval_res.status == ComplianceStatus.REVIEW_REQUIRED
     assert eval_res.reason_code == "CLAIM_VERIFICATION_MISMATCH"
@@ -167,17 +167,6 @@ def test_compliance_date_before():
     assert eval_res_fail.status == ComplianceStatus.FAIL
 
 
-def test_compliance_in_operator():
-    req = make_requirement(OperatorEnum.IN, ["MAHARASHTRA", "DELHI"], field="general.state")
-    facts = [make_fact("MAHARASHTRA", field="general.state")]
-    eval_res = ComplianceEngine.evaluate(req, facts, [])
-    assert eval_res.status == ComplianceStatus.PASS
-
-    facts_not = [make_fact("KARNATAKA", field="general.state")]
-    eval_res_fail = ComplianceEngine.evaluate(req, facts_not, [])
-    assert eval_res_fail.status == ComplianceStatus.FAIL
-
-
 def test_compliance_exists_operator():
     req = make_requirement(OperatorEnum.EXISTS, True, field="certificates.iso9001")
     facts = [make_fact(True, field="certificates.iso9001")]
@@ -188,25 +177,61 @@ def test_compliance_exists_operator():
     assert eval_res_missing.status == ComplianceStatus.FAIL
 
 
-def test_generic_free_text_preserves_case_semantics():
-    # Generic free-text field must preserve case
-    req = make_requirement(OperatorEnum.EQ, "Acme Corporation", field="general.company_name", req_type=RequirementType.CUSTOM)
-    facts_upper = [make_fact("ACME CORPORATION", field="general.company_name")]
-    res = ComplianceEngine.evaluate(req, facts_upper, [])
+def test_gst_requirement_vendor_name_case_sensitivity():
+    # GST requirement with field "vendor.name": "Acme" vs "ACME" -> NOT automatically equal
+    req = make_requirement(OperatorEnum.EQ, "ACME", field="vendor.name", req_type=RequirementType.GST)
+    facts = [make_fact("Acme", field="vendor.name")]
+    res = ComplianceEngine.evaluate(req, facts, [])
     assert res.status == ComplianceStatus.FAIL
     assert res.reason_code == "NOT_EQUAL"
 
-    facts_match = [make_fact("Acme Corporation", field="general.company_name")]
-    res_match = ComplianceEngine.evaluate(req, facts_match, [])
-    assert res_match.status == ComplianceStatus.PASS
 
-
-def test_status_values_remain_case_insensitive_where_intended():
+def test_gst_status_case_insensitivity():
+    # gst.status: "active" vs "ACTIVE" -> equal
     req = make_requirement(OperatorEnum.EQ, "ACTIVE", field="gst.status", req_type=RequirementType.GST)
     facts = [make_fact("active", field="gst.status")]
     res = ComplianceEngine.evaluate(req, facts, [])
     assert res.status == ComplianceStatus.PASS
     assert res.reason_code == "EQUAL"
+
+
+def test_date_eq_valid_equivalent_and_malformed():
+    # Valid equivalent representations -> PASS
+    req_eq = make_requirement(OperatorEnum.EQ, "2026-01-15", field="general.incorporation_date")
+    facts_valid = [make_fact("2026-01-15T00:00:00Z", field="general.incorporation_date")]
+    res_valid = ComplianceEngine.evaluate(req_eq, facts_valid, [])
+    assert res_valid.status == ComplianceStatus.PASS
+
+    # Malformed observed for EQ -> REVIEW_REQUIRED / MALFORMED_DATE
+    facts_malformed = [make_fact("invalid-date", field="general.incorporation_date")]
+    res_malformed_eq = ComplianceEngine.evaluate(req_eq, facts_malformed, [])
+    assert res_malformed_eq.status == ComplianceStatus.REVIEW_REQUIRED
+    assert res_malformed_eq.reason_code == "MALFORMED_DATE"
+
+    # Malformed observed for NE -> REVIEW_REQUIRED / MALFORMED_DATE
+    req_ne = make_requirement(OperatorEnum.NE, "2026-01-15", field="general.incorporation_date")
+    res_malformed_ne = ComplianceEngine.evaluate(req_ne, facts_malformed, [])
+    assert res_malformed_ne.status == ComplianceStatus.REVIEW_REQUIRED
+    assert res_malformed_ne.reason_code == "MALFORMED_DATE"
+
+
+def test_in_and_not_in_field_semantics():
+    # IN on status field remains case-insensitive
+    req_in_status = make_requirement(OperatorEnum.IN, ["ACTIVE", "SUSPENDED"], field="gst.status", req_type=RequirementType.GST)
+    facts_status = [make_fact("active", field="gst.status")]
+    res_in_s = ComplianceEngine.evaluate(req_in_status, facts_status, [])
+    assert res_in_s.status == ComplianceStatus.PASS
+
+    # IN on generic text field preserves case
+    req_in_text = make_requirement(OperatorEnum.IN, ["ACME"], field="vendor.name", req_type=RequirementType.GST)
+    facts_text = [make_fact("Acme", field="vendor.name")]
+    res_in_t = ComplianceEngine.evaluate(req_in_text, facts_text, [])
+    assert res_in_t.status == ComplianceStatus.FAIL
+
+    # NOT_IN on generic text field preserves case
+    req_notin_text = make_requirement(OperatorEnum.NOT_IN, ["ACME"], field="vendor.name", req_type=RequirementType.GST)
+    res_notin_t = ComplianceEngine.evaluate(req_notin_text, facts_text, [])
+    assert res_notin_t.status == ComplianceStatus.PASS
 
 
 def test_type_aware_eq_and_ne_type_conversion_errors():
@@ -232,13 +257,11 @@ def test_type_aware_eq_and_ne_type_conversion_errors():
 def test_strict_structured_value_ambiguity():
     req = make_requirement(OperatorEnum.GTE, 100000000)
 
-    # Ambiguous dict with value + verified_value -> AMBIGUOUS_VERIFIED_VALUE
     ver_ambig = [make_verification(VerificationStatus.VERIFIED, verified_value={"value": 100000000, "verified_value": 90000000})]
     res_ambig = ComplianceEngine.evaluate(req, [make_fact(100000000)], ver_ambig)
     assert res_ambig.status == ComplianceStatus.REVIEW_REQUIRED
     assert res_ambig.reason_code == "AMBIGUOUS_VERIFIED_VALUE"
 
-    # Dict with verified_value + harmless unit metadata -> resolves safely
     ver_safe = [make_verification(VerificationStatus.VERIFIED, verified_value={"verified_value": 150000000, "unit": "INR"})]
     res_safe = ComplianceEngine.evaluate(req, [make_fact(150000000)], ver_safe)
     assert res_safe.status == ComplianceStatus.PASS
@@ -246,24 +269,20 @@ def test_strict_structured_value_ambiguity():
 
 
 def test_count_gte_integer_safety():
-    # Fractional observed -> TYPE_CONVERSION_ERROR
     req = make_requirement(OperatorEnum.COUNT_GTE, 3, field="projects")
     res_frac_obs = ComplianceEngine.evaluate(req, [make_fact(2.5, field="projects")], [])
     assert res_frac_obs.status == ComplianceStatus.REVIEW_REQUIRED
     assert res_frac_obs.reason_code == "TYPE_CONVERSION_ERROR"
 
-    # Negative observed -> TYPE_CONVERSION_ERROR
     res_neg_obs = ComplianceEngine.evaluate(req, [make_fact(-1, field="projects")], [])
     assert res_neg_obs.status == ComplianceStatus.REVIEW_REQUIRED
     assert res_neg_obs.reason_code == "TYPE_CONVERSION_ERROR"
 
-    # Expected negative -> TYPE_CONVERSION_ERROR
     req_neg_exp = make_requirement(OperatorEnum.COUNT_GTE, -3, field="projects")
     res_neg_exp = ComplianceEngine.evaluate(req_neg_exp, [make_fact(3, field="projects")], [])
     assert res_neg_exp.status == ComplianceStatus.REVIEW_REQUIRED
     assert res_neg_exp.reason_code == "TYPE_CONVERSION_ERROR"
 
-    # Expected fractional -> TYPE_CONVERSION_ERROR
     req_frac_exp = make_requirement(OperatorEnum.COUNT_GTE, 1.7, field="projects")
     res_frac_exp = ComplianceEngine.evaluate(req_frac_exp, [make_fact(3, field="projects")], [])
     assert res_frac_exp.status == ComplianceStatus.REVIEW_REQUIRED
@@ -271,25 +290,20 @@ def test_count_gte_integer_safety():
 
 
 def test_actual_bid_verification_service_rollup_precedence():
-    # Test production BidVerificationService.compute_overall_status directly
     class MockEval:
         def __init__(self, status):
             self.status = status
 
-    # empty -> UNKNOWN
     assert BidVerificationService.compute_overall_status([]) == ComplianceStatus.UNKNOWN
 
-    # UNKNOWN beats PASS
     assert BidVerificationService.compute_overall_status([MockEval(ComplianceStatus.PASS), MockEval(ComplianceStatus.UNKNOWN)]) == ComplianceStatus.UNKNOWN
 
-    # REVIEW_REQUIRED beats UNKNOWN
     assert BidVerificationService.compute_overall_status([
         MockEval(ComplianceStatus.PASS),
         MockEval(ComplianceStatus.UNKNOWN),
         MockEval(ComplianceStatus.REVIEW_REQUIRED)
     ]) == ComplianceStatus.REVIEW_REQUIRED
 
-    # FAIL beats REVIEW_REQUIRED
     assert BidVerificationService.compute_overall_status([
         MockEval(ComplianceStatus.PASS),
         MockEval(ComplianceStatus.UNKNOWN),
@@ -312,8 +326,8 @@ def test_numeric_normalization_and_indian_currency():
 
 
 def test_timezone_aware_date_comparison():
-    req = make_requirement(OperatorEnum.DATE_BEFORE, "2026-01-15T12:00:00Z", field="cert.date")
-    facts = [make_fact("2026-01-15T16:00:00+05:30", field="cert.date")]
+    req = make_requirement(OperatorEnum.DATE_BEFORE, "2026-01-15T12:00:00Z", field="general.incorporation_date")
+    facts = [make_fact("2026-01-15T16:00:00+05:30", field="general.incorporation_date")]
     res = ComplianceEngine.evaluate(req, facts, [])
     assert res.status == ComplianceStatus.PASS
 

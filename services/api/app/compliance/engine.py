@@ -23,18 +23,11 @@ class ComplianceEngine:
     """
 
     @staticmethod
-    def _is_status_or_enum_field(field_name: str, requirement_type: Any) -> bool:
+    def _is_status_or_enum_field(field_name: str, requirement_type: Any = None) -> bool:
         """Determines if a field is an enum or status-like field justifying case-insensitivity."""
-        if requirement_type in (
-            RequirementType.GST,
-            RequirementType.UDYAM,
-            RequirementType.EPFO,
-            RequirementType.ESIC,
-            RequirementType.MCA,
-            RequirementType.BLACK_LIST,
-        ):
-            return True
-        f_lower = field_name.lower()
+        if not field_name:
+            return False
+        f_lower = field_name.strip().lower()
         return (
             f_lower.endswith(".status")
             or f_lower.endswith(".state")
@@ -42,8 +35,7 @@ class ComplianceEngine:
             or f_lower.endswith(".mode")
             or f_lower.endswith(".flag")
             or f_lower.endswith(".category")
-            or "status" in f_lower
-            or "mode" in f_lower
+            or f_lower in ("status", "state", "mode", "type", "category", "flag", "debarment.status", "gst.status", "registration.status")
         )
 
     @staticmethod
@@ -467,7 +459,7 @@ class ComplianceEngine:
         is_ci = cls._is_status_or_enum_field(rule.field, rule.requirement_type)
 
         if operator in (OperatorEnum.EQ, OperatorEnum.NE):
-            # Check if expected establishes boolean requirement
+            # 1. Check if expected establishes boolean requirement
             bool_exp = cls._normalize_bool(expected)
             if isinstance(expected, bool) or (
                 bool_exp is not None
@@ -483,7 +475,7 @@ class ComplianceEngine:
                 else:
                     return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
-            # Check if expected establishes numeric requirement
+            # 2. Check if expected establishes numeric requirement
             num_exp = cls._normalize_number(expected)
             if num_exp is not None and not isinstance(expected, bool) and not (
                 isinstance(expected, str) and expected.strip().lower() in ("true", "false", "yes", "no")
@@ -497,7 +489,21 @@ class ComplianceEngine:
                 else:
                     return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
-            # General string / enum comparison
+            # 3. Check if expected establishes date requirement
+            dt_exp = cls._normalize_date(expected)
+            if dt_exp is not None and isinstance(expected, (datetime, str)) and (
+                isinstance(expected, datetime) or "/" in str(expected) or "-" in str(expected) or "date" in rule.field.lower()
+            ):
+                dt_obs = cls._normalize_date(observed)
+                if dt_obs is None:
+                    return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.MALFORMED_DATE
+                match = dt_obs == dt_exp
+                if operator == OperatorEnum.EQ:
+                    return (ComplianceStatus.PASS, ReasonCode.EQUAL) if match else (ComplianceStatus.FAIL, ReasonCode.NOT_EQUAL)
+                else:
+                    return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
+
+            # 4. General string / enum comparison
             match = cls._values_equivalent(observed, expected, case_insensitive=is_ci)
             if operator == OperatorEnum.EQ:
                 return (ComplianceStatus.PASS, ReasonCode.EQUAL) if match else (ComplianceStatus.FAIL, ReasonCode.NOT_EQUAL)
@@ -543,12 +549,12 @@ class ComplianceEngine:
 
         elif operator == OperatorEnum.IN:
             exp_list = expected if isinstance(expected, (list, tuple, set)) else [expected]
-            match = any(cls._values_equivalent(observed, item, case_insensitive=True) for item in exp_list)
+            match = any(cls._values_equivalent(observed, item, case_insensitive=is_ci) for item in exp_list)
             return (ComplianceStatus.PASS, ReasonCode.VALUE_IN_SET) if match else (ComplianceStatus.FAIL, ReasonCode.VALUE_NOT_IN_SET)
 
         elif operator == OperatorEnum.NOT_IN:
             exp_list = expected if isinstance(expected, (list, tuple, set)) else [expected]
-            match = any(cls._values_equivalent(observed, item, case_insensitive=True) for item in exp_list)
+            match = any(cls._values_equivalent(observed, item, case_insensitive=is_ci) for item in exp_list)
             return (ComplianceStatus.PASS, ReasonCode.VALUE_NOT_IN_SET) if not match else (ComplianceStatus.FAIL, ReasonCode.VALUE_IN_SET)
 
         return ComplianceStatus.UNKNOWN, ReasonCode.UNSUPPORTED_OPERATOR
