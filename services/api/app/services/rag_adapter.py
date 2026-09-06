@@ -16,19 +16,15 @@ class RAGServiceAdapter:
     async def retrieve(self, request: RAGQueryRequest) -> RAGQueryResponse:
         now = datetime.now(timezone.utc)
 
-        url = settings.ARGUS_INTELLIGENCE_RAG_URL or (
-            f"{settings.ARGUS_INTELLIGENCE_BASE_URL.rstrip('/')}/rag-query"
-            if settings.ARGUS_INTELLIGENCE_BASE_URL
-            else None
-        )
+        url = settings.ARGUS_INTELLIGENCE_RAG_URL
 
-        if not url:
+        if not url or not url.strip():
             return RAGQueryResponse(
                 query=request.query,
                 results=[],
                 retrieved_at=now,
                 error_code="RAG_SERVICE_UNAVAILABLE",
-                error_message="ARGUS RAG intelligence service is unconfigured or unavailable.",
+                error_message="ARGUS RAG intelligence service URL is unconfigured or unavailable.",
             )
 
         headers: dict[str, str] = {
@@ -49,7 +45,31 @@ class RAGServiceAdapter:
                     json=request.model_dump(mode="json"),
                 )
 
-                if resp.status_code in (404, 500, 502, 503, 504):
+                if resp.status_code == 400:
+                    return RAGQueryResponse(
+                        query=request.query,
+                        results=[],
+                        retrieved_at=now,
+                        error_code="RAG_SERVICE_REQUEST_REJECTED",
+                        error_message="RAG service rejected the request (HTTP 400).",
+                    )
+                elif resp.status_code in (401, 403):
+                    return RAGQueryResponse(
+                        query=request.query,
+                        results=[],
+                        retrieved_at=now,
+                        error_code="RAG_SERVICE_AUTH_ERROR",
+                        error_message=f"RAG service authentication error (HTTP {resp.status_code}).",
+                    )
+                elif resp.status_code == 404:
+                    return RAGQueryResponse(
+                        query=request.query,
+                        results=[],
+                        retrieved_at=now,
+                        error_code="RAG_SERVICE_ENDPOINT_NOT_FOUND",
+                        error_message="RAG service endpoint not found (HTTP 404).",
+                    )
+                elif resp.status_code in (408, 429, 500, 502, 503, 504) or resp.status_code >= 400:
                     return RAGQueryResponse(
                         query=request.query,
                         results=[],
@@ -58,7 +78,6 @@ class RAGServiceAdapter:
                         error_message=f"RAG service HTTP error (status {resp.status_code}).",
                     )
 
-                resp.raise_for_status()
                 try:
                     resp_data = resp.json()
                 except Exception as parse_err:
@@ -68,6 +87,15 @@ class RAGServiceAdapter:
                         retrieved_at=now,
                         error_code="SCHEMA_VALIDATION_FAILED",
                         error_message=f"Failed to parse RAG response JSON: {parse_err}",
+                    )
+
+                if not isinstance(resp_data, dict):
+                    return RAGQueryResponse(
+                        query=request.query,
+                        results=[],
+                        retrieved_at=now,
+                        error_code="SCHEMA_VALIDATION_FAILED",
+                        error_message="RAG service response must be a JSON object.",
                     )
 
                 raw_results = resp_data.get("results")
@@ -108,11 +136,19 @@ class RAGServiceAdapter:
                 error_code="RAG_SERVICE_UNAVAILABLE",
                 error_message=f"RAG service request timed out after {settings.REQUEST_TIMEOUT_SECONDS}s.",
             )
-        except (httpx.RequestError, Exception) as exc:
+        except httpx.RequestError as req_err:
             return RAGQueryResponse(
                 query=request.query,
                 results=[],
                 retrieved_at=now,
                 error_code="RAG_SERVICE_UNAVAILABLE",
-                error_message=f"RAG service transport failure: {exc}",
+                error_message=f"RAG service transport failure: {req_err}",
+            )
+        except Exception as exc:
+            return RAGQueryResponse(
+                query=request.query,
+                results=[],
+                retrieved_at=now,
+                error_code="RAG_SERVICE_UNAVAILABLE",
+                error_message=f"Unexpected internal error: {exc}",
             )

@@ -97,8 +97,26 @@ def health_integrations() -> IntegrationsHealthResponse:
         blacklist=check_service("blacklist"),
         intelligence=IntegrationServiceStatus(
             mode=VerificationMode.LIVE,
-            configured=bool(settings.ARGUS_INTELLIGENCE_BASE_URL and settings.ARGUS_INTELLIGENCE_API_KEY),
-            details="Intelligence gateway connected." if (settings.ARGUS_INTELLIGENCE_BASE_URL and settings.ARGUS_INTELLIGENCE_API_KEY) else "ARGUS intelligence service unconfigured.",
+            configured=bool(
+                (
+                    settings.ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL
+                    or settings.ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL
+                    or settings.ARGUS_INTELLIGENCE_RAG_URL
+                    or settings.ARGUS_INTELLIGENCE_BASE_URL
+                )
+                and settings.ARGUS_INTELLIGENCE_API_KEY
+            ),
+            details="Intelligence gateway connected."
+            if (
+                (
+                    settings.ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL
+                    or settings.ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL
+                    or settings.ARGUS_INTELLIGENCE_RAG_URL
+                    or settings.ARGUS_INTELLIGENCE_BASE_URL
+                )
+                and settings.ARGUS_INTELLIGENCE_API_KEY
+            )
+            else "ARGUS intelligence service unconfigured.",
         ),
     )
 
