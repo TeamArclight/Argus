@@ -80,7 +80,6 @@ class AuthMode(str, Enum):
     BEARER = "BEARER"
     X_API_KEY = "X_API_KEY"
     NONE = "NONE"
-    OAUTH_CLIENT_CREDENTIALS = "OAUTH_CLIENT_CREDENTIALS"
 
 
 class VerificationSource(str, Enum):

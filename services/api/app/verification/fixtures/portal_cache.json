@@ -1,34 +1,6 @@
 {
-  "gst": {
-    "07AAAAA0000A1Z5": {
-      "identifier": "07AAAAA0000A1Z5",
-      "claimed_entity": "Official Portal Verified Enterprise",
-      "verified_entity": "OFFICIAL PORTAL VERIFIED ENTERPRISE PRIVATE LIMITED",
-      "status": "ACTIVE",
-      "taxpayer_type": "REGULAR",
-      "registration_date": "2018-04-12",
-      "state_jurisdiction": "DELHI",
-      "source_portal": "GSTIN Public Search (gst.gov.in)",
-      "verified_at": "2026-03-01T10:00:00Z",
-      "reference": "GST-PORTAL-SNAPSHOT-07AAAAA0000A1Z5",
-      "notes": "Genuine portal snapshot verified against GST portal taxpayer directory"
-    }
-  },
-  "udyam": {
-    "UDYAM-DL-01-0099999": {
-      "identifier": "UDYAM-DL-01-0099999",
-      "claimed_entity": "Official Portal Verified Enterprise",
-      "enterprise_type": "MEDIUM_ENTERPRISE",
-      "major_activity": "SERVICES",
-      "social_category": "GENERAL",
-      "dic_name": "DELHI",
-      "valid": true,
-      "source_portal": "MSME Udyam Registration Portal (udyamregistration.gov.in)",
-      "verified_at": "2026-02-15T14:30:00Z",
-      "reference": "UDYAM-PORTAL-SNAPSHOT-0099999",
-      "notes": "Genuine portal snapshot"
-    }
-  },
+  "gst": {},
+  "udyam": {},
   "mca": {},
   "epfo": {},
   "esic": {},

@@ -169,6 +169,15 @@ async def test_live_provider_timeout(monkeypatch):
 @pytest.mark.asyncio
 async def test_portal_cached_provider_found_record():
     provider = PortalCachedProvider("gst", VerificationSource.GST_PORTAL_VERIFIED_CACHE)
+    provider._cache_data = {
+        "07AAAAA0000A1Z5": {
+            "identifier": "07AAAAA0000A1Z5",
+            "claimed_entity": "Official Portal Verified Enterprise",
+            "verified_entity": "OFFICIAL PORTAL VERIFIED ENTERPRISE PRIVATE LIMITED",
+            "status": "ACTIVE",
+            "reference": "GST-PORTAL-SNAPSHOT-07AAAAA0000A1Z5",
+        }
+    }
     res = await provider.verify(
         {"id": "B1", "bidder_name": "Official Portal Verified Enterprise", "gstin": "07AAAAA0000A1Z5"},
         "general.gstin",

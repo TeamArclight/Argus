@@ -42,8 +42,6 @@ class LiveHTTPClient:
                 headers["Authorization"] = f"Bearer {api_key}"
             elif auth_mode == AuthMode.X_API_KEY:
                 headers["X-API-Key"] = api_key
-            elif auth_mode == AuthMode.OAUTH_CLIENT_CREDENTIALS:
-                headers["Authorization"] = f"Bearer {api_key}"
             # AuthMode.NONE sends no auth headers
 
         timeout = httpx.Timeout(timeout_seconds)
