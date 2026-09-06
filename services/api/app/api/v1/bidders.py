@@ -1,16 +1,18 @@
 from datetime import datetime, timezone
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from app.audit.logger import AuditLogger
 from app.db.session import get_db
 from app.models.domain import (
     AuditEvent,
     Bidder,
+    ComplianceRun,
     Document,
     ExtractedFact,
     HumanDecision,
     ProcessingJob,
+    RiskSignal,
     RuleEvaluation,
     Tender,
     TenderRequirement,
@@ -20,6 +22,10 @@ from app.schemas.canonical import (
     BidderCreate,
     BidderRead,
     ComplianceOverviewRead,
+    ComplianceRunDetailRead,
+    ComplianceRunRead,
+    ComplianceRunSummaryRead,
+    ComplianceStatus,
     DocumentCreate,
     EvidenceRead,
     HumanDecisionCreate,
@@ -29,7 +35,9 @@ from app.schemas.canonical import (
     JobStage,
     JobStatus,
     ReportRead,
-
+    RiskSignalRead,
+    RuleEvaluationRead,
+    VerificationResultRead,
 )
 from app.services.ai_adapter import AIServiceAdapter
 from app.services.bid_verification_service import BidVerificationService
@@ -148,31 +156,136 @@ async def get_bidder_compliance(id: str, db: Session = Depends(get_db)):
 
     service = BidVerificationService(db)
 
-    # If no rule evaluations exist yet, trigger workflow on demand
-    evals_exist = db.query(RuleEvaluation).filter(RuleEvaluation.bidder_id == id).count()
-    if evals_exist == 0:
-        return await service.run_verification_workflow(bidder_id=id)
+    # Find latest successfully COMPLETED ComplianceRun
+    latest_run = (
+        db.query(ComplianceRun)
+        .filter(
+            ComplianceRun.bidder_id == id,
+            ComplianceRun.execution_status == JobStatus.COMPLETED,
+        )
+        .order_by(
+            ComplianceRun.completed_at.desc(),
+            ComplianceRun.created_at.desc(),
+            ComplianceRun.id.desc(),
+        )
+        .first()
+    )
 
-    # Reconstruct from DB state
-    evaluations_db = db.query(RuleEvaluation).filter(RuleEvaluation.bidder_id == id).all()
-    risk_db = db.query(Bidder).filter(Bidder.id == id).first().risk_signals
     latest_decision_db = (
         db.query(HumanDecision)
         .filter(HumanDecision.bidder_id == id)
         .order_by(HumanDecision.decided_at.desc())
         .first()
     )
+    latest_decision_schema = HumanDecisionRead.model_validate(latest_decision_db) if latest_decision_db else None
 
-    overall_status = service.compute_overall_status(evaluations_db)
+    # NO side effect: If no completed ComplianceRun exists, return UNKNOWN without silently running verification
+    if not latest_run:
+        return ComplianceOverviewRead(
+            bidder_id=id,
+            tender_id=bidder.tender_id,
+            overall_status=ComplianceStatus.UNKNOWN,
+            human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
+            rule_evaluations=[],
+            risk_signals=[],
+            latest_decision=latest_decision_schema,
+        )
+
+    # Reconstruct overview using evaluations and risk signals scoped strictly to latest_run.id
+    evaluations_db = (
+        db.query(RuleEvaluation)
+        .filter(RuleEvaluation.run_id == latest_run.id)
+        .all()
+    )
+    evaluations_schema = [RuleEvaluationRead.model_validate(e) for e in evaluations_db]
+
+    risk_db = (
+        db.query(RiskSignal)
+        .filter(RiskSignal.run_id == latest_run.id)
+        .all()
+    )
+    risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
+
+    overall_status = latest_run.overall_status or service.compute_overall_status(evaluations_db)
 
     return ComplianceOverviewRead(
         bidder_id=id,
         tender_id=bidder.tender_id,
         overall_status=overall_status,
         human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
-        rule_evaluations=evaluations_db,
-        risk_signals=risk_db,
-        latest_decision=HumanDecisionRead.model_validate(latest_decision_db) if latest_decision_db else None,
+        rule_evaluations=evaluations_schema,
+        risk_signals=risk_schema,
+        latest_decision=latest_decision_schema,
+    )
+
+
+@router.get("/bidders/{bidder_id}/runs", response_model=list[ComplianceRunSummaryRead])
+def list_bidder_compliance_runs(bidder_id: str, db: Session = Depends(get_db)):
+    bidder = db.query(Bidder).filter(Bidder.id == bidder_id).first()
+    if not bidder:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bidder with ID {bidder_id} not found.",
+        )
+
+    runs = (
+        db.query(ComplianceRun)
+        .filter(ComplianceRun.bidder_id == bidder_id)
+        .order_by(ComplianceRun.created_at.desc(), ComplianceRun.id.desc())
+        .all()
+    )
+
+    summaries = []
+    for r in runs:
+        eval_cnt = r.summary_json.get("evaluation_count") if r.summary_json else None
+        if eval_cnt is None:
+            eval_cnt = db.query(RuleEvaluation).filter(RuleEvaluation.run_id == r.id).count()
+        risk_cnt = r.summary_json.get("risk_count") if r.summary_json else None
+        if risk_cnt is None:
+            risk_cnt = db.query(RiskSignal).filter(RiskSignal.run_id == r.id).count()
+
+        summaries.append(
+            ComplianceRunSummaryRead(
+                id=r.id,
+                bidder_id=r.bidder_id,
+                tender_id=r.tender_id,
+                job_id=r.job_id,
+                execution_status=r.execution_status,
+                overall_status=r.overall_status,
+                started_at=r.started_at,
+                completed_at=r.completed_at,
+                evaluation_count=eval_cnt,
+                risk_count=risk_cnt,
+            )
+        )
+    return summaries
+
+
+@router.get("/bidders/{bidder_id}/runs/{run_id}", response_model=ComplianceRunDetailRead)
+def get_bidder_compliance_run_detail(bidder_id: str, run_id: str, db: Session = Depends(get_db)):
+    bidder = db.query(Bidder).filter(Bidder.id == bidder_id).first()
+    if not bidder:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bidder with ID {bidder_id} not found.",
+        )
+
+    run = db.query(ComplianceRun).filter(ComplianceRun.id == run_id).first()
+    if not run or run.bidder_id != bidder_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Compliance run {run_id} not found for bidder {bidder_id}.",
+        )
+
+    verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == run_id).all()
+    evaluations_db = db.query(RuleEvaluation).filter(RuleEvaluation.run_id == run_id).all()
+    risk_db = db.query(RiskSignal).filter(RiskSignal.run_id == run_id).all()
+
+    return ComplianceRunDetailRead(
+        run=ComplianceRunRead.model_validate(run),
+        verification_results=[VerificationResultRead.model_validate(v) for v in verifications_db],
+        rule_evaluations=[RuleEvaluationRead.model_validate(e) for e in evaluations_db],
+        risk_signals=[RiskSignalRead.model_validate(r) for r in risk_db],
     )
 
 
@@ -195,7 +308,6 @@ def record_human_decision(id: str, payload: HumanDecisionCreate, db: Session = D
     )
     db.add(decision)
 
-    # Update bidder master human decision status
     bidder.status = payload.status
     db.commit()
     db.refresh(decision)
@@ -217,7 +329,7 @@ def record_human_decision(id: str, payload: HumanDecisionCreate, db: Session = D
 
 
 @router.get("/bidders/{id}/report", response_model=ReportRead)
-async def get_bidder_report(id: str, db: Session = Depends(get_db)):
+async def get_bidder_report(id: str, run_id: str | None = Query(None, description="Optional compliance run ID"), db: Session = Depends(get_db)):
     bidder = db.query(Bidder).filter(Bidder.id == id).first()
     if not bidder:
         raise HTTPException(
@@ -225,17 +337,83 @@ async def get_bidder_report(id: str, db: Session = Depends(get_db)):
             detail=f"Bidder with ID {id} not found.",
         )
 
-    compliance_overview = await get_bidder_compliance(id, db)
-    verifications_db = db.query(VerificationResult).filter(VerificationResult.bidder_id == id).all()
+    service = BidVerificationService(db)
+    tender = db.query(Tender).filter(Tender.id == bidder.tender_id).first()
     audit_count = db.query(AuditEvent).filter(AuditEvent.entity_id == id).count()
 
-    tender = db.query(Tender).filter(Tender.id == bidder.tender_id).first()
+    if run_id:
+        target_run = db.query(ComplianceRun).filter(ComplianceRun.id == run_id).first()
+        if not target_run or target_run.bidder_id != id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Compliance run {run_id} not found for bidder {id}.",
+            )
+    else:
+        target_run = (
+            db.query(ComplianceRun)
+            .filter(
+                ComplianceRun.bidder_id == id,
+                ComplianceRun.execution_status == JobStatus.COMPLETED,
+            )
+            .order_by(
+                ComplianceRun.completed_at.desc(),
+                ComplianceRun.created_at.desc(),
+                ComplianceRun.id.desc(),
+            )
+            .first()
+        )
+
+    latest_decision_db = (
+        db.query(HumanDecision)
+        .filter(HumanDecision.bidder_id == id)
+        .order_by(HumanDecision.decided_at.desc())
+        .first()
+    )
+    latest_decision_schema = HumanDecisionRead.model_validate(latest_decision_db) if latest_decision_db else None
+
+    if not target_run:
+        overview = ComplianceOverviewRead(
+            bidder_id=id,
+            tender_id=bidder.tender_id,
+            overall_status=ComplianceStatus.UNKNOWN,
+            human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
+            rule_evaluations=[],
+            risk_signals=[],
+            latest_decision=latest_decision_schema,
+        )
+        return ReportRead(
+            generated_at=datetime.now(timezone.utc),
+            tender=tender,
+            bidder=bidder,
+            compliance_overview=overview,
+            verification_results=[],
+            evidence=[],
+            audit_trail_count=audit_count,
+        )
+
+    evaluations_db = db.query(RuleEvaluation).filter(RuleEvaluation.run_id == target_run.id).all()
+    evaluations_schema = [RuleEvaluationRead.model_validate(e) for e in evaluations_db]
+    risk_db = db.query(RiskSignal).filter(RiskSignal.run_id == target_run.id).all()
+    risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
+    verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == target_run.id).all()
+
+    overall_status = target_run.overall_status or service.compute_overall_status(evaluations_db)
+
+    overview = ComplianceOverviewRead(
+        bidder_id=id,
+        tender_id=bidder.tender_id,
+        overall_status=overall_status,
+        human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
+        rule_evaluations=evaluations_schema,
+        risk_signals=risk_schema,
+        latest_decision=latest_decision_schema,
+    )
 
     return ReportRead(
         generated_at=datetime.now(timezone.utc),
         tender=tender,
         bidder=bidder,
-        compliance_overview=compliance_overview,
+        compliance_overview=overview,
         verification_results=verifications_db,
         evidence=[],
         audit_trail_count=audit_count,

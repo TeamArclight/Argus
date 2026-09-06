@@ -94,10 +94,35 @@ class Bidder(Base):
 
     tender: Mapped["Tender"] = relationship("Tender", back_populates="bidders")
     documents: Mapped[list["Document"]] = relationship("Document", back_populates="bidder", cascade="all, delete-orphan")
+    compliance_runs: Mapped[list["ComplianceRun"]] = relationship("ComplianceRun", back_populates="bidder", cascade="all, delete-orphan")
     verification_results: Mapped[list["VerificationResult"]] = relationship("VerificationResult", back_populates="bidder", cascade="all, delete-orphan")
     rule_evaluations: Mapped[list["RuleEvaluation"]] = relationship("RuleEvaluation", back_populates="bidder", cascade="all, delete-orphan")
     risk_signals: Mapped[list["RiskSignal"]] = relationship("RiskSignal", back_populates="bidder", cascade="all, delete-orphan")
     human_decisions: Mapped[list["HumanDecision"]] = relationship("HumanDecision", back_populates="bidder", cascade="all, delete-orphan")
+
+
+class ComplianceRun(Base):
+    __tablename__ = "compliance_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    bidder_id: Mapped[str] = mapped_column(String, ForeignKey("bidders.id"), nullable=False, index=True)
+    tender_id: Mapped[str] = mapped_column(String, ForeignKey("tenders.id"), nullable=False, index=True)
+    job_id: Mapped[str | None] = mapped_column(String, ForeignKey("processing_jobs.id"), nullable=True, index=True)
+    execution_status: Mapped[JobStatus] = mapped_column(String, default=JobStatus.RUNNING, nullable=False)
+    overall_status: Mapped[ComplianceStatus | None] = mapped_column(String, nullable=True)
+    triggered_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False, index=True)
+    rule_version: Mapped[str | None] = mapped_column(String, default="1.0", nullable=True)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    bidder: Mapped["Bidder"] = relationship("Bidder", back_populates="compliance_runs")
+    tender: Mapped["Tender"] = relationship("Tender")
+    job: Mapped["ProcessingJob | None"] = relationship("ProcessingJob")
+    verification_results: Mapped[list["VerificationResult"]] = relationship("VerificationResult", back_populates="compliance_run", cascade="all, delete-orphan")
+    rule_evaluations: Mapped[list["RuleEvaluation"]] = relationship("RuleEvaluation", back_populates="compliance_run", cascade="all, delete-orphan")
+    risk_signals: Mapped[list["RiskSignal"]] = relationship("RiskSignal", back_populates="compliance_run", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -137,6 +162,7 @@ class VerificationResult(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     bidder_id: Mapped[str] = mapped_column(String, ForeignKey("bidders.id"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String, ForeignKey("compliance_runs.id"), nullable=True, index=True)
     field: Mapped[str] = mapped_column(String, nullable=False, index=True)
     claimed_value: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     verified_value: Mapped[Any | None] = mapped_column(JSON, nullable=True)
@@ -148,6 +174,7 @@ class VerificationResult(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     bidder: Mapped["Bidder"] = relationship("Bidder", back_populates="verification_results")
+    compliance_run: Mapped["ComplianceRun | None"] = relationship("ComplianceRun", back_populates="verification_results")
 
 
 class RuleEvaluation(Base):
@@ -155,6 +182,7 @@ class RuleEvaluation(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     bidder_id: Mapped[str] = mapped_column(String, ForeignKey("bidders.id"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String, ForeignKey("compliance_runs.id"), nullable=True, index=True)
     requirement_id: Mapped[str] = mapped_column(String, ForeignKey("tender_requirements.id"), nullable=False, index=True)
     status: Mapped[ComplianceStatus] = mapped_column(String, nullable=False)
     reason_code: Mapped[str] = mapped_column(String, nullable=False)
@@ -165,6 +193,7 @@ class RuleEvaluation(Base):
     evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
 
     bidder: Mapped["Bidder"] = relationship("Bidder", back_populates="rule_evaluations")
+    compliance_run: Mapped["ComplianceRun | None"] = relationship("ComplianceRun", back_populates="rule_evaluations")
     requirement: Mapped["TenderRequirement"] = relationship("TenderRequirement", back_populates="rule_evaluations")
 
 
@@ -173,14 +202,16 @@ class RiskSignal(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     bidder_id: Mapped[str] = mapped_column(String, ForeignKey("bidders.id"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String, ForeignKey("compliance_runs.id"), nullable=True, index=True)
     severity: Mapped[RiskSeverity] = mapped_column(String, nullable=False)
     signal_type: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Text] = mapped_column(Text, nullable=False)
     evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
 
     bidder: Mapped["Bidder"] = relationship("Bidder", back_populates="risk_signals")
+    compliance_run: Mapped["ComplianceRun | None"] = relationship("ComplianceRun", back_populates="risk_signals")
 
 
 class Evidence(Base):

@@ -287,6 +287,7 @@ class VerificationResultRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     bidder_id: str
+    run_id: str | None = None
     field: str
     claimed_value: Any | None = None
     verified_value: Any | None = None
@@ -319,6 +320,7 @@ class RuleEvaluationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     bidder_id: str
+    run_id: str | None = None
     requirement_id: str
     status: ComplianceStatus
     reason_code: str
@@ -333,6 +335,7 @@ class RiskSignalRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     bidder_id: str
+    run_id: str | None = None
     severity: RiskSeverity
     signal_type: str
     title: str
@@ -354,6 +357,48 @@ class HumanDecisionRead(HumanDecisionCreate):
     id: str
     bidder_id: str
     decided_at: datetime
+
+
+class ComplianceRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    bidder_id: str
+    tender_id: str
+    job_id: str | None = None
+    execution_status: JobStatus
+    overall_status: ComplianceStatus | None = None
+    triggered_by: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    created_at: datetime
+    rule_version: str | None = "1.0"
+    summary_json: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("summary_json", mode="before")
+    @classmethod
+    def sanitize_summary(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
+
+
+class ComplianceRunSummaryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    bidder_id: str
+    tender_id: str
+    job_id: str | None = None
+    execution_status: JobStatus
+    overall_status: ComplianceStatus | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    evaluation_count: int = 0
+    risk_count: int = 0
+
+
+class ComplianceRunDetailRead(BaseModel):
+    run: ComplianceRunRead
+    verification_results: list[VerificationResultRead] = Field(default_factory=list)
+    rule_evaluations: list[RuleEvaluationRead] = Field(default_factory=list)
+    risk_signals: list[RiskSignalRead] = Field(default_factory=list)
 
 
 class ComplianceOverviewRead(BaseModel):

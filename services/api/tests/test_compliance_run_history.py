@@ -1,0 +1,327 @@
+from datetime import datetime, timezone
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.main import app
+from app.db.session import Base, SessionLocal, engine
+from app.models.domain import (
+    Bidder,
+    ComplianceRun,
+    Document,
+    ExtractedFact,
+    HumanDecisionStatus,
+    JobStatus,
+    RiskSignal,
+    RuleEvaluation,
+    Tender,
+    TenderRequirement,
+    VerificationResult,
+)
+from app.schemas.canonical import (
+    ComplianceStatus,
+    DocumentType,
+    OperatorEnum,
+    RequirementType,
+)
+from app.services.bid_verification_service import BidVerificationService
+
+
+@pytest.fixture(autouse=True)
+def setup_database():
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture
+def db():
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def test_setup(db: Session):
+    """Sets up a test tender, bidder, document, and fact in DB."""
+    tender = Tender(
+        tender_number="TNT-HIST-001",
+        title="History Test Tender",
+        status=JobStatus.COMPLETED,
+    )
+    db.add(tender)
+    db.commit()
+    db.refresh(tender)
+
+    req = TenderRequirement(
+        tender_id=tender.id,
+        clause="1.1",
+        requirement_type=RequirementType.GST,
+        field="general.gstin",
+        operator=OperatorEnum.EXISTS,
+        expected_value=True,
+        mandatory=True,
+    )
+    db.add(req)
+
+    bidder = Bidder(
+        tender_id=tender.id,
+        bidder_name="History Corp",
+        gstin="27ABCDE1234F1Z5",
+        status=HumanDecisionStatus.PENDING,
+        metadata_json={"verification_mode": "demo"},
+    )
+    db.add(bidder)
+    db.commit()
+    db.refresh(bidder)
+
+    doc = Document(
+        bidder_id=bidder.id,
+        document_type=DocumentType.GST_CERT,
+        storage_uri="s3://bucket/gst.pdf",
+        filename="gst.pdf",
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    fact = ExtractedFact(
+        document_id=doc.id,
+        bidder_id=bidder.id,
+        field="general.gstin",
+        value="27ABCDE1234F1Z5",
+    )
+    db.add(fact)
+    db.commit()
+
+    return {"tender": tender, "bidder": bidder, "doc": doc, "fact": fact}
+
+
+@pytest.mark.asyncio
+async def test_get_compliance_no_side_effects(db: Session, test_setup):
+    client = TestClient(app)
+    bidder = test_setup["bidder"]
+
+    # 1. GET /compliance on bidder with no runs
+    res = client.get(f"/api/v1/bidders/{bidder.id}/compliance")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["overall_status"] == "UNKNOWN"
+    assert data["rule_evaluations"] == []
+    assert data["risk_signals"] == []
+
+    # 2. Verify no ComplianceRun was created by GET
+    run_count = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).count()
+    assert run_count == 0
+
+
+@pytest.mark.asyncio
+async def test_multiple_verifications_create_append_only_history(db: Session, test_setup):
+    service = BidVerificationService(db)
+    bidder = test_setup["bidder"]
+
+    # Run 1
+    res1 = await service.run_verification_workflow(bidder_id=bidder.id)
+    runs_1 = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).all()
+    assert len(runs_1) == 1
+    run1 = runs_1[0]
+    assert run1.execution_status == JobStatus.COMPLETED
+    assert run1.overall_status is not None
+
+    ver1 = db.query(VerificationResult).filter(VerificationResult.bidder_id == bidder.id).all()
+    eval1 = db.query(RuleEvaluation).filter(RuleEvaluation.bidder_id == bidder.id).all()
+    assert len(ver1) > 0
+    assert len(eval1) > 0
+    for v in ver1:
+        assert v.run_id == run1.id
+    for e in eval1:
+        assert e.run_id == run1.id
+
+    # Run 2
+    res2 = await service.run_verification_workflow(bidder_id=bidder.id)
+    runs_2 = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).order_by(ComplianceRun.created_at.asc()).all()
+    assert len(runs_2) == 2
+    run2 = runs_2[1]
+    assert run1.id != run2.id
+
+    # Verify run 1 data still exists intact (append-only)
+    ver_run1 = db.query(VerificationResult).filter(VerificationResult.run_id == run1.id).all()
+    ver_run2 = db.query(VerificationResult).filter(VerificationResult.run_id == run2.id).all()
+    assert len(ver_run1) == len(ver1)
+    assert len(ver_run2) > 0
+
+    eval_run1 = db.query(RuleEvaluation).filter(RuleEvaluation.run_id == run1.id).all()
+    eval_run2 = db.query(RuleEvaluation).filter(RuleEvaluation.run_id == run2.id).all()
+    assert len(eval_run1) == len(eval1)
+    assert len(eval_run2) > 0
+
+
+@pytest.mark.asyncio
+async def test_latest_run_semantics_ignores_running_or_failed(db: Session, test_setup):
+    service = BidVerificationService(db)
+    bidder = test_setup["bidder"]
+    client = TestClient(app)
+
+    # 1. Create a COMPLETED run (Run 1)
+    res1 = await service.run_verification_workflow(bidder_id=bidder.id)
+    completed_run = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).first()
+    assert completed_run.execution_status == JobStatus.COMPLETED
+
+    # 2. Manually insert a newer FAILED run (Run 2)
+    failed_run = ComplianceRun(
+        bidder_id=bidder.id,
+        tender_id=test_setup["tender"].id,
+        execution_status=JobStatus.FAILED,
+        overall_status=ComplianceStatus.FAIL,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        summary_json={"error": "Test failure"},
+    )
+    db.add(failed_run)
+    db.commit()
+
+    # 3. Manually insert a newer RUNNING run (Run 3)
+    running_run = ComplianceRun(
+        bidder_id=bidder.id,
+        tender_id=test_setup["tender"].id,
+        execution_status=JobStatus.RUNNING,
+        overall_status=None,
+        started_at=datetime.now(timezone.utc),
+        summary_json={},
+    )
+    db.add(running_run)
+    db.commit()
+
+    # GET /bidders/{id}/compliance must pick completed_run, ignoring FAILED and RUNNING runs
+    res = client.get(f"/api/v1/bidders/{bidder.id}/compliance")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data["rule_evaluations"]) > 0
+    assert data["rule_evaluations"][0]["run_id"] == completed_run.id
+
+
+@pytest.mark.asyncio
+async def test_history_list_and_detail_endpoints(db: Session, test_setup):
+    service = BidVerificationService(db)
+    bidder = test_setup["bidder"]
+    client = TestClient(app)
+
+    # Execute workflow twice
+    await service.run_verification_workflow(bidder_id=bidder.id)
+    await service.run_verification_workflow(bidder_id=bidder.id)
+
+    # GET /bidders/{bidder_id}/runs
+    res_list = client.get(f"/api/v1/bidders/{bidder.id}/runs")
+    assert res_list.status_code == 200
+    runs = res_list.json()
+    assert len(runs) == 2
+    assert runs[0]["started_at"] >= runs[1]["started_at"]
+
+    target_run_id = runs[0]["id"]
+
+    # GET /bidders/{bidder_id}/runs/{run_id}
+    res_detail = client.get(f"/api/v1/bidders/{bidder.id}/runs/{target_run_id}")
+    assert res_detail.status_code == 200
+    detail = res_detail.json()
+    assert detail["run"]["id"] == target_run_id
+    assert len(detail["verification_results"]) > 0
+    assert len(detail["rule_evaluations"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_cross_bidder_run_protection(db: Session, test_setup):
+    service = BidVerificationService(db)
+    bidder1 = test_setup["bidder"]
+    client = TestClient(app)
+
+    # Create run for bidder1
+    await service.run_verification_workflow(bidder_id=bidder1.id)
+    run1 = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder1.id).first()
+
+    # Create bidder2
+    bidder2 = Bidder(
+        tender_id=test_setup["tender"].id,
+        bidder_name="Other Corp",
+        status=HumanDecisionStatus.PENDING,
+    )
+    db.add(bidder2)
+    db.commit()
+
+    # Attempt to request bidder1's run using bidder2's endpoint -> 404
+    res_detail = client.get(f"/api/v1/bidders/{bidder2.id}/runs/{run1.id}")
+    assert res_detail.status_code == 404
+
+    # Attempt to request report for bidder2 with bidder1's run_id -> 404
+    res_report = client.get(f"/api/v1/bidders/{bidder2.id}/report?run_id={run1.id}")
+    assert res_report.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_failed_workflow_transaction_safety(db: Session, test_setup, monkeypatch):
+    service = BidVerificationService(db)
+    bidder = test_setup["bidder"]
+
+    # Force adapter failure during verification
+    async def mock_failed_verify(*args, **kwargs):
+        raise RuntimeError("Simulated API Registry Collapse")
+
+    monkeypatch.setattr(service.gst_adapter, "verify", mock_failed_verify)
+
+    with pytest.raises(RuntimeError, match="Simulated API Registry Collapse"):
+        await service.run_verification_workflow(bidder_id=bidder.id)
+
+    # Verify run was preserved with execution_status = FAILED
+    run_db = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).first()
+    assert run_db is not None
+    assert run_db.execution_status == JobStatus.FAILED
+    assert "Simulated API Registry Collapse" in str(run_db.summary_json.get("error"))
+
+
+@pytest.mark.asyncio
+async def test_service_level_duplicate_run_protection(db: Session, test_setup):
+    service = BidVerificationService(db)
+    bidder = test_setup["bidder"]
+
+    # Manually create an active RUNNING run
+    running_run = ComplianceRun(
+        bidder_id=bidder.id,
+        tender_id=test_setup["tender"].id,
+        execution_status=JobStatus.RUNNING,
+        overall_status=None,
+        started_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        summary_json={},
+    )
+    db.add(running_run)
+    db.commit()
+
+    # Invoke run_verification_workflow while RUNNING run exists
+    res = await service.run_verification_workflow(bidder_id=bidder.id)
+    assert res is not None
+
+    # Confirm no duplicate RUNNING run was spawned
+    runs = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).all()
+    assert len(runs) == 1
+    assert runs[0].id == running_run.id
+
+
+@pytest.mark.asyncio
+async def test_review_required_compliance_execution_status(db: Session, test_setup):
+    service = BidVerificationService(db)
+    bidder = test_setup["bidder"]
+
+    # Perform workflow
+    await service.run_verification_workflow(bidder_id=bidder.id)
+
+    # Manually set overall_status to REVIEW_REQUIRED
+    run = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).first()
+    run.overall_status = ComplianceStatus.REVIEW_REQUIRED
+    run.execution_status = JobStatus.COMPLETED
+    db.commit()
+
+    # Verify execution_status remains COMPLETED while overall_status is REVIEW_REQUIRED
+    db.refresh(run)
+    assert run.execution_status == JobStatus.COMPLETED
+    assert run.overall_status == ComplianceStatus.REVIEW_REQUIRED
