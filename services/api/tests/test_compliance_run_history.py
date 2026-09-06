@@ -452,7 +452,18 @@ async def test_api_duplicate_run_and_orphan_job_prevention(db: Session, test_set
     # Confirm stale run was marked FAILED with ORPHANED_ACTIVE_RUN
     db.refresh(stale_run)
     assert stale_run.execution_status == JobStatus.FAILED
+    assert stale_run.completed_at is not None
     assert stale_run.summary_json.get("error_code") == "ORPHANED_ACTIVE_RUN"
+
+    # Confirm audit event was emitted for orphaned run transition
+    orphan_audit = (
+        db.query(AuditEvent)
+        .filter(AuditEvent.entity_id == bidder.id, AuditEvent.action == "VERIFICATION_RUN_ORPHANED")
+        .first()
+    )
+    assert orphan_audit is not None
+    assert orphan_audit.payload_json.get("run_id") == stale_run.id
+    assert orphan_audit.payload_json.get("error_code") == "ORPHANED_ACTIVE_RUN"
 
     # Confirm a single new active job and completed run were created cleanly
     jobs = db.query(ProcessingJob).filter(ProcessingJob.target_id == bidder.id).all()
@@ -464,3 +475,50 @@ async def test_api_duplicate_run_and_orphan_job_prevention(db: Session, test_set
     new_run = [r for r in runs if r.id != stale_run.id][0]
     assert new_run.execution_status == JobStatus.COMPLETED
     assert new_run.job_id == job_data["id"]
+
+
+@pytest.mark.asyncio
+async def test_direct_service_orphan_cleanup(db: Session, test_setup):
+    service = BidVerificationService(db)
+    bidder = test_setup["bidder"]
+
+    # 1. Create a RUNNING ComplianceRun with job_id = None
+    stale_run = ComplianceRun(
+        bidder_id=bidder.id,
+        tender_id=test_setup["tender"].id,
+        job_id=None,
+        execution_status=JobStatus.RUNNING,
+        overall_status=None,
+        started_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        summary_json={},
+    )
+    db.add(stale_run)
+    db.commit()
+
+    # 2. Call service.run_verification_workflow directly with job_id = None
+    overview = await service.run_verification_workflow(bidder_id=bidder.id, job_id=None)
+    assert overview is not None
+
+    # 3. Assert old run is marked FAILED with completed_at and ORPHANED_ACTIVE_RUN
+    db.refresh(stale_run)
+    assert stale_run.execution_status == JobStatus.FAILED
+    assert stale_run.completed_at is not None
+    assert stale_run.summary_json.get("error_code") == "ORPHANED_ACTIVE_RUN"
+
+    # 4. Assert a new ComplianceRun was created and completed
+    runs = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).all()
+    assert len(runs) == 2
+    new_run = [r for r in runs if r.id != stale_run.id][0]
+    assert new_run.execution_status == JobStatus.COMPLETED
+
+    # 5. Assert old run has corresponding VERIFICATION_RUN_ORPHANED audit event
+    orphan_audit = (
+        db.query(AuditEvent)
+        .filter(AuditEvent.entity_id == bidder.id, AuditEvent.action == "VERIFICATION_RUN_ORPHANED")
+        .first()
+    )
+    assert orphan_audit is not None
+    assert orphan_audit.payload_json.get("run_id") == stale_run.id
+    assert orphan_audit.payload_json.get("error_code") == "ORPHANED_ACTIVE_RUN"
+

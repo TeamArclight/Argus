@@ -60,6 +60,25 @@ class BidVerificationService:
             return ComplianceStatus.UNKNOWN
         return ComplianceStatus.PASS
 
+    @staticmethod
+    def close_orphaned_run(db: Session, run: ComplianceRun, bidder_id: str) -> None:
+        """Marks a stale RUNNING ComplianceRun as FAILED and emits a safe audit event."""
+        run.execution_status = JobStatus.FAILED
+        run.completed_at = datetime.now(timezone.utc)
+        run.summary_json = {"error_code": "ORPHANED_ACTIVE_RUN"}
+        db.commit()
+
+        AuditLogger.log(
+            db,
+            action="VERIFICATION_RUN_ORPHANED",
+            entity_type="BIDDER",
+            entity_id=bidder_id,
+            payload={
+                "run_id": run.id,
+                "error_code": "ORPHANED_ACTIVE_RUN",
+            },
+        )
+
     def __init__(self, db: Session):
         self.db = db
         self.gst_adapter = GSTVerificationAdapter()
@@ -102,7 +121,13 @@ class BidVerificationService:
                     .first()
                 )
 
-            if active_job or existing_run.job_id == job_id:
+            same_job = (
+                existing_run.job_id is not None
+                and job_id is not None
+                and existing_run.job_id == job_id
+            )
+
+            if active_job or same_job:
                 evals_db = (
                     self.db.query(RuleEvaluation)
                     .filter(RuleEvaluation.run_id == existing_run.id)
@@ -132,11 +157,8 @@ class BidVerificationService:
                     latest_decision=HumanDecisionRead.model_validate(latest_decision_db) if latest_decision_db else None,
                 )
             else:
-                # Stale / orphaned active run without active job -> mark FAILED
-                existing_run.execution_status = JobStatus.FAILED
-                existing_run.completed_at = datetime.now(timezone.utc)
-                existing_run.summary_json = {"error_code": "ORPHANED_ACTIVE_RUN"}
-                self.db.commit()
+                # Stale / orphaned active run without an active job -> mark FAILED and log audit event
+                self.close_orphaned_run(self.db, existing_run, bidder_id)
 
         # Create and commit ComplianceRun immediately before verification begins
         run = ComplianceRun(

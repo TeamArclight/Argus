@@ -135,11 +135,8 @@ async def verify_bidder(id: str, db: Session = Depends(get_db)):
             if active_job:
                 return active_job
 
-        # Stale/orphaned active run without an active job -> mark FAILED
-        existing_run.execution_status = JobStatus.FAILED
-        existing_run.completed_at = datetime.now(timezone.utc)
-        existing_run.summary_json = {"error_code": "ORPHANED_ACTIVE_RUN"}
-        db.commit()
+        # Stale/orphaned active run without an active job -> mark FAILED and log audit event
+        BidVerificationService.close_orphaned_run(db, existing_run, id)
 
     # 2. Check for existing active verification job
     existing_job = (
