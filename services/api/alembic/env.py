@@ -21,11 +21,14 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Set database URL dynamically from application settings if not explicitly configured
+# Set database URL dynamically from application settings if not explicitly configured.
+# Normal CLI and deployment execution uses settings.DATABASE_URL.
+# Explicit Config sqlalchemy.url override is permitted only for programmatic tooling and test suites.
 db_url = config.get_main_option("sqlalchemy.url")
 if not db_url:
     db_url = settings.DATABASE_URL.replace("%", "%%")
     config.set_main_option("sqlalchemy.url", db_url)
+
 
 
 target_metadata = Base.metadata

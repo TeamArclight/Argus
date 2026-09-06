@@ -58,6 +58,22 @@ Roll back the most recent migration step:
 alembic downgrade -1
 ```
 
+> [!WARNING]
+> **DO NOT run `alembic downgrade -1` from the baseline revision on a database that was adopted using `alembic stamp head`.**
+> 
+> The baseline downgrade is destructive and drops the complete ARGUS schema.
+> 
+> For an adopted existing database:
+> - `alembic stamp head` only records migration state in the `alembic_version` table.
+> - It does **NOT** mean Alembic created the tables.
+> - Downgrading below the baseline is **NOT** a safe rollback mechanism.
+> 
+> **Recommended production rollback strategy**:
+> - Restore a database backup/snapshot for baseline adoption failures.
+> - Only use `alembic downgrade -1` for later incremental migrations whose downgrade paths have been explicitly reviewed and tested.
+> - Baseline downgrade is intended strictly for disposable or fresh migration test databases, not adopted production or staging databases.
+
+
 ---
 
 ## 3. Programmatic Execution & Deployment Sequence

@@ -6,8 +6,12 @@ from alembic.config import Config
 from alembic import command
 
 
+from alembic.migration import MigrationContext
+from sqlalchemy import text
+
+
 def test_alembic_migration_upgrade_and_tables():
-    """Smoke test ensuring Alembic can upgrade a fresh database to head and create all required tables."""
+    """Smoke test ensuring Alembic can upgrade a fresh database to head, create all required tables, and track active revision."""
     api_dir = Path(__file__).resolve().parent.parent
     ini_path = api_dir / "alembic.ini"
     test_db_path = api_dir / "test_migration_smoke.db"
@@ -21,6 +25,7 @@ def test_alembic_migration_upgrade_and_tables():
     alembic_cfg.set_main_option("script_location", str(api_dir / "alembic"))
     alembic_cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
+    test_engine = None
     try:
         # Run upgrade head
         command.upgrade(alembic_cfg, "head")
@@ -50,7 +55,15 @@ def test_alembic_migration_upgrade_and_tables():
 
         assert expected_tables.issubset(tables), f"Missing tables: {expected_tables - tables}"
 
+        # Verify Alembic migration context reports expected baseline revision ID
+        with test_engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            current_rev = context.get_current_revision()
+            assert current_rev == "44d5c5ca3f11", f"Unexpected current revision: {current_rev}"
+
     finally:
-        test_engine.dispose()
+        if test_engine is not None:
+            test_engine.dispose()
         if test_db_path.exists():
             test_db_path.unlink()
+
