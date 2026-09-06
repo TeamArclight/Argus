@@ -214,6 +214,14 @@ class TenderRead(TenderCreate):
 # BIDDER & DOCUMENT SCHEMAS
 # ---------------------------------------------------------------------------
 
+class ExtractedFactCreate(BaseModel):
+    field: str = Field(..., description="Canonical fact field key, e.g. 'gstin'")
+    value: Any = Field(..., description="Extracted fact value")
+    source_page: int | None = None
+    source_text: str | None = None
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
 class FactRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -440,6 +448,8 @@ class RAGQueryResponse(BaseModel):
     query: str
     results: list[EvidenceRead] = Field(default_factory=list)
     retrieved_at: datetime
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 class AIServiceResult(BaseModel):

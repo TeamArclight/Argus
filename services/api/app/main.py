@@ -88,6 +88,21 @@ def health_integrations() -> IntegrationsHealthResponse:
             details = "Deterministic SIH demo provider active."
         return IntegrationServiceStatus(mode=mode, configured=configured, details=details)
 
+    intel_caps = []
+    if settings.ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL:
+        intel_caps.append("tender extraction")
+    if settings.ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL:
+        intel_caps.append("document extraction")
+    if settings.ARGUS_INTELLIGENCE_RAG_URL:
+        intel_caps.append("RAG")
+
+    if intel_caps:
+        intel_configured = True
+        intel_details = f"Configured intelligence capabilities: {', '.join(intel_caps)}."
+    else:
+        intel_configured = False
+        intel_details = "ARGUS intelligence endpoints are unconfigured."
+
     return IntegrationsHealthResponse(
         gst=check_service("gst"),
         udyam=check_service("udyam"),
@@ -97,8 +112,8 @@ def health_integrations() -> IntegrationsHealthResponse:
         blacklist=check_service("blacklist"),
         intelligence=IntegrationServiceStatus(
             mode=VerificationMode.LIVE,
-            configured=bool(settings.ARGUS_INTELLIGENCE_BASE_URL and settings.ARGUS_INTELLIGENCE_API_KEY),
-            details="Intelligence gateway connected." if (settings.ARGUS_INTELLIGENCE_BASE_URL and settings.ARGUS_INTELLIGENCE_API_KEY) else "ARGUS intelligence service unconfigured.",
+            configured=intel_configured,
+            details=intel_details,
         ),
     )
 

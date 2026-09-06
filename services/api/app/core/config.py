@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # ARGUS Intelligence Gateway
     ARGUS_INTELLIGENCE_BASE_URL: str | None = None
     ARGUS_INTELLIGENCE_API_KEY: str | None = None
+    ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL: str | None = None
+    ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL: str | None = None
+    ARGUS_INTELLIGENCE_RAG_URL: str | None = None
 
     REQUEST_TIMEOUT_SECONDS: float = 10.0
     RUN_REAL_INTEGRATION_TESTS: bool = False
