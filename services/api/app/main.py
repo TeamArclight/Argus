@@ -9,15 +9,13 @@ from app.api.v1.jobs import router as jobs_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.tenders import router as tenders_router
 from app.core.config import settings
-from app.db.session import Base, engine
 from app.schemas.canonical import IntegrationServiceStatus, IntegrationsHealthResponse, VerificationMode
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure database schema tables exist on application startup
-    Base.metadata.create_all(bind=engine)
     yield
+
 
 
 app = FastAPI(
