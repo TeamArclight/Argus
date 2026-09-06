@@ -65,6 +65,15 @@ class Settings(BaseSettings):
     REQUEST_TIMEOUT_SECONDS: float = 10.0
     RUN_REAL_INTEGRATION_TESTS: bool = False
 
+    # Security & CORS Config
+    CORS_ALLOWED_ORIGINS: str | list[str] = "http://localhost:3000"
+
+    def get_cors_origins(self) -> list[str]:
+        """Returns list of allowed origins parsed from string or list."""
+        if isinstance(self.CORS_ALLOWED_ORIGINS, str):
+            return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
+        return self.CORS_ALLOWED_ORIGINS
+
     def get_mode_for_domain(self, domain: str) -> VerificationMode:
         """Resolves active verification mode for a given domain (e.g. 'gst', 'udyam')."""
         env_attr = f"{domain.upper()}_VERIFICATION_MODE"

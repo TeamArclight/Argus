@@ -103,7 +103,6 @@ class BidVerificationService:
             "udyam_number": bidder.udyam_number,
             "cin": bidder.cin,
             "pan": bidder.pan,
-            "simulated_mode": bidder_meta.get("simulated_mode"),
             "verification_mode": bidder_meta.get("verification_mode"),
         }
 

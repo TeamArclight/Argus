@@ -206,7 +206,7 @@ async def test_portal_cached_provider_missing_record():
 async def test_demo_provider_flagship_alpha():
     adapter = GSTVerificationAdapter()
     res = await adapter.verify(
-        {"id": "B1", "bidder_name": "ALPHA INFOTECH PVT LTD", "gstin": "27AAAAA0000A1Z5", "simulated_mode": "demo"},
+        {"id": "B1", "bidder_name": "ALPHA INFOTECH PVT LTD", "gstin": "27AAAAA0000A1Z5", "verification_mode": "demo"},
         "general.gstin",
     )
 
@@ -220,7 +220,7 @@ async def test_demo_provider_flagship_alpha():
 async def test_demo_provider_flagship_bharat_turnover_mismatch():
     adapter = GSTVerificationAdapter()
     res = await adapter.verify(
-        {"id": "B1", "bidder_name": "BHARAT CYBERNETICS PVT LTD", "simulated_mode": "demo"},
+        {"id": "B1", "bidder_name": "BHARAT CYBERNETICS PVT LTD", "verification_mode": "demo"},
         "financial.average_annual_turnover",
     )
 
@@ -234,7 +234,7 @@ async def test_demo_provider_flagship_bharat_turnover_mismatch():
 async def test_demo_provider_flagship_crest_debarred():
     adapter = GSTVerificationAdapter()
     res = await adapter.verify(
-        {"id": "B1", "bidder_name": "CREST LOGISTICS PVT LTD", "simulated_mode": "demo"},
+        {"id": "B1", "bidder_name": "CREST LOGISTICS PVT LTD", "verification_mode": "demo"},
         "debarment.status",
     )
 
