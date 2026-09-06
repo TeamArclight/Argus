@@ -1,285 +1,146 @@
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-import uuid
 from typing import Any
+from app.core.config import settings
 from app.schemas.canonical import (
+    VerificationMode,
     VerificationResultRead,
     VerificationSource,
-    VerificationStatus,
 )
+from app.verification.providers.base import BaseVerificationProvider
+from app.verification.providers.demo_providers import DemoProvider
+from app.verification.providers.document_providers import DocumentVerificationProvider
+from app.verification.providers.live_providers import GenericLiveProvider
+from app.verification.providers.portal_cached_providers import PortalCachedProvider
 
 
 class BaseVerificationAdapter(ABC):
-    """Abstract base protocol for government registry verification adapters."""
+    """Abstract base adapter delegating verification execution to selected provider."""
 
     @property
     @abstractmethod
-    def source(self) -> VerificationSource:
+    def domain(self) -> str:
         pass
 
+    def resolve_mode(self, bidder_data: dict[str, Any] | None = None) -> VerificationMode:
+        # Check if bidder data specifies a test mode override (case-insensitive)
+        if bidder_data and "verification_mode" in bidder_data and bidder_data["verification_mode"]:
+            val = bidder_data["verification_mode"]
+            if isinstance(val, str):
+                val = val.upper()
+            return VerificationMode(val)
+
+        if bidder_data and "simulated_mode" in bidder_data and bidder_data["simulated_mode"]:
+            return VerificationMode.DEMO
+
+        return settings.get_mode_for_domain(self.domain)
+
     @abstractmethod
+    def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
+        pass
+
     async def verify(
         self, bidder_data: dict[str, Any], field: str
     ) -> VerificationResultRead:
-        pass
+        active_mode = self.resolve_mode(bidder_data)
+        provider = self.get_provider(active_mode)
+        return await provider.verify(bidder_data, field)
 
 
 class GSTVerificationAdapter(BaseVerificationAdapter):
-    """Mock verification adapter for GST registry."""
+    """GST verification adapter selecting provider based on configuration."""
 
     @property
-    def source(self) -> VerificationSource:
-        return VerificationSource.GST_MOCK
+    def domain(self) -> str:
+        return "gst"
 
-    async def verify(
-        self, bidder_data: dict[str, Any], field: str
-    ) -> VerificationResultRead:
-        gstin = bidder_data.get("gstin")
-        simulated_mode = bidder_data.get("simulated_mode", "success")
-        now = datetime.now(timezone.utc)
-        ver_id = str(uuid.uuid4())
-
-        if simulated_mode == "timeout":
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=gstin,
-                verified_value=None,
-                status=VerificationStatus.TIMEOUT,
-                source=self.source,
-                checked_at=now,
-                error_message="GST portal request timed out after 30s",
-            )
-
-        if simulated_mode == "unavailable":
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=gstin,
-                verified_value=None,
-                status=VerificationStatus.UNAVAILABLE,
-                source=self.source,
-                checked_at=now,
-                error_message="GST API endpoint maintenance mode",
-            )
-
-        if not gstin or len(gstin) != 15:
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=gstin,
-                verified_value=None,
-                status=VerificationStatus.UNVERIFIED,
-                source=self.source,
-                checked_at=now,
-                error_message="Invalid GSTIN format provided",
-            )
-
-        if simulated_mode == "mismatch" or gstin.endswith("99"):
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=gstin,
-                verified_value="MISMATCHED_LEGAL_ENTITY",
-                status=VerificationStatus.MISMATCH,
-                source=self.source,
-                checked_at=now,
-                verification_reference=f"GST-REF-{gstin[:5]}",
-                error_message="Claimed GSTIN entity name does not match tax records",
-            )
-
-        # Standard successful verification
-        return VerificationResultRead(
-            id=ver_id,
-            bidder_id=bidder_data.get("id", "UNKNOWN"),
-            field=field,
-            claimed_value=gstin,
-            verified_value={"gstin": gstin, "status": "ACTIVE", "entity": bidder_data.get("bidder_name")},
-            status=VerificationStatus.VERIFIED,
-            source=self.source,
-            checked_at=now,
-            verification_reference=f"GST-REF-{gstin[:6]}",
-        )
+    def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
+        if mode == VerificationMode.LIVE:
+            return GenericLiveProvider("gst", VerificationSource.GST_AUTHORIZED_API, settings.GST_API_BASE_URL, settings.GST_API_KEY)
+        elif mode == VerificationMode.PORTAL_CACHED:
+            return PortalCachedProvider("gst", VerificationSource.GST_PORTAL_VERIFIED_CACHE)
+        else:
+            return DemoProvider("gst", VerificationSource.GST_DEMO_DATA)
 
 
 class UdyamVerificationAdapter(BaseVerificationAdapter):
-    """Mock verification adapter for MSME Udyam portal."""
+    """Udyam MSME verification adapter selecting provider based on configuration."""
 
     @property
-    def source(self) -> VerificationSource:
-        return VerificationSource.UDYAM_MOCK
+    def domain(self) -> str:
+        return "udyam"
 
-    async def verify(
-        self, bidder_data: dict[str, Any], field: str
-    ) -> VerificationResultRead:
-        udyam = bidder_data.get("udyam_number")
-        simulated_mode = bidder_data.get("simulated_mode", "success")
-        now = datetime.now(timezone.utc)
-        ver_id = str(uuid.uuid4())
-
-        if simulated_mode == "unavailable":
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=udyam,
-                verified_value=None,
-                status=VerificationStatus.UNAVAILABLE,
-                source=self.source,
-                checked_at=now,
-                error_message="Udyam portal registration service unavailable",
-            )
-
-        if not udyam:
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=None,
-                verified_value=None,
-                status=VerificationStatus.UNVERIFIED,
-                source=self.source,
-                checked_at=now,
-                error_message="No Udyam registration number provided",
-            )
-
-        if simulated_mode == "mismatch":
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=udyam,
-                verified_value="EXPIRED_CATEGORY",
-                status=VerificationStatus.MISMATCH,
-                source=self.source,
-                checked_at=now,
-                error_message="Udyam registration category lapsed",
-            )
-
-        return VerificationResultRead(
-            id=ver_id,
-            bidder_id=bidder_data.get("id", "UNKNOWN"),
-            field=field,
-            claimed_value=udyam,
-            verified_value={"udyam_number": udyam, "category": "MEDIUM_ENTERPRISE", "valid": True},
-            status=VerificationStatus.VERIFIED,
-            source=self.source,
-            checked_at=now,
-            verification_reference=f"UDYAM-REF-{uuid.uuid4().hex[:6].upper()}",
-        )
+    def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
+        if mode == VerificationMode.LIVE:
+            return GenericLiveProvider("udyam", VerificationSource.UDYAM_AUTHORIZED_API, settings.UDYAM_API_BASE_URL, settings.UDYAM_API_KEY)
+        elif mode == VerificationMode.PORTAL_CACHED:
+            return PortalCachedProvider("udyam", VerificationSource.UDYAM_PORTAL_VERIFIED_CACHE)
+        else:
+            return DemoProvider("udyam", VerificationSource.UDYAM_DEMO_DATA)
 
 
 class MCAVerificationAdapter(BaseVerificationAdapter):
-    """Mock verification adapter for Ministry of Corporate Affairs (MCA)."""
+    """MCA corporate verification adapter selecting provider based on configuration."""
 
     @property
-    def source(self) -> VerificationSource:
-        return VerificationSource.MCA_MOCK
+    def domain(self) -> str:
+        return "mca"
 
-    async def verify(
-        self, bidder_data: dict[str, Any], field: str
-    ) -> VerificationResultRead:
-        cin = bidder_data.get("cin")
-        now = datetime.now(timezone.utc)
-        ver_id = str(uuid.uuid4())
-
-        if not cin:
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=None,
-                verified_value=None,
-                status=VerificationStatus.UNVERIFIED,
-                source=self.source,
-                checked_at=now,
-                error_message="CIN not provided for corporate entity",
-            )
-
-        return VerificationResultRead(
-            id=ver_id,
-            bidder_id=bidder_data.get("id", "UNKNOWN"),
-            field=field,
-            claimed_value=cin,
-            verified_value={"cin": cin, "status": "ACTIVE_COMPANY", "paid_up_capital": 50000000},
-            status=VerificationStatus.VERIFIED,
-            source=self.source,
-            checked_at=now,
-            verification_reference=f"MCA-REF-{cin[:8]}",
-        )
+    def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
+        if mode == VerificationMode.LIVE:
+            return GenericLiveProvider("mca", VerificationSource.MCA_AUTHORIZED_API, settings.MCA_API_BASE_URL, settings.MCA_API_KEY)
+        elif mode == VerificationMode.PORTAL_CACHED:
+            return PortalCachedProvider("mca", VerificationSource.MCA_PUBLIC_MASTER_DATA_CACHE)
+        else:
+            return DemoProvider("mca", VerificationSource.MCA_DEMO_DATA)
 
 
 class EPFOVerificationAdapter(BaseVerificationAdapter):
-    """Mock verification adapter for Employees' Provident Fund Organisation (EPFO)."""
+    """EPFO labor compliance verification adapter selecting provider based on configuration."""
 
     @property
-    def source(self) -> VerificationSource:
-        return VerificationSource.EPFO_MOCK
+    def domain(self) -> str:
+        return "epfo"
 
-    async def verify(
-        self, bidder_data: dict[str, Any], field: str
-    ) -> VerificationResultRead:
-        pan = bidder_data.get("pan")
-        now = datetime.now(timezone.utc)
-        ver_id = str(uuid.uuid4())
+    def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
+        if mode == VerificationMode.LIVE:
+            return GenericLiveProvider("epfo", VerificationSource.EPFO_AUTHORIZED_CHANNEL, settings.EPFO_API_BASE_URL, settings.EPFO_API_KEY)
+        elif mode == VerificationMode.DOCUMENT:
+            return DocumentVerificationProvider("epfo", VerificationSource.EPFO_DOCUMENT_VERIFICATION)
+        elif mode == VerificationMode.PORTAL_CACHED:
+            return PortalCachedProvider("epfo", VerificationSource.EPFO_DOCUMENT_VERIFICATION)
+        else:
+            return DemoProvider("epfo", VerificationSource.EPFO_DEMO_DATA)
 
-        return VerificationResultRead(
-            id=ver_id,
-            bidder_id=bidder_data.get("id", "UNKNOWN"),
-            field=field,
-            claimed_value=pan,
-            verified_value={"active_subscribers": 142, "compliance_status": "REGULAR_PAYER"},
-            status=VerificationStatus.VERIFIED,
-            source=self.source,
-            checked_at=now,
-            verification_reference=f"EPFO-REF-{uuid.uuid4().hex[:6].upper()}",
-        )
+
+class ESICVerificationAdapter(BaseVerificationAdapter):
+    """ESIC labor compliance verification adapter selecting provider based on configuration."""
+
+    @property
+    def domain(self) -> str:
+        return "esic"
+
+    def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
+        if mode == VerificationMode.LIVE:
+            return GenericLiveProvider("esic", VerificationSource.ESIC_AUTHORIZED_CHANNEL, settings.ESIC_API_BASE_URL, settings.ESIC_API_KEY)
+        elif mode == VerificationMode.DOCUMENT:
+            return DocumentVerificationProvider("esic", VerificationSource.ESIC_DOCUMENT_VERIFICATION)
+        elif mode == VerificationMode.PORTAL_CACHED:
+            return PortalCachedProvider("esic", VerificationSource.ESIC_DOCUMENT_VERIFICATION)
+        else:
+            return DemoProvider("esic", VerificationSource.ESIC_DEMO_DATA)
 
 
 class BlacklistVerificationAdapter(BaseVerificationAdapter):
-    """Mock verification adapter for Debarred / Blacklisted Supplier databases."""
+    """Blacklist / Debarment verification adapter selecting provider based on configuration."""
 
     @property
-    def source(self) -> VerificationSource:
-        return VerificationSource.BLACKLIST_MOCK
+    def domain(self) -> str:
+        return "blacklist"
 
-    async def verify(
-        self, bidder_data: dict[str, Any], field: str
-    ) -> VerificationResultRead:
-        bidder_name = bidder_data.get("bidder_name", "")
-        pan = bidder_data.get("pan", "")
-        simulated_mode = bidder_data.get("simulated_mode", "clean")
-        now = datetime.now(timezone.utc)
-        ver_id = str(uuid.uuid4())
-
-        is_blacklisted = (simulated_mode == "blacklisted") or ("MALICIOUS" in bidder_name.upper())
-
-        if is_blacklisted:
-            return VerificationResultRead(
-                id=ver_id,
-                bidder_id=bidder_data.get("id", "UNKNOWN"),
-                field=field,
-                claimed_value=False,
-                verified_value={"blacklisted": True, "reason": "Debarred by CPP Portal until 2027"},
-                status=VerificationStatus.MISMATCH,
-                source=self.source,
-                checked_at=now,
-                verification_reference=f"BLK-ENTRY-{uuid.uuid4().hex[:6].upper()}",
-                error_message="Bidder is listed in Central Public Procurement Debarment Database",
-            )
-
-        return VerificationResultRead(
-            id=ver_id,
-            bidder_id=bidder_data.get("id", "UNKNOWN"),
-            field=field,
-            claimed_value=False,
-            verified_value={"blacklisted": False},
-            status=VerificationStatus.VERIFIED,
-            source=self.source,
-            checked_at=now,
-            verification_reference="BLK-CLEAR",
-        )
+    def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
+        if mode == VerificationMode.LIVE:
+            return GenericLiveProvider("blacklist", VerificationSource.BLACKLIST_AUTHORIZED_SOURCE, settings.BLACKLIST_API_BASE_URL, settings.BLACKLIST_API_KEY)
+        elif mode == VerificationMode.PORTAL_CACHED:
+            return PortalCachedProvider("blacklist", VerificationSource.BLACKLIST_PORTAL_VERIFIED_CACHE)
+        else:
+            return DemoProvider("blacklist", VerificationSource.BLACKLIST_DEMO_DATA)

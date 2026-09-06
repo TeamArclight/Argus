@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, TypeVar
+from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -50,6 +50,7 @@ class RequirementType(str, Enum):
     GST = "GST"
     UDYAM = "UDYAM"
     EPFO = "EPFO"
+    ESIC = "ESIC"
     MCA = "MCA"
     CUSTOM = "CUSTOM"
 
@@ -60,17 +61,51 @@ class DocumentType(str, Enum):
     GST_CERT = "GST_CERT"
     UDYAM_CERT = "UDYAM_CERT"
     EXPERIENCE_CERT = "EXPERIENCE_CERT"
+    EPFO_CHALLAN = "EPFO_CHALLAN"
+    ESIC_CHALLAN = "ESIC_CHALLAN"
     PAN_CERT = "PAN_CERT"
     OTHER = "OTHER"
 
 
+class VerificationMode(str, Enum):
+    """Operational modes for verification data sourcing."""
+    LIVE = "LIVE"
+    PORTAL_CACHED = "PORTAL_CACHED"
+    DEMO = "DEMO"
+    DOCUMENT = "DOCUMENT"
+
+
 class VerificationSource(str, Enum):
-    """Authorized or mock verification data sources."""
-    GST_MOCK = "GST_MOCK"
-    UDYAM_MOCK = "UDYAM_MOCK"
-    MCA_MOCK = "MCA_MOCK"
-    EPFO_MOCK = "EPFO_MOCK"
-    BLACKLIST_MOCK = "BLACKLIST_MOCK"
+    """Truthful provenance sources for registry verifications."""
+    # GST Sources
+    GST_AUTHORIZED_API = "GST_AUTHORIZED_API"
+    GST_PORTAL_VERIFIED_CACHE = "GST_PORTAL_VERIFIED_CACHE"
+    GST_DEMO_DATA = "GST_DEMO_DATA"
+
+    # Udyam Sources
+    UDYAM_AUTHORIZED_API = "UDYAM_AUTHORIZED_API"
+    UDYAM_PORTAL_VERIFIED_CACHE = "UDYAM_PORTAL_VERIFIED_CACHE"
+    UDYAM_DEMO_DATA = "UDYAM_DEMO_DATA"
+
+    # MCA Sources
+    MCA_AUTHORIZED_API = "MCA_AUTHORIZED_API"
+    MCA_PUBLIC_MASTER_DATA_CACHE = "MCA_PUBLIC_MASTER_DATA_CACHE"
+    MCA_DEMO_DATA = "MCA_DEMO_DATA"
+
+    # EPFO Sources
+    EPFO_AUTHORIZED_CHANNEL = "EPFO_AUTHORIZED_CHANNEL"
+    EPFO_DOCUMENT_VERIFICATION = "EPFO_DOCUMENT_VERIFICATION"
+    EPFO_DEMO_DATA = "EPFO_DEMO_DATA"
+
+    # ESIC Sources
+    ESIC_AUTHORIZED_CHANNEL = "ESIC_AUTHORIZED_CHANNEL"
+    ESIC_DOCUMENT_VERIFICATION = "ESIC_DOCUMENT_VERIFICATION"
+    ESIC_DEMO_DATA = "ESIC_DEMO_DATA"
+
+    # Blacklist Sources
+    BLACKLIST_AUTHORIZED_SOURCE = "BLACKLIST_AUTHORIZED_SOURCE"
+    BLACKLIST_PORTAL_VERIFIED_CACHE = "BLACKLIST_PORTAL_VERIFIED_CACHE"
+    BLACKLIST_DEMO_DATA = "BLACKLIST_DEMO_DATA"
 
 
 class VerificationStatus(str, Enum):
@@ -237,6 +272,7 @@ class VerificationResultRead(BaseModel):
     verified_value: Any | None = None
     status: VerificationStatus
     source: VerificationSource
+    mode: VerificationMode = VerificationMode.LIVE
     checked_at: datetime
     verification_reference: str | None = None
     error_message: str | None = None
@@ -357,8 +393,24 @@ class JobRead(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# AI & RAG SERVICE SCHEMAS
+# INTEGRATION STATUS & AI / RAG SCHEMAS
 # ---------------------------------------------------------------------------
+
+class IntegrationServiceStatus(BaseModel):
+    mode: VerificationMode
+    configured: bool
+    details: str | None = None
+
+
+class IntegrationsHealthResponse(BaseModel):
+    gst: IntegrationServiceStatus
+    udyam: IntegrationServiceStatus
+    mca: IntegrationServiceStatus
+    epfo: IntegrationServiceStatus
+    esic: IntegrationServiceStatus
+    blacklist: IntegrationServiceStatus
+    intelligence: IntegrationServiceStatus
+
 
 class RAGQueryRequest(BaseModel):
     query: str

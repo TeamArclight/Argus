@@ -7,7 +7,9 @@ from app.api.v1.evaluations import router as evaluations_router
 from app.api.v1.jobs import router as jobs_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.tenders import router as tenders_router
+from app.core.config import settings
 from app.db.session import Base, engine
+from app.schemas.canonical import IntegrationServiceStatus, IntegrationsHealthResponse, VerificationMode
 
 
 @asynccontextmanager
@@ -35,6 +37,38 @@ app.include_router(rag_router, prefix="/api/v1")
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "argus-api"}
+
+
+@app.get("/health/integrations", response_model=IntegrationsHealthResponse)
+def health_integrations() -> IntegrationsHealthResponse:
+    """Returns operational status and active modes for external verification registries and intelligence services."""
+
+    def check_service(domain: str, base_url: str | None, key: str | None) -> IntegrationServiceStatus:
+        mode = settings.get_mode_for_domain(domain)
+        if mode == VerificationMode.LIVE:
+            configured = bool(base_url and key)
+            details = "Live authorized API gateway configured." if configured else "Live provider unconfigured; missing API base URL or credentials."
+        elif mode in (VerificationMode.PORTAL_CACHED, VerificationMode.DOCUMENT):
+            configured = True
+            details = f"Active {mode.value} provider configured."
+        else:  # DEMO
+            configured = True
+            details = "Deterministic SIH demo provider active."
+        return IntegrationServiceStatus(mode=mode, configured=configured, details=details)
+
+    return IntegrationsHealthResponse(
+        gst=check_service("gst", settings.GST_API_BASE_URL, settings.GST_API_KEY),
+        udyam=check_service("udyam", settings.UDYAM_API_BASE_URL, settings.UDYAM_API_KEY),
+        mca=check_service("mca", settings.MCA_API_BASE_URL, settings.MCA_API_KEY),
+        epfo=check_service("epfo", settings.EPFO_API_BASE_URL, settings.EPFO_API_KEY),
+        esic=check_service("esic", settings.ESIC_API_BASE_URL, settings.ESIC_API_KEY),
+        blacklist=check_service("blacklist", settings.BLACKLIST_API_BASE_URL, settings.BLACKLIST_API_KEY),
+        intelligence=IntegrationServiceStatus(
+            mode=VerificationMode.LIVE,
+            configured=bool(settings.ARGUS_INTELLIGENCE_BASE_URL and settings.ARGUS_INTELLIGENCE_API_KEY),
+            details="Intelligence gateway connected." if (settings.ARGUS_INTELLIGENCE_BASE_URL and settings.ARGUS_INTELLIGENCE_API_KEY) else "ARGUS intelligence service unconfigured.",
+        ),
+    )
 
 
 # Global Machine-Readable Error Handlers

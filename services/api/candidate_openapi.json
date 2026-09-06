@@ -733,6 +733,25 @@
           }
         }
       }
+    },
+    "/health/integrations": {
+      "get": {
+        "summary": "Health Integrations",
+        "description": "Returns operational status and active modes for external verification registries and intelligence services.",
+        "operationId": "health_integrations_health_integrations_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationsHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1039,6 +1058,8 @@
           "GST_CERT",
           "UDYAM_CERT",
           "EXPERIENCE_CERT",
+          "EPFO_CHALLAN",
+          "ESIC_CHALLAN",
           "PAN_CERT",
           "OTHER"
         ],
@@ -1293,6 +1314,70 @@
         ],
         "title": "HumanDecisionStatus",
         "description": "Human procurement officer decision states."
+      },
+      "IntegrationServiceStatus": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/VerificationMode"
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "configured"
+        ],
+        "title": "IntegrationServiceStatus"
+      },
+      "IntegrationsHealthResponse": {
+        "properties": {
+          "gst": {
+            "$ref": "#/components/schemas/IntegrationServiceStatus"
+          },
+          "udyam": {
+            "$ref": "#/components/schemas/IntegrationServiceStatus"
+          },
+          "mca": {
+            "$ref": "#/components/schemas/IntegrationServiceStatus"
+          },
+          "epfo": {
+            "$ref": "#/components/schemas/IntegrationServiceStatus"
+          },
+          "esic": {
+            "$ref": "#/components/schemas/IntegrationServiceStatus"
+          },
+          "blacklist": {
+            "$ref": "#/components/schemas/IntegrationServiceStatus"
+          },
+          "intelligence": {
+            "$ref": "#/components/schemas/IntegrationServiceStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gst",
+          "udyam",
+          "mca",
+          "epfo",
+          "esic",
+          "blacklist",
+          "intelligence"
+        ],
+        "title": "IntegrationsHealthResponse"
       },
       "JobEventRead": {
         "properties": {
@@ -1597,6 +1682,7 @@
           "GST",
           "UDYAM",
           "EPFO",
+          "ESIC",
           "MCA",
           "CUSTOM"
         ],
@@ -2071,6 +2157,17 @@
         ],
         "title": "ValidationError"
       },
+      "VerificationMode": {
+        "type": "string",
+        "enum": [
+          "LIVE",
+          "PORTAL_CACHED",
+          "DEMO",
+          "DOCUMENT"
+        ],
+        "title": "VerificationMode",
+        "description": "Operational modes for verification data sourcing."
+      },
       "VerificationResultRead": {
         "properties": {
           "id": {
@@ -2108,6 +2205,10 @@
           },
           "source": {
             "$ref": "#/components/schemas/VerificationSource"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/VerificationMode",
+            "default": "LIVE"
           },
           "checked_at": {
             "type": "string",
@@ -2151,14 +2252,27 @@
       "VerificationSource": {
         "type": "string",
         "enum": [
-          "GST_MOCK",
-          "UDYAM_MOCK",
-          "MCA_MOCK",
-          "EPFO_MOCK",
-          "BLACKLIST_MOCK"
+          "GST_AUTHORIZED_API",
+          "GST_PORTAL_VERIFIED_CACHE",
+          "GST_DEMO_DATA",
+          "UDYAM_AUTHORIZED_API",
+          "UDYAM_PORTAL_VERIFIED_CACHE",
+          "UDYAM_DEMO_DATA",
+          "MCA_AUTHORIZED_API",
+          "MCA_PUBLIC_MASTER_DATA_CACHE",
+          "MCA_DEMO_DATA",
+          "EPFO_AUTHORIZED_CHANNEL",
+          "EPFO_DOCUMENT_VERIFICATION",
+          "EPFO_DEMO_DATA",
+          "ESIC_AUTHORIZED_CHANNEL",
+          "ESIC_DOCUMENT_VERIFICATION",
+          "ESIC_DEMO_DATA",
+          "BLACKLIST_AUTHORIZED_SOURCE",
+          "BLACKLIST_PORTAL_VERIFIED_CACHE",
+          "BLACKLIST_DEMO_DATA"
         ],
         "title": "VerificationSource",
-        "description": "Authorized or mock verification data sources."
+        "description": "Truthful provenance sources for registry verifications."
       },
       "VerificationStatus": {
         "type": "string",
