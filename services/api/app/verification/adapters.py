@@ -36,7 +36,7 @@ class UnsupportedModeProvider(BaseVerificationProvider):
 
     @property
     def source(self) -> VerificationSource:
-        return getattr(VerificationSource, f"{self.domain.upper()}_DEMO_DATA", VerificationSource.GST_DEMO_DATA)
+        return VerificationSource.SYSTEM_CONFIGURATION_ERROR
 
     async def verify(self, bidder_data: dict[str, Any], field: str) -> VerificationResultRead:
         now = datetime.now(timezone.utc)

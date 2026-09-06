@@ -2269,7 +2269,8 @@
           "ESIC_DEMO_DATA",
           "BLACKLIST_AUTHORIZED_SOURCE",
           "BLACKLIST_PORTAL_VERIFIED_CACHE",
-          "BLACKLIST_DEMO_DATA"
+          "BLACKLIST_DEMO_DATA",
+          "SYSTEM_CONFIGURATION_ERROR"
         ],
         "title": "VerificationSource",
         "description": "Truthful provenance sources for registry verifications."

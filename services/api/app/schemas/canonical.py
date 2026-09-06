@@ -114,6 +114,9 @@ class VerificationSource(str, Enum):
     BLACKLIST_PORTAL_VERIFIED_CACHE = "BLACKLIST_PORTAL_VERIFIED_CACHE"
     BLACKLIST_DEMO_DATA = "BLACKLIST_DEMO_DATA"
 
+    # System / Configuration Sources
+    SYSTEM_CONFIGURATION_ERROR = "SYSTEM_CONFIGURATION_ERROR"
+
 
 class VerificationStatus(str, Enum):
     """External verification outcome status."""

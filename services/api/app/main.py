@@ -53,8 +53,27 @@ def health() -> dict[str, str]:
 def health_integrations() -> IntegrationsHealthResponse:
     """Returns operational status and active modes for external verification registries and intelligence services."""
 
+    supported_modes: dict[str, set[VerificationMode]] = {
+        "gst": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DEMO},
+        "udyam": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DEMO},
+        "mca": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DEMO},
+        "blacklist": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DEMO},
+        "epfo": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DOCUMENT, VerificationMode.DEMO},
+        "esic": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DOCUMENT, VerificationMode.DEMO},
+    }
+
     def check_service(domain: str) -> IntegrationServiceStatus:
         mode = settings.get_mode_for_domain(domain)
+        domain_key = domain.lower()
+        valid_modes = supported_modes.get(domain_key, set())
+
+        if mode not in valid_modes:
+            return IntegrationServiceStatus(
+                mode=mode,
+                configured=False,
+                details=f"{mode.value} mode is unsupported for {domain.upper()}.",
+            )
+
         api_url = getattr(settings, f"{domain.upper()}_API_URL", None) or getattr(settings, f"{domain.upper()}_API_BASE_URL", None)
         api_key = getattr(settings, f"{domain.upper()}_API_KEY", None)
 
