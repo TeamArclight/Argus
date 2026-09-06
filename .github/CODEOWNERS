@@ -1,0 +1,8 @@
+# Replace placeholder handles with actual GitHub usernames.
+/apps/web/ @frontend-owner
+/services/api/ @backend-owner
+/services/intelligence/ @ai-owner
+
+/contracts/ @frontend-owner @backend-owner @ai-owner
+/docs/ @frontend-owner @backend-owner @ai-owner
+/infra/ @backend-owner

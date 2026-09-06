@@ -1,0 +1,10 @@
+{
+  "id": "REQ-001",
+  "clause": "4.2",
+  "type": "MINIMUM_TURNOVER",
+  "operator": ">=",
+  "value": 100000000,
+  "currency": "INR",
+  "source_page": 23,
+  "source_text": "Bidder must have minimum annual turnover of INR 10 crore."
+}
