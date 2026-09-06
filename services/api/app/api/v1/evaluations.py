@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.models.domain import Evidence, ExtractedFact, RuleEvaluation, VerificationResult
+from app.models.domain import Document, Evidence, ExtractedFact, RuleEvaluation, VerificationResult
 from app.schemas.canonical import EvidenceRead
 
 router = APIRouter(prefix="/evaluations", tags=["Evaluations & Evidence"])
@@ -26,18 +26,21 @@ def get_evaluation_evidence(id: str, db: Session = Depends(get_db)):
             evidence_list.append(EvidenceRead.model_validate(evi_db))
             continue
 
-        # Check ExtractedFact table
+        # Check ExtractedFact table and retrieve real Document storage URI
         fact_db = db.query(ExtractedFact).filter(ExtractedFact.id == ev_id).first()
         if fact_db:
+            doc_db = db.query(Document).filter(Document.id == fact_db.document_id).first()
+            real_source_uri = doc_db.storage_uri if doc_db else None
+
             evidence_list.append(
                 EvidenceRead(
                     id=fact_db.id,
                     entity_type="EXTRACTED_FACT",
                     entity_id=fact_db.document_id,
                     snippet=fact_db.source_text or f"Field '{fact_db.field}' value: {fact_db.value}",
-                    source_uri=f"s3://bidders/{fact_db.bidder_id}/docs/{fact_db.document_id}",
+                    source_uri=real_source_uri,
                     page_number=fact_db.source_page,
-                    location_metadata={"confidence": fact_db.confidence},
+                    location_metadata={"confidence": fact_db.confidence, "filename": doc_db.filename if doc_db else None},
                     created_at=fact_db.created_at,
                 )
             )

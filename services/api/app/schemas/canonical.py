@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any, Generic, TypeVar
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +146,12 @@ class TenderCreate(BaseModel):
     budget: float | None = None
     deadline: datetime | None = None
     raw_document_uri: str | None = None
-    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
 
 
 class TenderRead(TenderCreate):
@@ -180,7 +185,12 @@ class DocumentCreate(BaseModel):
     storage_uri: str
     filename: str
     sha256: str | None = None
-    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
 
 
 class DocumentRead(DocumentCreate):
@@ -197,7 +207,12 @@ class BidderCreate(BaseModel):
     udyam_number: str | None = None
     cin: str | None = None
     pan: str | None = None
-    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
 
 
 class BidderRead(BidderCreate):
@@ -235,8 +250,13 @@ class EvidenceRead(BaseModel):
     snippet: str
     source_uri: str | None = None
     page_number: int | None = None
-    location_metadata: dict[str, Any] = Field(default_factory=dict)
+    location_metadata: dict[str, Any] | None = Field(default_factory=dict)
     created_at: datetime
+
+    @field_validator("location_metadata", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
 
 
 class RuleEvaluationRead(BaseModel):
@@ -312,8 +332,13 @@ class JobEventRead(BaseModel):
     status: JobStatus
     progress: int = Field(..., ge=0, le=100)
     message: str
-    payload: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] | None = Field(default_factory=dict)
     timestamp: datetime
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
 
 
 class JobRead(BaseModel):
@@ -338,8 +363,13 @@ class JobRead(BaseModel):
 class RAGQueryRequest(BaseModel):
     query: str
     tender_id: str | None = None
-    filters: dict[str, Any] = Field(default_factory=dict)
+    filters: dict[str, Any] | None = Field(default_factory=dict)
     top_k: int = 5
+
+    @field_validator("filters", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
 
 
 class RAGQueryResponse(BaseModel):

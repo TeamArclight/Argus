@@ -51,9 +51,10 @@ def make_verification(
     status: VerificationStatus,
     verified_value: any = None,
     field: str = "financial.average_annual_turnover",
+    ver_id: str = "VER-001",
 ) -> VerificationResultRead:
     return VerificationResultRead(
-        id="VER-001",
+        id=ver_id,
         bidder_id="BIDDER-001",
         field=field,
         claimed_value=150000000,
@@ -121,6 +122,27 @@ def test_compliance_conflicting_facts_review_required():
     eval_res = ComplianceEngine.evaluate(req, facts, [])
     assert eval_res.status == ComplianceStatus.REVIEW_REQUIRED
     assert eval_res.reason_code == "CONFLICTING_FACTS"
+
+
+def test_compliance_conflicting_verified_values_review_required():
+    req = make_requirement(OperatorEnum.GTE, 100000000)
+    facts = [make_fact(150000000)]
+    ver = [
+        make_verification(VerificationStatus.VERIFIED, verified_value=150000000, ver_id="V1"),
+        make_verification(VerificationStatus.VERIFIED, verified_value=80000000, ver_id="V2"),
+    ]
+    eval_res = ComplianceEngine.evaluate(req, facts, ver)
+    assert eval_res.status == ComplianceStatus.REVIEW_REQUIRED
+    assert eval_res.reason_code == "CONFLICTING_VERIFICATION_RESULTS"
+
+
+def test_compliance_claim_vs_verification_mismatch():
+    req = make_requirement(OperatorEnum.GTE, 100000000)
+    facts = [make_fact(150000000)]  # Claimed 15 Cr
+    ver = [make_verification(VerificationStatus.VERIFIED, verified_value=120000000)]  # Verified 12 Cr
+    eval_res = ComplianceEngine.evaluate(req, facts, ver)
+    assert eval_res.status == ComplianceStatus.REVIEW_REQUIRED
+    assert eval_res.reason_code == "CLAIM_VERIFICATION_MISMATCH"
 
 
 def test_compliance_date_before():

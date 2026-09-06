@@ -46,7 +46,6 @@ class ComplianceEngine:
             if v.status in (VerificationStatus.SERVICE_ERROR, VerificationStatus.UNAVAILABLE, VerificationStatus.TIMEOUT)
         ]
         if unhealthy_verifications:
-            first_err = unhealthy_verifications[0]
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
@@ -60,7 +59,24 @@ class ComplianceEngine:
                 evaluated_at=now,
             )
 
-        # 4. Check for verification mismatches
+        # 4. Check for conflicting verified values across verification results
+        verified_with_val = [v for v in matching_verifications if v.verified_value is not None]
+        unique_verified_strings = list({str(v.verified_value) for v in verified_with_val})
+        if len(unique_verified_strings) > 1:
+            return RuleEvaluationRead(
+                id=eval_id,
+                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule.id,
+                status=ComplianceStatus.REVIEW_REQUIRED,
+                reason_code="CONFLICTING_VERIFICATION_RESULTS",
+                observed_value=[v.verified_value for v in verified_with_val],
+                expected_value=rule.expected_value,
+                evidence_ids=evidence_ids,
+                rule_version="1.0",
+                evaluated_at=now,
+            )
+
+        # 5. Check for explicit verification status MISMATCH
         mismatch_verifications = [
             v for v in matching_verifications if v.status == VerificationStatus.MISMATCH
         ]
@@ -82,61 +98,7 @@ class ComplianceEngine:
                 evaluated_at=now,
             )
 
-        # 5. Handle EXISTS / NOT_EXISTS operators (don't strictly require value presence)
-        if rule.operator == OperatorEnum.EXISTS:
-            status = ComplianceStatus.PASS if matching_facts else (
-                ComplianceStatus.FAIL if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
-            )
-            reason = "EVIDENCE_EXISTS" if status == ComplianceStatus.PASS else "EVIDENCE_MISSING"
-            return RuleEvaluationRead(
-                id=eval_id,
-                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
-                requirement_id=rule.id,
-                status=status,
-                reason_code=reason,
-                observed_value=len(matching_facts) > 0,
-                expected_value=True,
-                evidence_ids=evidence_ids,
-                rule_version="1.0",
-                evaluated_at=now,
-            )
-
-        if rule.operator == OperatorEnum.NOT_EXISTS:
-            status = ComplianceStatus.PASS if not matching_facts else ComplianceStatus.FAIL
-            reason = "EVIDENCE_ABSENT" if status == ComplianceStatus.PASS else "EVIDENCE_PRESENT"
-            return RuleEvaluationRead(
-                id=eval_id,
-                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
-                requirement_id=rule.id,
-                status=status,
-                reason_code=reason,
-                observed_value=len(matching_facts) > 0,
-                expected_value=False,
-                evidence_ids=evidence_ids,
-                rule_version="1.0",
-                evaluated_at=now,
-            )
-
-        # 6. If no matching facts are present for non-existential operators
-        if not matching_facts:
-            # Check if verified value is present in matching_verifications
-            verified_with_val = [v for v in matching_verifications if v.verified_value is not None]
-            if not verified_with_val:
-                status = ComplianceStatus.UNKNOWN if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
-                return RuleEvaluationRead(
-                    id=eval_id,
-                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
-                    requirement_id=rule.id,
-                    status=status,
-                    reason_code="MISSING_EVIDENCE",
-                    observed_value=None,
-                    expected_value=rule.expected_value,
-                    evidence_ids=evidence_ids,
-                    rule_version="1.0",
-                    evaluated_at=now,
-                )
-
-        # 7. Check for conflicting facts across documents
+        # 6. Check for conflicting facts across documents
         unique_claimed_values = list({str(f.value) for f in matching_facts})
         if len(unique_claimed_values) > 1:
             return RuleEvaluationRead(
@@ -152,14 +114,81 @@ class ComplianceEngine:
                 evaluated_at=now,
             )
 
-        # Determine effective value to evaluate (prefer verified value if present, else fact value)
-        observed_val = None
-        if matching_verifications and matching_verifications[0].verified_value is not None:
-            observed_val = matching_verifications[0].verified_value
-        elif matching_facts:
-            observed_val = matching_facts[0].value
+        # 7. Check for claim vs verified value conflict (when both exist and status is VERIFIED)
+        if matching_facts and verified_with_val:
+            claimed_val = matching_facts[0].value
+            verified_val = verified_with_val[0].verified_value
+            if str(claimed_val) != str(verified_val):
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=ComplianceStatus.REVIEW_REQUIRED,
+                    reason_code="CLAIM_VERIFICATION_MISMATCH",
+                    observed_value={"claimed": claimed_val, "verified": verified_val},
+                    expected_value=rule.expected_value,
+                    evidence_ids=evidence_ids,
+                    rule_version="1.0",
+                    evaluated_at=now,
+                )
 
-        # 8. Evaluate operator against observed value and expected value
+        # 8. Handle EXISTS / NOT_EXISTS operators
+        if rule.operator == OperatorEnum.EXISTS:
+            has_evidence = bool(matching_facts or verified_with_val)
+            status = ComplianceStatus.PASS if has_evidence else (
+                ComplianceStatus.FAIL if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
+            )
+            reason = "EVIDENCE_EXISTS" if status == ComplianceStatus.PASS else "EVIDENCE_MISSING"
+            return RuleEvaluationRead(
+                id=eval_id,
+                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule.id,
+                status=status,
+                reason_code=reason,
+                observed_value=has_evidence,
+                expected_value=True,
+                evidence_ids=evidence_ids,
+                rule_version="1.0",
+                evaluated_at=now,
+            )
+
+        if rule.operator == OperatorEnum.NOT_EXISTS:
+            has_evidence = bool(matching_facts or verified_with_val)
+            status = ComplianceStatus.PASS if not has_evidence else ComplianceStatus.FAIL
+            reason = "EVIDENCE_ABSENT" if status == ComplianceStatus.PASS else "EVIDENCE_PRESENT"
+            return RuleEvaluationRead(
+                id=eval_id,
+                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule.id,
+                status=status,
+                reason_code=reason,
+                observed_value=has_evidence,
+                expected_value=False,
+                evidence_ids=evidence_ids,
+                rule_version="1.0",
+                evaluated_at=now,
+            )
+
+        # 9. Handle missing evidence for non-existential operators
+        if not matching_facts and not verified_with_val:
+            status = ComplianceStatus.UNKNOWN if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
+            return RuleEvaluationRead(
+                id=eval_id,
+                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule.id,
+                status=status,
+                reason_code="MISSING_EVIDENCE",
+                observed_value=None,
+                expected_value=rule.expected_value,
+                evidence_ids=evidence_ids,
+                rule_version="1.0",
+                evaluated_at=now,
+            )
+
+        # Determine effective value to evaluate (prefer verified value if present, else fact value)
+        observed_val = verified_with_val[0].verified_value if verified_with_val else matching_facts[0].value
+
+        # 10. Evaluate operator against observed value and expected value
         status, reason_code = cls._evaluate_operator(
             rule.operator, observed_val, rule.expected_value
         )

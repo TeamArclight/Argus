@@ -788,8 +788,15 @@
             "title": "Pan"
           },
           "metadata_json": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Metadata Json"
           }
         },
@@ -850,8 +857,15 @@
             "title": "Pan"
           },
           "metadata_json": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Metadata Json"
           },
           "id": {
@@ -975,8 +989,15 @@
             "title": "Sha256"
           },
           "metadata_json": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Metadata Json"
           },
           "id": {
@@ -1065,8 +1086,15 @@
             "title": "Page Number"
           },
           "location_metadata": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Location Metadata"
           },
           "created_at": {
@@ -1293,8 +1321,15 @@
             "title": "Message"
           },
           "payload": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Payload"
           },
           "timestamp": {
@@ -1459,8 +1494,15 @@
             "title": "Tender Id"
           },
           "filters": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Filters"
           },
           "top_k": {
@@ -1758,8 +1800,15 @@
             "title": "Raw Document Uri"
           },
           "metadata_json": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Metadata Json"
           }
         },
@@ -1838,8 +1887,15 @@
             "title": "Raw Document Uri"
           },
           "metadata_json": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Metadata Json"
           },
           "id": {

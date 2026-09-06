@@ -74,6 +74,9 @@ class BidVerificationService:
                 job.progress = 20
                 self.db.commit()
 
+        # Handle metadata_json = None safely
+        bidder_meta = bidder.metadata_json or {}
+
         AuditLogger.log(
             self.db,
             action="VERIFICATION_STARTED",
@@ -98,7 +101,7 @@ class BidVerificationService:
             "udyam_number": bidder.udyam_number,
             "cin": bidder.cin,
             "pan": bidder.pan,
-            "simulated_mode": bidder.metadata_json.get("simulated_mode", "success"),
+            "simulated_mode": bidder_meta.get("simulated_mode", "success"),
         }
 
         verifications_schema: list[VerificationResultRead] = []
@@ -231,15 +234,19 @@ class BidVerificationService:
             )
             self.db.add(db_r)
 
-        # 5. Compute overall compliance status
-        overall_status = ComplianceStatus.PASS
-        statuses = [e.status for e in evaluations_schema]
-        if ComplianceStatus.FAIL in statuses:
-            overall_status = ComplianceStatus.FAIL
-        elif ComplianceStatus.REVIEW_REQUIRED in statuses:
-            overall_status = ComplianceStatus.REVIEW_REQUIRED
-        elif ComplianceStatus.UNKNOWN in statuses:
+        # 5. Compute overall compliance status (MUST FIX: empty evaluations must NOT produce PASS)
+        if not evaluations_schema:
             overall_status = ComplianceStatus.UNKNOWN
+        else:
+            statuses = [e.status for e in evaluations_schema]
+            if ComplianceStatus.FAIL in statuses:
+                overall_status = ComplianceStatus.FAIL
+            elif ComplianceStatus.REVIEW_REQUIRED in statuses:
+                overall_status = ComplianceStatus.REVIEW_REQUIRED
+            elif ComplianceStatus.UNKNOWN in statuses:
+                overall_status = ComplianceStatus.UNKNOWN
+            else:
+                overall_status = ComplianceStatus.PASS
 
         # 6. Fetch latest human decision if present
         latest_decision_db = (
