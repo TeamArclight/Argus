@@ -149,7 +149,7 @@ class EPFOVerificationAdapter(BaseVerificationAdapter):
         if mode == VerificationMode.LIVE:
             return EPFOLiveProvider(VerificationSource.EPFO_AUTHORIZED_CHANNEL)
         elif mode == VerificationMode.PORTAL_CACHED:
-            return PortalCachedProvider("epfo", VerificationSource.EPFO_DOCUMENT_VERIFICATION)
+            return PortalCachedProvider("epfo", VerificationSource.EPFO_PORTAL_VERIFIED_CACHE)
         elif mode == VerificationMode.DOCUMENT:
             return DocumentVerificationProvider("epfo", VerificationSource.EPFO_DOCUMENT_VERIFICATION)
         elif mode == VerificationMode.DEMO:
@@ -169,7 +169,7 @@ class ESICVerificationAdapter(BaseVerificationAdapter):
         if mode == VerificationMode.LIVE:
             return ESICLiveProvider(VerificationSource.ESIC_AUTHORIZED_CHANNEL)
         elif mode == VerificationMode.PORTAL_CACHED:
-            return PortalCachedProvider("esic", VerificationSource.ESIC_DOCUMENT_VERIFICATION)
+            return PortalCachedProvider("esic", VerificationSource.ESIC_PORTAL_VERIFIED_CACHE)
         elif mode == VerificationMode.DOCUMENT:
             return DocumentVerificationProvider("esic", VerificationSource.ESIC_DOCUMENT_VERIFICATION)
         elif mode == VerificationMode.DEMO:

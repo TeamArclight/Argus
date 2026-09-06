@@ -7,6 +7,7 @@ from app.schemas.canonical import VerificationMode, VerificationSource, Verifica
 from app.verification.adapters import (
     GSTVerificationAdapter,
     EPFOVerificationAdapter,
+    ESICVerificationAdapter,
 )
 
 
@@ -119,3 +120,24 @@ def test_health_domain_mode_support(monkeypatch):
         # UDYAM + DEMO -> configured=true
         assert data["udyam"]["mode"] == "DEMO"
         assert data["udyam"]["configured"] is True
+
+
+def test_epfo_esic_provenance_by_mode():
+    epfo_adapter = EPFOVerificationAdapter()
+    esic_adapter = ESICVerificationAdapter()
+
+    # EPFO PORTAL_CACHED source == EPFO_PORTAL_VERIFIED_CACHE
+    epfo_portal_provider = epfo_adapter.get_provider(VerificationMode.PORTAL_CACHED)
+    assert epfo_portal_provider.source == VerificationSource.EPFO_PORTAL_VERIFIED_CACHE
+
+    # EPFO DOCUMENT source == EPFO_DOCUMENT_VERIFICATION
+    epfo_doc_provider = epfo_adapter.get_provider(VerificationMode.DOCUMENT)
+    assert epfo_doc_provider.source == VerificationSource.EPFO_DOCUMENT_VERIFICATION
+
+    # ESIC PORTAL_CACHED source == ESIC_PORTAL_VERIFIED_CACHE
+    esic_portal_provider = esic_adapter.get_provider(VerificationMode.PORTAL_CACHED)
+    assert esic_portal_provider.source == VerificationSource.ESIC_PORTAL_VERIFIED_CACHE
+
+    # ESIC DOCUMENT source == ESIC_DOCUMENT_VERIFICATION
+    esic_doc_provider = esic_adapter.get_provider(VerificationMode.DOCUMENT)
+    assert esic_doc_provider.source == VerificationSource.ESIC_DOCUMENT_VERIFICATION
