@@ -63,7 +63,46 @@ def test_end_to_end_p0_workflow():
         tender_id = tender["id"]
         assert tender["tender_number"] == "GEM/2026/B/882190"
 
-        # 2. Extract Requirements
+        # 2. Extract Requirements (mock intelligence service response for e2e workflow)
+        from app.schemas.canonical import AIServiceResult, RequirementType, OperatorEnum
+        from app.api.v1.tenders import ai_adapter as tender_ai_adapter
+
+        async def mock_extract_tender(tender_id, document_uri):
+            return AIServiceResult(
+                success=True,
+                data=[
+                    {
+                        "clause": "3.1",
+                        "requirement_type": RequirementType.TURNOVER,
+                        "field": "financial.average_annual_turnover",
+                        "operator": OperatorEnum.GTE,
+                        "expected_value": 100000000,
+                        "unit": "INR",
+                        "mandatory": True,
+                    },
+                    {
+                        "clause": "3.4",
+                        "requirement_type": RequirementType.BLACK_LIST,
+                        "field": "debarment.status",
+                        "operator": OperatorEnum.EQ,
+                        "expected_value": False,
+                        "mandatory": True,
+                    },
+                    {
+                        "clause": "4.1",
+                        "requirement_type": RequirementType.GST,
+                        "field": "general.gstin",
+                        "operator": OperatorEnum.EXISTS,
+                        "expected_value": True,
+                        "mandatory": True,
+                    },
+                ],
+                message="Extracted requirements",
+            )
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(tender_ai_adapter, "extract_tender", mock_extract_tender)
+
         resp = client.post(f"/api/v1/tenders/{tender_id}/process")
         assert resp.status_code == 200
         job = resp.json()

@@ -113,9 +113,25 @@ async def process_tender(id: str, db: Session = Depends(get_db)):
         payload={"job_id": job.id},
     )
 
-    # Extract requirements via AIServiceAdapter
-    doc_uri = tender.raw_document_uri or "s3://tenders/sample_tender.pdf"
-    ai_result = await ai_adapter.extract_tender(tender_id=id, document_uri=doc_uri)
+    # Require real tender raw_document_uri
+    if not tender.raw_document_uri:
+        job.status = JobStatus.FAILED
+        job.error_message = "Missing tender raw_document_uri: cannot process tender without document."
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+        tender.status = JobStatus.FAILED
+        db.commit()
+
+        AuditLogger.log(
+            db,
+            action="TENDER_PROCESSING_FAILED",
+            entity_type="TENDER",
+            entity_id=id,
+            payload={"job_id": job.id, "error_code": "MISSING_TENDER_DOCUMENT"},
+        )
+        return job
+
+    ai_result = await ai_adapter.extract_tender(tender_id=id, document_uri=tender.raw_document_uri)
 
     if not ai_result.success or not ai_result.data:
         job.status = JobStatus.FAILED

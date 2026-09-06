@@ -69,32 +69,6 @@ async def create_bidder(tender_id: str, payload: BidderCreate, db: Session = Dep
         payload={"bidder_name": bidder.bidder_name, "gstin": bidder.gstin},
     )
 
-    # Seed sample bidder documents and facts for P0 demo readiness
-    doc = Document(
-        bidder_id=bidder.id,
-        document_type="TURNOVER_CERT",
-        storage_uri=f"s3://bidders/{bidder.id}/turnover_cert.pdf",
-        filename="turnover_cert.pdf",
-    )
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
-
-    ai_fact_res = await ai_adapter.extract_document(doc.id, doc.storage_uri, bidder.id)
-    if ai_fact_res.success and ai_fact_res.data:
-        for f in ai_fact_res.data:
-            fact = ExtractedFact(
-                document_id=doc.id,
-                bidder_id=bidder.id,
-                field=f["field"],
-                value=f["value"],
-                source_page=f.get("source_page"),
-                source_text=f.get("source_text"),
-                confidence=f.get("confidence", 1.0),
-            )
-            db.add(fact)
-        db.commit()
-
     db.refresh(bidder)
     return bidder
 

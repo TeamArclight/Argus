@@ -440,6 +440,8 @@ class RAGQueryResponse(BaseModel):
     query: str
     results: list[EvidenceRead] = Field(default_factory=list)
     retrieved_at: datetime
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 class AIServiceResult(BaseModel):
