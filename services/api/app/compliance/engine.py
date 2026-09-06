@@ -364,35 +364,109 @@ class ComplianceEngine:
         has_usable_evidence = bool(facts_with_val or verified_with_val)
 
         if rule.operator == OperatorEnum.EXISTS:
-            status = (
-                ComplianceStatus.PASS
-                if has_usable_evidence
-                else (ComplianceStatus.FAIL if rule.mandatory else ComplianceStatus.NOT_APPLICABLE)
-            )
-            reason = ReasonCode.EVIDENCE_EXISTS if status == ComplianceStatus.PASS else ReasonCode.EVIDENCE_MISSING
-            return RuleEvaluationRead(
-                id=eval_id,
-                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
-                requirement_id=rule.id,
-                status=status,
-                reason_code=reason,
-                observed_value=has_usable_evidence,
-                expected_value=True,
-                evidence_ids=evidence_ids,
-                rule_version="1.0",
-                evaluated_at=now,
-            )
+            if has_usable_evidence:
+                raw_obs_val = verified_with_val[0].verified_value if verified_with_val else facts_with_val[0].value
+                resolved_obs_val, _ = cls._resolve_scalar(raw_obs_val)
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=ComplianceStatus.PASS,
+                    reason_code=ReasonCode.EVIDENCE_EXISTS,
+                    observed_value=resolved_obs_val if resolved_obs_val is not None else True,
+                    expected_value=True,
+                    evidence_ids=evidence_ids,
+                    rule_version="1.0",
+                    evaluated_at=now,
+                )
+            else:
+                status = ComplianceStatus.UNKNOWN if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=status,
+                    reason_code=ReasonCode.MISSING_EVIDENCE,
+                    observed_value=None,
+                    expected_value=True,
+                    evidence_ids=evidence_ids,
+                    rule_version="1.0",
+                    evaluated_at=now,
+                )
 
         if rule.operator == OperatorEnum.NOT_EXISTS:
-            status = ComplianceStatus.PASS if not has_usable_evidence else ComplianceStatus.FAIL
-            reason = ReasonCode.EVIDENCE_ABSENT if status == ComplianceStatus.PASS else ReasonCode.EVIDENCE_PRESENT
+            if not has_usable_evidence:
+                status = ComplianceStatus.UNKNOWN if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=status,
+                    reason_code=ReasonCode.MISSING_EVIDENCE,
+                    observed_value=None,
+                    expected_value=False,
+                    evidence_ids=evidence_ids,
+                    rule_version="1.0",
+                    evaluated_at=now,
+                )
+
+            raw_obs_val = verified_with_val[0].verified_value if verified_with_val else facts_with_val[0].value
+            resolved_obs_val, is_unambiguous = cls._resolve_scalar(raw_obs_val)
+
+            if not is_unambiguous:
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=ComplianceStatus.REVIEW_REQUIRED,
+                    reason_code=ReasonCode.AMBIGUOUS_VERIFIED_VALUE,
+                    observed_value=raw_obs_val,
+                    expected_value=False,
+                    evidence_ids=evidence_ids,
+                    rule_version="1.0",
+                    evaluated_at=now,
+                )
+
+            bool_val = cls._normalize_bool(resolved_obs_val)
+            if bool_val is not None:
+                status = ComplianceStatus.PASS if bool_val is False else ComplianceStatus.FAIL
+                reason = ReasonCode.EVIDENCE_ABSENT if status == ComplianceStatus.PASS else ReasonCode.EVIDENCE_PRESENT
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=status,
+                    reason_code=reason,
+                    observed_value=resolved_obs_val,
+                    expected_value=False,
+                    evidence_ids=evidence_ids,
+                    rule_version="1.0",
+                    evaluated_at=now,
+                )
+
+            if isinstance(resolved_obs_val, (list, tuple, set, dict)):
+                status = ComplianceStatus.PASS if len(resolved_obs_val) == 0 else ComplianceStatus.FAIL
+                reason = ReasonCode.EVIDENCE_ABSENT if status == ComplianceStatus.PASS else ReasonCode.EVIDENCE_PRESENT
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=status,
+                    reason_code=reason,
+                    observed_value=resolved_obs_val,
+                    expected_value=False,
+                    evidence_ids=evidence_ids,
+                    rule_version="1.0",
+                    evaluated_at=now,
+                )
+
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
-                status=status,
-                reason_code=reason,
-                observed_value=has_usable_evidence,
+                status=ComplianceStatus.REVIEW_REQUIRED,
+                reason_code=ReasonCode.TYPE_CONVERSION_ERROR,
+                observed_value=resolved_obs_val,
                 expected_value=False,
                 evidence_ids=evidence_ids,
                 rule_version="1.0",

@@ -168,13 +168,72 @@ def test_compliance_date_before():
 
 
 def test_compliance_exists_operator():
-    req = make_requirement(OperatorEnum.EXISTS, True, field="certificates.iso9001")
+    req = make_requirement(OperatorEnum.EXISTS, True, field="certificates.iso9001", mandatory=True)
     facts = [make_fact(True, field="certificates.iso9001")]
     eval_res = ComplianceEngine.evaluate(req, facts, [])
     assert eval_res.status == ComplianceStatus.PASS
+    assert eval_res.reason_code == "EVIDENCE_EXISTS"
 
     eval_res_missing = ComplianceEngine.evaluate(req, [], [])
-    assert eval_res_missing.status == ComplianceStatus.FAIL
+    assert eval_res_missing.status == ComplianceStatus.UNKNOWN
+    assert eval_res_missing.reason_code == "MISSING_EVIDENCE"
+
+
+def test_evidence_absence_safety_exists_and_not_exists():
+    # 1. EXISTS mandatory + no facts/verifications => UNKNOWN / MISSING_EVIDENCE
+    req_exists_mand = make_requirement(OperatorEnum.EXISTS, True, field="cert.iso", mandatory=True)
+    res1 = ComplianceEngine.evaluate(req_exists_mand, [], [])
+    assert res1.status == ComplianceStatus.UNKNOWN
+    assert res1.reason_code == "MISSING_EVIDENCE"
+
+    # 2. EXISTS optional + no evidence => NOT_APPLICABLE / MISSING_EVIDENCE
+    req_exists_opt = make_requirement(OperatorEnum.EXISTS, True, field="cert.iso", mandatory=False)
+    res2 = ComplianceEngine.evaluate(req_exists_opt, [], [])
+    assert res2.status == ComplianceStatus.NOT_APPLICABLE
+    assert res2.reason_code == "MISSING_EVIDENCE"
+
+    # 3. EXISTS + explicit usable value => PASS / EVIDENCE_EXISTS
+    res3 = ComplianceEngine.evaluate(req_exists_mand, [make_fact(True, field="cert.iso")], [])
+    assert res3.status == ComplianceStatus.PASS
+    assert res3.reason_code == "EVIDENCE_EXISTS"
+
+    # 4. NOT_EXISTS mandatory + no evidence => UNKNOWN / MISSING_EVIDENCE
+    req_ne_mand = make_requirement(OperatorEnum.NOT_EXISTS, False, field="debarment.status", mandatory=True)
+    res4 = ComplianceEngine.evaluate(req_ne_mand, [], [])
+    assert res4.status == ComplianceStatus.UNKNOWN
+    assert res4.reason_code == "MISSING_EVIDENCE"
+
+    # 5. NOT_EXISTS optional + no evidence => NOT_APPLICABLE / MISSING_EVIDENCE
+    req_ne_opt = make_requirement(OperatorEnum.NOT_EXISTS, False, field="debarment.status", mandatory=False)
+    res5 = ComplianceEngine.evaluate(req_ne_opt, [], [])
+    assert res5.status == ComplianceStatus.NOT_APPLICABLE
+    assert res5.reason_code == "MISSING_EVIDENCE"
+
+    # 6. NOT_EXISTS + explicit False => PASS / EVIDENCE_ABSENT
+    res6 = ComplianceEngine.evaluate(req_ne_mand, [make_fact(False, field="debarment.status")], [])
+    assert res6.status == ComplianceStatus.PASS
+    assert res6.reason_code == "EVIDENCE_ABSENT"
+
+    # 7. NOT_EXISTS + explicit True => FAIL / EVIDENCE_PRESENT
+    res7 = ComplianceEngine.evaluate(req_ne_mand, [make_fact(True, field="debarment.status")], [])
+    assert res7.status == ComplianceStatus.FAIL
+    assert res7.reason_code == "EVIDENCE_PRESENT"
+
+    # 8. NOT_EXISTS + verification unavailable => UNKNOWN / VERIFICATION_UNAVAILABLE
+    ver_unavail = [make_verification(VerificationStatus.UNAVAILABLE, verified_value=None, field="debarment.status", ver_id="V1")]
+    res8 = ComplianceEngine.evaluate(req_ne_mand, [], ver_unavail)
+    assert res8.status == ComplianceStatus.UNKNOWN
+    assert res8.reason_code == "VERIFICATION_UNAVAILABLE"
+
+    # 9. NOT_EXISTS + malformed/ambiguous value => REVIEW_REQUIRED
+    ver_ambig = [make_verification(VerificationStatus.VERIFIED, verified_value={"v1": 1, "v2": 2}, field="debarment.status", ver_id="V2")]
+    res9a = ComplianceEngine.evaluate(req_ne_mand, [], ver_ambig)
+    assert res9a.status == ComplianceStatus.REVIEW_REQUIRED
+    assert res9a.reason_code == "AMBIGUOUS_VERIFIED_VALUE"
+
+    res9b = ComplianceEngine.evaluate(req_ne_mand, [make_fact("arbitrary_string", field="debarment.status")], [])
+    assert res9b.status == ComplianceStatus.REVIEW_REQUIRED
+    assert res9b.reason_code == "TYPE_CONVERSION_ERROR"
 
 
 def test_gst_requirement_vendor_name_case_sensitivity():
