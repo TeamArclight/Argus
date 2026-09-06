@@ -113,7 +113,35 @@ async def verify_bidder(id: str, db: Session = Depends(get_db)):
             detail=f"Bidder with ID {id} not found.",
         )
 
-    # Check for existing active verification job
+    # 1. Check for an existing RUNNING ComplianceRun for bidder_id
+    existing_run = (
+        db.query(ComplianceRun)
+        .filter(
+            ComplianceRun.bidder_id == id,
+            ComplianceRun.execution_status == JobStatus.RUNNING,
+        )
+        .first()
+    )
+    if existing_run:
+        if existing_run.job_id:
+            active_job = (
+                db.query(ProcessingJob)
+                .filter(
+                    ProcessingJob.id == existing_run.job_id,
+                    ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+                )
+                .first()
+            )
+            if active_job:
+                return active_job
+
+        # Stale/orphaned active run without an active job -> mark FAILED
+        existing_run.execution_status = JobStatus.FAILED
+        existing_run.completed_at = datetime.now(timezone.utc)
+        existing_run.summary_json = {"error_code": "ORPHANED_ACTIVE_RUN"}
+        db.commit()
+
+    # 2. Check for existing active verification job
     existing_job = (
         db.query(ProcessingJob)
         .filter(

@@ -206,7 +206,7 @@ class RiskSignal(Base):
     severity: Mapped[RiskSeverity] = mapped_column(String, nullable=False)
     signal_type: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Text] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
     evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
 

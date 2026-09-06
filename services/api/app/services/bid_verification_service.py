@@ -91,34 +91,52 @@ class BidVerificationService:
             .first()
         )
         if existing_run:
-            evals_db = (
-                self.db.query(RuleEvaluation)
-                .filter(RuleEvaluation.run_id == existing_run.id)
-                .all()
-            )
-            evals_schema = [RuleEvaluationRead.model_validate(e) for e in evals_db]
-            risks_db = (
-                self.db.query(RiskSignal)
-                .filter(RiskSignal.run_id == existing_run.id)
-                .all()
-            )
-            risks_schema = [RiskSignalRead.model_validate(r) for r in risks_db]
-            ov_status = existing_run.overall_status or self.compute_overall_status(evals_schema)
-            latest_decision_db = (
-                self.db.query(HumanDecision)
-                .filter(HumanDecision.bidder_id == bidder_id)
-                .order_by(HumanDecision.decided_at.desc())
-                .first()
-            )
-            return ComplianceOverviewRead(
-                bidder_id=bidder.id,
-                tender_id=tender.id,
-                overall_status=ov_status,
-                human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
-                rule_evaluations=evals_schema,
-                risk_signals=risks_schema,
-                latest_decision=HumanDecisionRead.model_validate(latest_decision_db) if latest_decision_db else None,
-            )
+            active_job = None
+            if existing_run.job_id:
+                active_job = (
+                    self.db.query(ProcessingJob)
+                    .filter(
+                        ProcessingJob.id == existing_run.job_id,
+                        ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+                    )
+                    .first()
+                )
+
+            if active_job or existing_run.job_id == job_id:
+                evals_db = (
+                    self.db.query(RuleEvaluation)
+                    .filter(RuleEvaluation.run_id == existing_run.id)
+                    .all()
+                )
+                evals_schema = [RuleEvaluationRead.model_validate(e) for e in evals_db]
+                risks_db = (
+                    self.db.query(RiskSignal)
+                    .filter(RiskSignal.run_id == existing_run.id)
+                    .all()
+                )
+                risks_schema = [RiskSignalRead.model_validate(r) for r in risks_db]
+                ov_status = existing_run.overall_status or self.compute_overall_status(evals_schema)
+                latest_decision_db = (
+                    self.db.query(HumanDecision)
+                    .filter(HumanDecision.bidder_id == bidder_id)
+                    .order_by(HumanDecision.decided_at.desc())
+                    .first()
+                )
+                return ComplianceOverviewRead(
+                    bidder_id=bidder.id,
+                    tender_id=tender.id,
+                    overall_status=ov_status,
+                    human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
+                    rule_evaluations=evals_schema,
+                    risk_signals=risks_schema,
+                    latest_decision=HumanDecisionRead.model_validate(latest_decision_db) if latest_decision_db else None,
+                )
+            else:
+                # Stale / orphaned active run without active job -> mark FAILED
+                existing_run.execution_status = JobStatus.FAILED
+                existing_run.completed_at = datetime.now(timezone.utc)
+                existing_run.summary_json = {"error_code": "ORPHANED_ACTIVE_RUN"}
+                self.db.commit()
 
         # Create and commit ComplianceRun immediately before verification begins
         run = ComplianceRun(
@@ -370,14 +388,14 @@ class BidVerificationService:
             if run_db:
                 run_db.execution_status = JobStatus.FAILED
                 run_db.completed_at = datetime.now(timezone.utc)
-                run_db.summary_json = {"error": str(e)}
+                run_db.summary_json = {"error_code": "VERIFICATION_WORKFLOW_FAILED"}
                 self.db.commit()
 
             if job_id:
                 job_db = self.db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
                 if job_db:
                     job_db.status = JobStatus.FAILED
-                    job_db.error_message = str(e)
+                    job_db.error_message = "Verification workflow failed."
                     job_db.completed_at = datetime.now(timezone.utc)
                     self.db.commit()
 
@@ -386,6 +404,10 @@ class BidVerificationService:
                 action="VERIFICATION_FAILED",
                 entity_type="BIDDER",
                 entity_id=bidder.id,
-                payload={"error": str(e), "run_id": run.id},
+                payload={
+                    "run_id": run.id,
+                    "error_code": "VERIFICATION_WORKFLOW_FAILED",
+                    "error_type": type(e).__name__,
+                },
             )
-            raise e
+            raise
