@@ -3,6 +3,8 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from app.api.v1.audit import router as audit_router
+from app.api.v1.auth import router as auth_router
 from app.api.v1.bidders import router as bidders_router
 from app.api.v1.evaluations import router as evaluations_router
 from app.api.v1.jobs import router as jobs_router
@@ -35,11 +37,14 @@ app.add_middleware(
 )
 
 # Register API v1 Routers under /api/v1 prefix
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(tenders_router, prefix="/api/v1")
 app.include_router(bidders_router, prefix="/api/v1")
 app.include_router(evaluations_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
+app.include_router(audit_router, prefix="/api/v1")
+
 
 
 @app.get("/health")

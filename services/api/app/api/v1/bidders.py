@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from app.audit.logger import AuditLogger
+from app.auth.dependencies import get_current_principal, require_roles
 from app.db.session import get_db
 from app.models.domain import (
     AuditEvent,
@@ -19,6 +20,7 @@ from app.models.domain import (
     VerificationResult,
 )
 from app.schemas.canonical import (
+    AuthenticatedPrincipal,
     BidderCreate,
     BidderRead,
     ComplianceOverviewRead,
@@ -37,6 +39,7 @@ from app.schemas.canonical import (
     ReportRead,
     RiskSignalRead,
     RuleEvaluationRead,
+    UserRole,
     VerificationResultRead,
 )
 from app.services.ai_adapter import AIServiceAdapter
@@ -47,7 +50,12 @@ ai_adapter = AIServiceAdapter()
 
 
 @router.post("/tenders/{tender_id}/bidders", response_model=BidderRead, status_code=status.HTTP_201_CREATED)
-async def create_bidder(tender_id: str, payload: BidderCreate, db: Session = Depends(get_db)):
+async def create_bidder(
+    tender_id: str,
+    payload: BidderCreate,
+    principal: AuthenticatedPrincipal = Depends(require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)),
+    db: Session = Depends(get_db),
+):
     tender = db.query(Tender).filter(Tender.id == tender_id).first()
     if not tender:
         raise HTTPException(
@@ -74,6 +82,8 @@ async def create_bidder(tender_id: str, payload: BidderCreate, db: Session = Dep
         action="BIDDER_CREATED",
         entity_type="BIDDER",
         entity_id=bidder.id,
+        actor_id=principal.user_id,
+        actor_role=principal.role.value,
         payload={"bidder_name": bidder.bidder_name, "gstin": bidder.gstin},
     )
 
@@ -82,7 +92,11 @@ async def create_bidder(tender_id: str, payload: BidderCreate, db: Session = Dep
 
 
 @router.get("/tenders/{tender_id}/bidders", response_model=list[BidderRead])
-def list_bidders_for_tender(tender_id: str, db: Session = Depends(get_db)):
+def list_bidders_for_tender(
+    tender_id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     tenders = db.query(Tender).filter(Tender.id == tender_id).first()
     if not tenders:
         raise HTTPException(
@@ -94,7 +108,11 @@ def list_bidders_for_tender(tender_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/bidders/{id}", response_model=BidderRead)
-def get_bidder(id: str, db: Session = Depends(get_db)):
+def get_bidder(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     bidder = db.query(Bidder).filter(Bidder.id == id).first()
     if not bidder:
         raise HTTPException(
@@ -105,7 +123,11 @@ def get_bidder(id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/bidders/{id}/verify", response_model=JobRead)
-async def verify_bidder(id: str, db: Session = Depends(get_db)):
+async def verify_bidder(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)),
+    db: Session = Depends(get_db),
+):
     bidder = db.query(Bidder).filter(Bidder.id == id).first()
     if not bidder:
         raise HTTPException(
@@ -164,14 +186,24 @@ async def verify_bidder(id: str, db: Session = Depends(get_db)):
     db.refresh(job)
 
     service = BidVerificationService(db)
-    await service.run_verification_workflow(bidder_id=id, job_id=job.id)
+    await service.run_verification_workflow(
+        bidder_id=id,
+        job_id=job.id,
+        triggered_by=principal.user_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role.value,
+    )
 
     db.refresh(job)
     return job
 
 
 @router.get("/bidders/{id}/compliance", response_model=ComplianceOverviewRead)
-async def get_bidder_compliance(id: str, db: Session = Depends(get_db)):
+async def get_bidder_compliance(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     bidder = db.query(Bidder).filter(Bidder.id == id).first()
     if not bidder:
         raise HTTPException(
@@ -245,7 +277,11 @@ async def get_bidder_compliance(id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/bidders/{bidder_id}/runs", response_model=list[ComplianceRunSummaryRead])
-def list_bidder_compliance_runs(bidder_id: str, db: Session = Depends(get_db)):
+def list_bidder_compliance_runs(
+    bidder_id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     bidder = db.query(Bidder).filter(Bidder.id == bidder_id).first()
     if not bidder:
         raise HTTPException(
@@ -287,7 +323,12 @@ def list_bidder_compliance_runs(bidder_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/bidders/{bidder_id}/runs/{run_id}", response_model=ComplianceRunDetailRead)
-def get_bidder_compliance_run_detail(bidder_id: str, run_id: str, db: Session = Depends(get_db)):
+def get_bidder_compliance_run_detail(
+    bidder_id: str,
+    run_id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     bidder = db.query(Bidder).filter(Bidder.id == bidder_id).first()
     if not bidder:
         raise HTTPException(
@@ -315,7 +356,12 @@ def get_bidder_compliance_run_detail(bidder_id: str, run_id: str, db: Session = 
 
 
 @router.post("/bidders/{id}/decision", response_model=HumanDecisionRead, status_code=status.HTTP_201_CREATED)
-def record_human_decision(id: str, payload: HumanDecisionCreate, db: Session = Depends(get_db)):
+def record_human_decision(
+    id: str,
+    payload: HumanDecisionCreate,
+    principal: AuthenticatedPrincipal = Depends(require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)),
+    db: Session = Depends(get_db),
+):
     bidder = db.query(Bidder).filter(Bidder.id == id).first()
     if not bidder:
         raise HTTPException(
@@ -323,13 +369,16 @@ def record_human_decision(id: str, payload: HumanDecisionCreate, db: Session = D
             detail=f"Bidder with ID {id} not found.",
         )
 
+    officer_id = principal.user_id
+    officer_name = principal.name or principal.user_id
+
     decision = HumanDecision(
         bidder_id=id,
         status=payload.status,
         reason_code=payload.reason_code,
         remarks=payload.remarks,
-        officer_id=payload.officer_id,
-        officer_name=payload.officer_name,
+        officer_id=officer_id,
+        officer_name=officer_name,
     )
     db.add(decision)
 
@@ -342,19 +391,24 @@ def record_human_decision(id: str, payload: HumanDecisionCreate, db: Session = D
         action="HUMAN_DECISION_RECORDED",
         entity_type="BIDDER",
         entity_id=id,
-        actor_id=payload.officer_id,
-        actor_role="PROCUREMENT_OFFICER",
+        actor_id=principal.user_id,
+        actor_role=principal.role.value,
         payload={
             "status": payload.status,
             "reason_code": payload.reason_code,
-            "officer_name": payload.officer_name,
+            "officer_name": officer_name,
         },
     )
     return decision
 
 
 @router.get("/bidders/{id}/report", response_model=ReportRead)
-async def get_bidder_report(id: str, run_id: str | None = Query(None, description="Optional compliance run ID"), db: Session = Depends(get_db)):
+async def get_bidder_report(
+    id: str,
+    run_id: str | None = Query(None, description="Optional compliance run ID"),
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     bidder = db.query(Bidder).filter(Bidder.id == id).first()
     if not bidder:
         raise HTTPException(
@@ -443,3 +497,4 @@ async def get_bidder_report(id: str, run_id: str | None = Query(None, descriptio
         evidence=[],
         audit_trail_count=audit_count,
     )
+

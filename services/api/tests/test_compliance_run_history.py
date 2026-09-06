@@ -25,8 +25,10 @@ from app.schemas.canonical import (
     DocumentType,
     OperatorEnum,
     RequirementType,
+    UserRole,
 )
 from app.services.bid_verification_service import BidVerificationService
+from tests.auth_helpers import get_auth_headers
 
 
 @pytest.fixture(autouse=True)
@@ -103,11 +105,12 @@ def test_setup(db: Session):
 
 @pytest.mark.asyncio
 async def test_get_compliance_no_side_effects(db: Session, test_setup):
+    headers = get_auth_headers(UserRole.ADMIN)
     client = TestClient(app)
     bidder = test_setup["bidder"]
 
     # 1. GET /compliance on bidder with no runs
-    res = client.get(f"/api/v1/bidders/{bidder.id}/compliance")
+    res = client.get(f"/api/v1/bidders/{bidder.id}/compliance", headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert data["overall_status"] == "UNKNOWN"
@@ -117,6 +120,7 @@ async def test_get_compliance_no_side_effects(db: Session, test_setup):
     # 2. Verify no ComplianceRun was created by GET
     run_count = db.query(ComplianceRun).filter(ComplianceRun.bidder_id == bidder.id).count()
     assert run_count == 0
+
 
 
 @pytest.mark.asyncio
@@ -197,7 +201,8 @@ async def test_latest_run_semantics_ignores_running_or_failed(db: Session, test_
     db.commit()
 
     # GET /bidders/{id}/compliance must pick completed_run, ignoring FAILED and RUNNING runs
-    res = client.get(f"/api/v1/bidders/{bidder.id}/compliance")
+    headers = get_auth_headers(UserRole.ADMIN)
+    res = client.get(f"/api/v1/bidders/{bidder.id}/compliance", headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert len(data["rule_evaluations"]) > 0
@@ -209,13 +214,14 @@ async def test_history_list_and_detail_endpoints(db: Session, test_setup):
     service = BidVerificationService(db)
     bidder = test_setup["bidder"]
     client = TestClient(app)
+    headers = get_auth_headers(UserRole.ADMIN)
 
     # Execute workflow twice
     await service.run_verification_workflow(bidder_id=bidder.id)
     await service.run_verification_workflow(bidder_id=bidder.id)
 
     # GET /bidders/{bidder_id}/runs
-    res_list = client.get(f"/api/v1/bidders/{bidder.id}/runs")
+    res_list = client.get(f"/api/v1/bidders/{bidder.id}/runs", headers=headers)
     assert res_list.status_code == 200
     runs = res_list.json()
     assert len(runs) == 2
@@ -224,7 +230,7 @@ async def test_history_list_and_detail_endpoints(db: Session, test_setup):
     target_run_id = runs[0]["id"]
 
     # GET /bidders/{bidder_id}/runs/{run_id}
-    res_detail = client.get(f"/api/v1/bidders/{bidder.id}/runs/{target_run_id}")
+    res_detail = client.get(f"/api/v1/bidders/{bidder.id}/runs/{target_run_id}", headers=headers)
     assert res_detail.status_code == 200
     detail = res_detail.json()
     assert detail["run"]["id"] == target_run_id
@@ -237,6 +243,7 @@ async def test_cross_bidder_run_protection(db: Session, test_setup):
     service = BidVerificationService(db)
     bidder1 = test_setup["bidder"]
     client = TestClient(app)
+    headers = get_auth_headers(UserRole.ADMIN)
 
     # Create run for bidder1
     await service.run_verification_workflow(bidder_id=bidder1.id)
@@ -252,12 +259,13 @@ async def test_cross_bidder_run_protection(db: Session, test_setup):
     db.commit()
 
     # Attempt to request bidder1's run using bidder2's endpoint -> 404
-    res_detail = client.get(f"/api/v1/bidders/{bidder2.id}/runs/{run1.id}")
+    res_detail = client.get(f"/api/v1/bidders/{bidder2.id}/runs/{run1.id}", headers=headers)
     assert res_detail.status_code == 404
 
     # Attempt to request report for bidder2 with bidder1's run_id -> 404
-    res_report = client.get(f"/api/v1/bidders/{bidder2.id}/report?run_id={run1.id}")
+    res_report = client.get(f"/api/v1/bidders/{bidder2.id}/report?run_id={run1.id}", headers=headers)
     assert res_report.status_code == 404
+
 
 
 @pytest.mark.asyncio
@@ -359,6 +367,7 @@ async def test_review_required_compliance_execution_status(db: Session, test_set
 @pytest.mark.asyncio
 async def test_historical_evaluation_evidence_endpoint_resolution(db: Session, test_setup):
     client = TestClient(app)
+    headers = get_auth_headers(UserRole.ADMIN)
     service = BidVerificationService(db)
     bidder = test_setup["bidder"]
 
@@ -375,7 +384,7 @@ async def test_historical_evaluation_evidence_endpoint_resolution(db: Session, t
     assert len(runs) == 2
 
     # Call API GET /api/v1/evaluations/{run1_eval_id}/evidence for historical Run 1 evaluation
-    res = client.get(f"/api/v1/evaluations/{eval1.id}/evidence")
+    res = client.get(f"/api/v1/evaluations/{eval1.id}/evidence", headers=headers)
     assert res.status_code == 200
     evidence_list = res.json()
     assert isinstance(evidence_list, list)
@@ -427,6 +436,7 @@ async def test_risk_signal_run_id_scoping_and_history(db: Session, test_setup):
 @pytest.mark.asyncio
 async def test_api_duplicate_run_and_orphan_job_prevention(db: Session, test_setup):
     client = TestClient(app)
+    headers = get_auth_headers(UserRole.ADMIN)
     bidder = test_setup["bidder"]
 
     # Manually insert a stale RUNNING ComplianceRun with no active job
@@ -444,8 +454,9 @@ async def test_api_duplicate_run_and_orphan_job_prevention(db: Session, test_set
     db.commit()
 
     # Call POST /api/v1/bidders/{id}/verify
-    res = client.post(f"/api/v1/bidders/{bidder.id}/verify")
+    res = client.post(f"/api/v1/bidders/{bidder.id}/verify", headers=headers)
     assert res.status_code == 200
+
     job_data = res.json()
     assert job_data["job_type"] == "VERIFY_BIDDER"
 

@@ -1,14 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from app.auth.dependencies import get_current_principal
 from app.db.session import get_db
 from app.models.domain import Document, Evidence, ExtractedFact, RuleEvaluation, VerificationResult
-from app.schemas.canonical import EvidenceRead
+from app.schemas.canonical import AuthenticatedPrincipal, EvidenceRead
 
 router = APIRouter(prefix="/evaluations", tags=["Evaluations & Evidence"])
 
 
 @router.get("/{id}/evidence", response_model=list[EvidenceRead])
-def get_evaluation_evidence(id: str, db: Session = Depends(get_db)):
+def get_evaluation_evidence(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+
     rule_eval = db.query(RuleEvaluation).filter(RuleEvaluation.id == id).first()
     if not rule_eval:
         raise HTTPException(

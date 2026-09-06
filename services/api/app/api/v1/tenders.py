@@ -3,9 +3,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.audit.logger import AuditLogger
+from app.auth.dependencies import get_current_principal, require_roles
 from app.db.session import get_db
 from app.models.domain import ProcessingJob, Tender, TenderRequirement
 from app.schemas.canonical import (
+    AuthenticatedPrincipal,
     JobRead,
     JobStage,
     JobStatus,
@@ -13,6 +15,7 @@ from app.schemas.canonical import (
     TenderRead,
     TenderRequirementCreate,
     TenderRequirementRead,
+    UserRole,
 )
 from app.services.ai_adapter import AIServiceAdapter
 
@@ -21,7 +24,11 @@ ai_adapter = AIServiceAdapter()
 
 
 @router.post("", response_model=TenderRead, status_code=status.HTTP_201_CREATED)
-def create_tender(payload: TenderCreate, db: Session = Depends(get_db)):
+def create_tender(
+    payload: TenderCreate,
+    principal: AuthenticatedPrincipal = Depends(require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)),
+    db: Session = Depends(get_db),
+):
     existing = db.query(Tender).filter(Tender.tender_number == payload.tender_number).first()
     if existing:
         raise HTTPException(
@@ -49,19 +56,30 @@ def create_tender(payload: TenderCreate, db: Session = Depends(get_db)):
         action="TENDER_CREATED",
         entity_type="TENDER",
         entity_id=tender.id,
+        actor_id=principal.user_id,
+        actor_role=principal.role.value,
         payload={"tender_number": tender.tender_number, "title": tender.title},
     )
     return tender
 
 
 @router.get("", response_model=list[TenderRead])
-def list_tenders(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+def list_tenders(
+    skip: int = 0,
+    limit: int = 20,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     tenders = db.query(Tender).offset(skip).limit(limit).all()
     return tenders
 
 
 @router.get("/{id}", response_model=TenderRead)
-def get_tender(id: str, db: Session = Depends(get_db)):
+def get_tender(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     tender = db.query(Tender).filter(Tender.id == id).first()
     if not tender:
         raise HTTPException(
@@ -72,7 +90,11 @@ def get_tender(id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{id}/process", response_model=JobRead)
-async def process_tender(id: str, db: Session = Depends(get_db)):
+async def process_tender(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)),
+    db: Session = Depends(get_db),
+):
     tender = db.query(Tender).filter(Tender.id == id).first()
     if not tender:
         raise HTTPException(
@@ -110,6 +132,8 @@ async def process_tender(id: str, db: Session = Depends(get_db)):
         action="TENDER_PROCESSING_STARTED",
         entity_type="TENDER",
         entity_id=id,
+        actor_id=principal.user_id,
+        actor_role=principal.role.value,
         payload={"job_id": job.id},
     )
 
@@ -127,6 +151,8 @@ async def process_tender(id: str, db: Session = Depends(get_db)):
             action="TENDER_PROCESSING_FAILED",
             entity_type="TENDER",
             entity_id=id,
+            actor_id=principal.user_id,
+            actor_role=principal.role.value,
             payload={"job_id": job.id, "error_code": "MISSING_TENDER_DOCUMENT"},
         )
         return job
@@ -174,6 +200,8 @@ async def process_tender(id: str, db: Session = Depends(get_db)):
         action="TENDER_REQUIREMENTS_EXTRACTED",
         entity_type="TENDER",
         entity_id=id,
+        actor_id=principal.user_id,
+        actor_role=principal.role.value,
         payload={"requirements_count": len(ai_result.data)},
     )
 
@@ -181,7 +209,11 @@ async def process_tender(id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{id}/requirements", response_model=list[TenderRequirementRead])
-def get_tender_requirements(id: str, db: Session = Depends(get_db)):
+def get_tender_requirements(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     tender = db.query(Tender).filter(Tender.id == id).first()
     if not tender:
         raise HTTPException(
@@ -191,3 +223,4 @@ def get_tender_requirements(id: str, db: Session = Depends(get_db)):
 
     requirements = db.query(TenderRequirement).filter(TenderRequirement.tender_id == id).all()
     return requirements
+

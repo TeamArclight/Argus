@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     # Security & CORS Config
     CORS_ALLOWED_ORIGINS: str | list[str] = "http://localhost:3000"
 
+    # JWT Authentication & RBAC Configuration
+    ARGUS_JWT_SECRET: str = "change_me_super_secret_key_for_dev_only"
+    ARGUS_JWT_ALGORITHM: str = "HS256"
+    ARGUS_JWT_ISSUER: str = "argus-api"
+    ARGUS_JWT_AUDIENCE: str = "argus-clients"
+    ARGUS_JWT_ACCESS_TOKEN_MINUTES: int = 60
+
+
     def get_cors_origins(self) -> list[str]:
         """Returns list of allowed origins parsed from string or list."""
         if isinstance(self.CORS_ALLOWED_ORIGINS, str):

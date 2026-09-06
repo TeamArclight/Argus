@@ -4,15 +4,20 @@ from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from app.auth.dependencies import get_current_principal
 from app.db.session import get_db
 from app.models.domain import ProcessingJob
-from app.schemas.canonical import JobRead
+from app.schemas.canonical import AuthenticatedPrincipal, JobRead
 
 router = APIRouter(prefix="/jobs", tags=["Jobs & SSE"])
 
 
 @router.get("/{id}", response_model=JobRead)
-def get_job_status(id: str, db: Session = Depends(get_db)):
+def get_job_status(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
     job = db.query(ProcessingJob).filter(ProcessingJob.id == id).first()
     if not job:
         raise HTTPException(
@@ -23,7 +28,12 @@ def get_job_status(id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{id}/events", response_class=StreamingResponse)
-async def stream_job_events(id: str, db: Session = Depends(get_db)):
+async def stream_job_events(
+    id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+
     job = db.query(ProcessingJob).filter(ProcessingJob.id == id).first()
     if not job:
         raise HTTPException(
