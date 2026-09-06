@@ -1,9 +1,9 @@
-import os
 from collections.abc import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from app.core.config import settings
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./argus_dev.db")
+DATABASE_URL = settings.DATABASE_URL
 
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):

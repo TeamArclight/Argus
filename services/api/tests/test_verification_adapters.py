@@ -26,7 +26,7 @@ async def test_gst_adapter_mismatch():
 @pytest.mark.asyncio
 async def test_gst_adapter_timeout():
     adapter = GSTVerificationAdapter()
-    res = await adapter.verify({"id": "B1", "gstin": "27AAAAA0000A1Z5", "simulated_mode": "timeout"}, "general.gstin")
+    res = await adapter.verify({"id": "B1", "gstin": "27AAAAA0000A1Z5", "verification_mode": "demo", "simulated_outcome": "timeout"}, "general.gstin")
     assert res.status == VerificationStatus.TIMEOUT
     assert "timeout" in res.error_message.lower()
 
@@ -34,7 +34,7 @@ async def test_gst_adapter_timeout():
 @pytest.mark.asyncio
 async def test_udyam_adapter_unavailable():
     adapter = UdyamVerificationAdapter()
-    res = await adapter.verify({"id": "B1", "udyam_number": "UDYAM-MH-01-0001234", "simulated_mode": "unavailable"}, "general.udyam")
+    res = await adapter.verify({"id": "B1", "udyam_number": "UDYAM-MH-01-0001234", "verification_mode": "demo", "simulated_outcome": "unavailable"}, "general.udyam")
     assert res.status == VerificationStatus.UNAVAILABLE
 
 

@@ -32,10 +32,10 @@ class DemoProvider(BaseVerificationProvider):
         ver_id = str(uuid.uuid4())
         bidder_id = bidder_data.get("id", "UNKNOWN_BIDDER")
         bidder_name = bidder_data.get("bidder_name", "").upper()
-        simulated_mode = (bidder_data.get("simulated_mode") or "success").lower()
+        simulated_outcome = (bidder_data.get("simulated_outcome") or "success").lower()
 
         # Handle specific simulated edge cases if passed in tests
-        if simulated_mode == "timeout":
+        if simulated_outcome == "timeout":
             return VerificationResultRead(
                 id=ver_id,
                 bidder_id=bidder_id,
@@ -49,7 +49,7 @@ class DemoProvider(BaseVerificationProvider):
                 error_message=f"Simulated timeout in DEMO mode for domain '{self.domain}'",
             )
 
-        if simulated_mode == "unavailable":
+        if simulated_outcome == "unavailable":
             return VerificationResultRead(
                 id=ver_id,
                 bidder_id=bidder_id,

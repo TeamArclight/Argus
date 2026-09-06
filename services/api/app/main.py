@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.api.v1.bidders import router as bidders_router
 from app.api.v1.evaluations import router as evaluations_router
@@ -26,6 +27,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register CORS Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.get_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Register API v1 Routers under /api/v1 prefix
 app.include_router(tenders_router, prefix="/api/v1")
 app.include_router(bidders_router, prefix="/api/v1")
@@ -43,11 +53,33 @@ def health() -> dict[str, str]:
 def health_integrations() -> IntegrationsHealthResponse:
     """Returns operational status and active modes for external verification registries and intelligence services."""
 
-    def check_service(domain: str, base_url: str | None, key: str | None) -> IntegrationServiceStatus:
+    supported_modes: dict[str, set[VerificationMode]] = {
+        "gst": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DEMO},
+        "udyam": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DEMO},
+        "mca": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DEMO},
+        "blacklist": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DEMO},
+        "epfo": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DOCUMENT, VerificationMode.DEMO},
+        "esic": {VerificationMode.LIVE, VerificationMode.PORTAL_CACHED, VerificationMode.DOCUMENT, VerificationMode.DEMO},
+    }
+
+    def check_service(domain: str) -> IntegrationServiceStatus:
         mode = settings.get_mode_for_domain(domain)
+        domain_key = domain.lower()
+        valid_modes = supported_modes.get(domain_key, set())
+
+        if mode not in valid_modes:
+            return IntegrationServiceStatus(
+                mode=mode,
+                configured=False,
+                details=f"{mode.value} mode is unsupported for {domain.upper()}.",
+            )
+
+        api_url = getattr(settings, f"{domain.upper()}_API_URL", None) or getattr(settings, f"{domain.upper()}_API_BASE_URL", None)
+        api_key = getattr(settings, f"{domain.upper()}_API_KEY", None)
+
         if mode == VerificationMode.LIVE:
-            configured = bool(base_url and key)
-            details = "Live authorized API gateway configured." if configured else "Live provider unconfigured; missing API base URL or credentials."
+            configured = bool(api_url and api_key)
+            details = f"Live authorized {domain.upper()} API gateway configured." if configured else f"Live {domain.upper()} provider unconfigured; missing API URL or credentials."
         elif mode in (VerificationMode.PORTAL_CACHED, VerificationMode.DOCUMENT):
             configured = True
             details = f"Active {mode.value} provider configured."
@@ -57,12 +89,12 @@ def health_integrations() -> IntegrationsHealthResponse:
         return IntegrationServiceStatus(mode=mode, configured=configured, details=details)
 
     return IntegrationsHealthResponse(
-        gst=check_service("gst", settings.GST_API_BASE_URL, settings.GST_API_KEY),
-        udyam=check_service("udyam", settings.UDYAM_API_BASE_URL, settings.UDYAM_API_KEY),
-        mca=check_service("mca", settings.MCA_API_BASE_URL, settings.MCA_API_KEY),
-        epfo=check_service("epfo", settings.EPFO_API_BASE_URL, settings.EPFO_API_KEY),
-        esic=check_service("esic", settings.ESIC_API_BASE_URL, settings.ESIC_API_KEY),
-        blacklist=check_service("blacklist", settings.BLACKLIST_API_BASE_URL, settings.BLACKLIST_API_KEY),
+        gst=check_service("gst"),
+        udyam=check_service("udyam"),
+        mca=check_service("mca"),
+        epfo=check_service("epfo"),
+        esic=check_service("esic"),
+        blacklist=check_service("blacklist"),
         intelligence=IntegrationServiceStatus(
             mode=VerificationMode.LIVE,
             configured=bool(settings.ARGUS_INTELLIGENCE_BASE_URL and settings.ARGUS_INTELLIGENCE_API_KEY),
