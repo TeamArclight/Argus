@@ -1,0 +1,10 @@
+{
+  "document_id": "DOC-123",
+  "document_type": "CA_CERTIFICATE",
+  "file_name": "turnover_certificate.pdf",
+  "extracted_fields": {
+    "turnover": 87000000,
+    "fiscal_year": "2023-2024"
+  },
+  "confidence": 0.92
+}

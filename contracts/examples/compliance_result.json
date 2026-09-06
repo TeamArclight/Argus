@@ -1,0 +1,10 @@
+{
+  "requirement_id": "REQ-001",
+  "status": "FAIL",
+  "required_value": 100000000,
+  "claimed_value": 150000000,
+  "verified_value": 87000000,
+  "risk_level": "HIGH",
+  "evidence": ["DOC-123"],
+  "explanation": "Verified turnover is below the requirement."
+}
