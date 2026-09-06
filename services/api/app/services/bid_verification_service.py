@@ -45,6 +45,20 @@ from app.verification.adapters import (
 class BidVerificationService:
     """Orchestration service coordinating verification, compliance evaluation, risk detection, audit logging, and job state."""
 
+    @staticmethod
+    def compute_overall_status(evaluations: list[Any]) -> ComplianceStatus:
+        """Computes overall compliance rollup status following deterministic precedence hierarchy."""
+        if not evaluations:
+            return ComplianceStatus.UNKNOWN
+        statuses = [e.status for e in evaluations]
+        if ComplianceStatus.FAIL in statuses:
+            return ComplianceStatus.FAIL
+        elif ComplianceStatus.REVIEW_REQUIRED in statuses:
+            return ComplianceStatus.REVIEW_REQUIRED
+        elif ComplianceStatus.UNKNOWN in statuses:
+            return ComplianceStatus.UNKNOWN
+        return ComplianceStatus.PASS
+
     def __init__(self, db: Session):
         self.db = db
         self.gst_adapter = GSTVerificationAdapter()
@@ -243,18 +257,7 @@ class BidVerificationService:
             self.db.add(db_r)
 
         # 5. Compute overall compliance status (empty evaluations must NOT produce PASS)
-        if not evaluations_schema:
-            overall_status = ComplianceStatus.UNKNOWN
-        else:
-            statuses = [e.status for e in evaluations_schema]
-            if ComplianceStatus.FAIL in statuses:
-                overall_status = ComplianceStatus.FAIL
-            elif ComplianceStatus.REVIEW_REQUIRED in statuses:
-                overall_status = ComplianceStatus.REVIEW_REQUIRED
-            elif ComplianceStatus.UNKNOWN in statuses:
-                overall_status = ComplianceStatus.UNKNOWN
-            else:
-                overall_status = ComplianceStatus.PASS
+        overall_status = self.compute_overall_status(evaluations_schema)
 
         # 6. Fetch latest human decision if present
         latest_decision_db = (
