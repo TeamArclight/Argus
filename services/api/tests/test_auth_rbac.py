@@ -78,33 +78,37 @@ def test_protected_endpoints_require_token():
 
 
 def test_invalid_jwt_tokens_rejected():
+    generic_detail = "Invalid or expired bearer token."
+
     with TestClient(app) as client:
         # 1. Malformed token
         res = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer not-a-valid-jwt-token"})
         assert res.status_code == 401
-        msg = res.json().get("detail") or res.json().get("error", {}).get("message", "")
-        assert "Invalid authorization token" in msg
+        assert res.json()["error"]["message"] == generic_detail
 
         # 2. Wrong signature secret
         bad_sig_token = jwt.encode(
             {
                 "sub": "user-1",
                 "role": "ADMIN",
+                "iat": int(time.time()),
                 "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
                 "iss": settings.ARGUS_JWT_ISSUER,
                 "aud": settings.ARGUS_JWT_AUDIENCE,
             },
-            "wrong-secret-key-12345678901234567890",
+            "wrong-secret-key-12345678901234567890-must-be-32-chars",
             algorithm="HS256",
         )
         res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {bad_sig_token}"})
         assert res.status_code == 401
+        assert res.json()["error"]["message"] == generic_detail
 
         # 3. Expired token
         expired_token = jwt.encode(
             {
                 "sub": "user-1",
                 "role": "ADMIN",
+                "iat": int(time.time()) - 1000,
                 "exp": datetime.now(timezone.utc) - timedelta(minutes=10),
                 "iss": settings.ARGUS_JWT_ISSUER,
                 "aud": settings.ARGUS_JWT_AUDIENCE,
@@ -114,14 +118,14 @@ def test_invalid_jwt_tokens_rejected():
         )
         res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {expired_token}"})
         assert res.status_code == 401
-        msg = res.json().get("detail") or res.json().get("error", {}).get("message", "")
-        assert "Token has expired" in msg or "Signature has expired" in msg or "expired" in msg.lower()
+        assert res.json()["error"]["message"] == generic_detail
 
         # 4. Wrong Issuer
         wrong_iss_token = jwt.encode(
             {
                 "sub": "user-1",
                 "role": "ADMIN",
+                "iat": int(time.time()),
                 "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
                 "iss": "invalid-issuer",
                 "aud": settings.ARGUS_JWT_AUDIENCE,
@@ -131,14 +135,14 @@ def test_invalid_jwt_tokens_rejected():
         )
         res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {wrong_iss_token}"})
         assert res.status_code == 401
-        msg = res.json().get("detail") or res.json().get("error", {}).get("message", "")
-        assert "Invalid" in msg or "issuer" in msg.lower()
+        assert res.json()["error"]["message"] == generic_detail
 
         # 5. Wrong Audience
         wrong_aud_token = jwt.encode(
             {
                 "sub": "user-1",
                 "role": "ADMIN",
+                "iat": int(time.time()),
                 "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
                 "iss": settings.ARGUS_JWT_ISSUER,
                 "aud": "invalid-audience",
@@ -148,11 +152,13 @@ def test_invalid_jwt_tokens_rejected():
         )
         res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {wrong_aud_token}"})
         assert res.status_code == 401
+        assert res.json()["error"]["message"] == generic_detail
 
         # 6. Missing subject claim (sub)
         no_sub_token = jwt.encode(
             {
                 "role": "ADMIN",
+                "iat": int(time.time()),
                 "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
                 "iss": settings.ARGUS_JWT_ISSUER,
                 "aud": settings.ARGUS_JWT_AUDIENCE,
@@ -162,12 +168,30 @@ def test_invalid_jwt_tokens_rejected():
         )
         res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {no_sub_token}"})
         assert res.status_code == 401
+        assert res.json()["error"]["message"] == generic_detail
 
-        # 7. Invalid role claim
+        # 7. Missing issued at claim (iat)
+        no_iat_token = jwt.encode(
+            {
+                "sub": "user-1",
+                "role": "ADMIN",
+                "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+                "iss": settings.ARGUS_JWT_ISSUER,
+                "aud": settings.ARGUS_JWT_AUDIENCE,
+            },
+            settings.ARGUS_JWT_SECRET,
+            algorithm="HS256",
+        )
+        res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {no_iat_token}"})
+        assert res.status_code == 401
+        assert res.json()["error"]["message"] == generic_detail
+
+        # 8. Invalid role claim
         bad_role_token = jwt.encode(
             {
                 "sub": "user-1",
                 "role": "SUPERUSER",
+                "iat": int(time.time()),
                 "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
                 "iss": settings.ARGUS_JWT_ISSUER,
                 "aud": settings.ARGUS_JWT_AUDIENCE,
@@ -177,6 +201,25 @@ def test_invalid_jwt_tokens_rejected():
         )
         res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {bad_role_token}"})
         assert res.status_code == 401
+        assert res.json()["error"]["message"] == generic_detail
+
+
+def test_jwt_secret_configuration_fails_closed():
+    from pydantic import ValidationError
+    from app.core.config import Settings
+
+    # 1. Assert Settings model field has no default value and is required
+    secret_field = Settings.model_fields["ARGUS_JWT_SECRET"]
+    assert secret_field.is_required()
+
+    # 2. Assert instantiating Settings with a secret < 32 chars fails closed
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, ARGUS_JWT_SECRET="short-secret-under-32-chars")
+
+    # 3. Assert instantiating Settings with an unpinned algorithm fails closed
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, ARGUS_JWT_SECRET="a" * 32, ARGUS_JWT_ALGORITHM="RS256")
+
 
 
 

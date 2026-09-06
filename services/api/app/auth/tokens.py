@@ -58,7 +58,7 @@ def decode_access_token(token: str) -> AuthenticatedPrincipal:
                 "verify_iat": True,
                 "verify_iss": True,
                 "verify_aud": True,
-                "require": ["sub", "role", "exp", "iss", "aud"],
+                "require": ["sub", "role", "iat", "exp", "iss", "aud"],
             },
             issuer=settings.ARGUS_JWT_ISSUER,
             audience=settings.ARGUS_JWT_AUDIENCE,

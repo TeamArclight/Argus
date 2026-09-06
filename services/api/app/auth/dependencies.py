@@ -14,7 +14,7 @@ async def get_current_principal(
     if not credentials or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or malformed Authorization header.",
+            detail="Invalid or expired bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
@@ -22,9 +22,10 @@ async def get_current_principal(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid authorization token: {e}",
+            detail="Invalid or expired bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
+
 
 
 def require_roles(*allowed_roles: UserRole) -> Callable[..., AuthenticatedPrincipal]:
