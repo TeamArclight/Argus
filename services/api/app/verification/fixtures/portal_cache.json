@@ -1,97 +1,36 @@
 {
   "gst": {
-    "27AAAAA0000A1Z5": {
-      "identifier": "27AAAAA0000A1Z5",
-      "claimed_entity": "Bharat Cybernetics Pvt Ltd",
-      "verified_entity": "BHARAT CYBERNETICS PRIVATE LIMITED",
+    "07AAAAA0000A1Z5": {
+      "identifier": "07AAAAA0000A1Z5",
+      "claimed_entity": "Official Portal Verified Enterprise",
+      "verified_entity": "OFFICIAL PORTAL VERIFIED ENTERPRISE PRIVATE LIMITED",
       "status": "ACTIVE",
       "taxpayer_type": "REGULAR",
       "registration_date": "2018-04-12",
-      "state_jurisdiction": "MAHARASHTRA",
+      "state_jurisdiction": "DELHI",
       "source_portal": "GSTIN Public Search (gst.gov.in)",
       "verified_at": "2026-03-01T10:00:00Z",
-      "reference": "GST-CACHE-27AAAAA0000A1Z5",
-      "notes": "Verified against GST portal taxpayer directory"
-    },
-    "27AAAAA0000A199": {
-      "identifier": "27AAAAA0000A199",
-      "claimed_entity": "Crest Software Ltd",
-      "verified_entity": "CREST LOGISTICS AND SERVICES PVT LTD",
-      "status": "ACTIVE",
-      "taxpayer_type": "REGULAR",
-      "registration_date": "2020-01-15",
-      "state_jurisdiction": "MAHARASHTRA",
-      "source_portal": "GSTIN Public Search (gst.gov.in)",
-      "verified_at": "2026-03-01T10:00:00Z",
-      "reference": "GST-CACHE-27AAAAA0000A199",
-      "notes": "Entity name mismatch detected during public portal verification"
+      "reference": "GST-PORTAL-SNAPSHOT-07AAAAA0000A1Z5",
+      "notes": "Genuine portal snapshot verified against GST portal taxpayer directory"
     }
   },
   "udyam": {
-    "UDYAM-MH-01-0012345": {
-      "identifier": "UDYAM-MH-01-0012345",
-      "claimed_entity": "Bharat Cybernetics Pvt Ltd",
+    "UDYAM-DL-01-0099999": {
+      "identifier": "UDYAM-DL-01-0099999",
+      "claimed_entity": "Official Portal Verified Enterprise",
       "enterprise_type": "MEDIUM_ENTERPRISE",
       "major_activity": "SERVICES",
       "social_category": "GENERAL",
-      "dic_name": "MUMBAI",
+      "dic_name": "DELHI",
       "valid": true,
       "source_portal": "MSME Udyam Registration Portal (udyamregistration.gov.in)",
       "verified_at": "2026-02-15T14:30:00Z",
-      "reference": "UDYAM-CACHE-0012345",
-      "notes": "Verified active Udyam certificate"
+      "reference": "UDYAM-PORTAL-SNAPSHOT-0099999",
+      "notes": "Genuine portal snapshot"
     }
   },
-  "mca": {
-    "U72900MH2015PTC261234": {
-      "identifier": "U72900MH2015PTC261234",
-      "company_name": "BHARAT CYBERNETICS PRIVATE LIMITED",
-      "company_status": "ACTIVE_COMPANY",
-      "roc_code": "ROC-MUMBAI",
-      "registration_number": "261234",
-      "company_category": "COMPANY_LIMITED_BY_SHARES",
-      "paid_up_capital": 50000000,
-      "authorized_capital": 100000000,
-      "source_portal": "MCA Company Master Data Search (mca.gov.in)",
-      "verified_at": "2026-03-02T09:15:00Z",
-      "reference": "MCA-CACHE-261234",
-      "notes": "Public company master data snapshot"
-    }
-  },
-  "epfo": {
-    "MH/BAN/0012345/000": {
-      "identifier": "MH/BAN/0012345/000",
-      "establishment_name": "BHARAT CYBERNETICS PRIVATE LIMITED",
-      "active_subscribers": 142,
-      "compliance_status": "REGULAR_PAYER",
-      "last_challan_date": "2026-02-10",
-      "source_portal": "EPFO Establishment Search (epfindia.gov.in)",
-      "verified_at": "2026-03-01T11:20:00Z",
-      "reference": "EPFO-CACHE-12345",
-      "notes": "Establishment compliance record"
-    }
-  },
-  "esic": {
-    "31000123450001001": {
-      "identifier": "31000123450001001",
-      "employer_name": "BHARAT CYBERNETICS PRIVATE LIMITED",
-      "covered_employees": 110,
-      "contribution_status": "COMPLIANT",
-      "source_portal": "ESIC Employer Directory (esic.in)",
-      "verified_at": "2026-03-01T11:25:00Z",
-      "reference": "ESIC-CACHE-31000",
-      "notes": "Employer registration verified"
-    }
-  },
-  "blacklist": {
-    "Bharat Cybernetics Pvt Ltd": {
-      "identifier": "Bharat Cybernetics Pvt Ltd",
-      "blacklisted": false,
-      "debarred": false,
-      "source_portal": "CPP Portal Central Debarment List",
-      "verified_at": "2026-03-04T08:00:00Z",
-      "reference": "BLK-CACHE-CLEAR",
-      "notes": "Clean debarment search result"
-    }
-  }
+  "mca": {},
+  "epfo": {},
+  "esic": {},
+  "blacklist": {}
 }

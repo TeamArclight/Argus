@@ -9,7 +9,14 @@ from app.schemas.canonical import (
 from app.verification.providers.base import BaseVerificationProvider
 from app.verification.providers.demo_providers import DemoProvider
 from app.verification.providers.document_providers import DocumentVerificationProvider
-from app.verification.providers.live_providers import GenericLiveProvider
+from app.verification.providers.live_providers import (
+    BlacklistLiveProvider,
+    EPFOLiveProvider,
+    ESICLiveProvider,
+    GSTLiveProvider,
+    MCALiveProvider,
+    UdyamLiveProvider,
+)
 from app.verification.providers.portal_cached_providers import PortalCachedProvider
 
 
@@ -55,7 +62,7 @@ class GSTVerificationAdapter(BaseVerificationAdapter):
 
     def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
         if mode == VerificationMode.LIVE:
-            return GenericLiveProvider("gst", VerificationSource.GST_AUTHORIZED_API, settings.GST_API_BASE_URL, settings.GST_API_KEY)
+            return GSTLiveProvider(VerificationSource.GST_AUTHORIZED_API)
         elif mode == VerificationMode.PORTAL_CACHED:
             return PortalCachedProvider("gst", VerificationSource.GST_PORTAL_VERIFIED_CACHE)
         else:
@@ -71,7 +78,7 @@ class UdyamVerificationAdapter(BaseVerificationAdapter):
 
     def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
         if mode == VerificationMode.LIVE:
-            return GenericLiveProvider("udyam", VerificationSource.UDYAM_AUTHORIZED_API, settings.UDYAM_API_BASE_URL, settings.UDYAM_API_KEY)
+            return UdyamLiveProvider(VerificationSource.UDYAM_AUTHORIZED_API)
         elif mode == VerificationMode.PORTAL_CACHED:
             return PortalCachedProvider("udyam", VerificationSource.UDYAM_PORTAL_VERIFIED_CACHE)
         else:
@@ -87,7 +94,7 @@ class MCAVerificationAdapter(BaseVerificationAdapter):
 
     def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
         if mode == VerificationMode.LIVE:
-            return GenericLiveProvider("mca", VerificationSource.MCA_AUTHORIZED_API, settings.MCA_API_BASE_URL, settings.MCA_API_KEY)
+            return MCALiveProvider(VerificationSource.MCA_AUTHORIZED_API)
         elif mode == VerificationMode.PORTAL_CACHED:
             return PortalCachedProvider("mca", VerificationSource.MCA_PUBLIC_MASTER_DATA_CACHE)
         else:
@@ -103,7 +110,7 @@ class EPFOVerificationAdapter(BaseVerificationAdapter):
 
     def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
         if mode == VerificationMode.LIVE:
-            return GenericLiveProvider("epfo", VerificationSource.EPFO_AUTHORIZED_CHANNEL, settings.EPFO_API_BASE_URL, settings.EPFO_API_KEY)
+            return EPFOLiveProvider(VerificationSource.EPFO_AUTHORIZED_CHANNEL)
         elif mode == VerificationMode.DOCUMENT:
             return DocumentVerificationProvider("epfo", VerificationSource.EPFO_DOCUMENT_VERIFICATION)
         elif mode == VerificationMode.PORTAL_CACHED:
@@ -121,7 +128,7 @@ class ESICVerificationAdapter(BaseVerificationAdapter):
 
     def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
         if mode == VerificationMode.LIVE:
-            return GenericLiveProvider("esic", VerificationSource.ESIC_AUTHORIZED_CHANNEL, settings.ESIC_API_BASE_URL, settings.ESIC_API_KEY)
+            return ESICLiveProvider(VerificationSource.ESIC_AUTHORIZED_CHANNEL)
         elif mode == VerificationMode.DOCUMENT:
             return DocumentVerificationProvider("esic", VerificationSource.ESIC_DOCUMENT_VERIFICATION)
         elif mode == VerificationMode.PORTAL_CACHED:
@@ -139,7 +146,7 @@ class BlacklistVerificationAdapter(BaseVerificationAdapter):
 
     def get_provider(self, mode: VerificationMode) -> BaseVerificationProvider:
         if mode == VerificationMode.LIVE:
-            return GenericLiveProvider("blacklist", VerificationSource.BLACKLIST_AUTHORIZED_SOURCE, settings.BLACKLIST_API_BASE_URL, settings.BLACKLIST_API_KEY)
+            return BlacklistLiveProvider(VerificationSource.BLACKLIST_AUTHORIZED_SOURCE)
         elif mode == VerificationMode.PORTAL_CACHED:
             return PortalCachedProvider("blacklist", VerificationSource.BLACKLIST_PORTAL_VERIFIED_CACHE)
         else:

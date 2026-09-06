@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.db.session import Base, engine
 from app.main import app
 from app.schemas.canonical import (
+    AuthMode,
     VerificationMode,
     VerificationSource,
     VerificationStatus,
@@ -16,7 +17,11 @@ from app.verification.adapters import (
     MCAVerificationAdapter,
 )
 from app.verification.providers.document_providers import DocumentVerificationProvider
-from app.verification.providers.live_providers import GenericLiveProvider
+from app.verification.providers.live_providers import (
+    GenericLiveProvider,
+    GSTLiveProvider,
+    LiveHTTPClient,
+)
 from app.verification.providers.portal_cached_providers import PortalCachedProvider
 
 
@@ -29,7 +34,7 @@ def setup_db():
 
 @pytest.mark.asyncio
 async def test_live_provider_unconfigured_returns_unavailable():
-    provider = GenericLiveProvider("gst", VerificationSource.GST_AUTHORIZED_API, api_base_url=None, api_key=None)
+    provider = GSTLiveProvider(VerificationSource.GST_AUTHORIZED_API, api_url=None, api_key=None)
     res = await provider.verify({"id": "B1", "gstin": "27AAAAA0000A1Z5"}, "general.gstin")
     assert res.status == VerificationStatus.UNAVAILABLE
     assert res.mode == VerificationMode.LIVE
@@ -39,9 +44,11 @@ async def test_live_provider_unconfigured_returns_unavailable():
 
 @pytest.mark.asyncio
 async def test_live_provider_http_200_success(monkeypatch):
-    # Mock httpx.AsyncClient.get for live API call
-    async def mock_get(self, url, headers=None, params=None):
-        request = httpx.Request("GET", url)
+    async def mock_request(self, method, url, headers=None, params=None, json=None):
+        request = httpx.Request(method, url)
+        # Verify single auth header is sent according to configured auth mode
+        assert "Authorization" in headers
+        assert "X-API-Key" not in headers
         return httpx.Response(
             200,
             json={
@@ -52,12 +59,11 @@ async def test_live_provider_http_200_success(monkeypatch):
             request=request,
         )
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    monkeypatch.setattr(httpx.AsyncClient, "request", mock_request)
 
-    provider = GenericLiveProvider(
-        "gst",
+    provider = GSTLiveProvider(
         VerificationSource.GST_AUTHORIZED_API,
-        api_base_url="https://api.gst.gov.in",
+        api_url="https://api.gst.gov.in/v1/taxpayer",
         api_key="secret-live-key",
     )
     res = await provider.verify({"id": "B1", "gstin": "27AAAAA0000A1Z5"}, "general.gstin")
@@ -69,17 +75,49 @@ async def test_live_provider_http_200_success(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_live_provider_x_api_key_auth(monkeypatch):
+    captured_headers = {}
+
+    async def mock_request(self, method, url, headers=None, params=None, json=None):
+        nonlocal captured_headers
+        captured_headers = headers or {}
+        request = httpx.Request(method, url)
+        return httpx.Response(
+            200,
+            json={
+                "match": True,
+                "verified_value": {"gstin": "27AAAAA0000A1Z5", "legal_name": "Acme Corp"},
+            },
+            request=request,
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", mock_request)
+
+    provider = GSTLiveProvider(
+        VerificationSource.GST_AUTHORIZED_API,
+        api_url="https://api.gst.gov.in/v1/taxpayer",
+        api_key="secret-key",
+    )
+    provider.auth_mode = AuthMode.X_API_KEY
+    res = await provider.verify({"id": "B1", "gstin": "27AAAAA0000A1Z5"}, "general.gstin")
+
+    assert captured_headers.get("X-API-Key") == "secret-key"
+    assert "Authorization" not in captured_headers
+    # Reference should be None since remote response did not supply one
+    assert res.verification_reference is None
+
+
+@pytest.mark.asyncio
 async def test_live_provider_unauthorized_401(monkeypatch):
-    async def mock_get_401(self, url, headers=None, params=None):
-        request = httpx.Request("GET", url)
+    async def mock_request(self, method, url, headers=None, params=None, json=None):
+        request = httpx.Request(method, url)
         return httpx.Response(401, json={"error": "Invalid API key"}, request=request)
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get_401)
+    monkeypatch.setattr(httpx.AsyncClient, "request", mock_request)
 
-    provider = GenericLiveProvider(
-        "gst",
+    provider = GSTLiveProvider(
         VerificationSource.GST_AUTHORIZED_API,
-        api_base_url="https://api.gst.gov.in",
+        api_url="https://api.gst.gov.in/v1/taxpayer",
         api_key="bad-key",
     )
     res = await provider.verify({"id": "B1", "gstin": "27AAAAA0000A1Z5"}, "general.gstin")
@@ -90,16 +128,35 @@ async def test_live_provider_unauthorized_401(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_live_provider_missing_schema_returns_service_error(monkeypatch):
+    async def mock_request(self, method, url, headers=None, params=None, json=None):
+        request = httpx.Request(method, url)
+        # Return response missing required match and domain fields
+        return httpx.Response(200, json={"unexpected_key": "unexpected_value"}, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", mock_request)
+
+    provider = GSTLiveProvider(
+        VerificationSource.GST_AUTHORIZED_API,
+        api_url="https://api.gst.gov.in/v1/taxpayer",
+        api_key="valid-key",
+    )
+    res = await provider.verify({"id": "B1", "gstin": "27AAAAA0000A1Z5"}, "general.gstin")
+
+    assert res.status == VerificationStatus.SERVICE_ERROR
+    assert "missing required fields" in res.error_message
+
+
+@pytest.mark.asyncio
 async def test_live_provider_timeout(monkeypatch):
-    async def mock_get_timeout(self, url, headers=None, params=None):
+    async def mock_request(self, method, url, headers=None, params=None, json=None):
         raise httpx.TimeoutException("Timed out connecting to remote host")
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get_timeout)
+    monkeypatch.setattr(httpx.AsyncClient, "request", mock_request)
 
-    provider = GenericLiveProvider(
-        "gst",
+    provider = GSTLiveProvider(
         VerificationSource.GST_AUTHORIZED_API,
-        api_base_url="https://api.gst.gov.in",
+        api_url="https://api.gst.gov.in/v1/taxpayer",
         api_key="valid-key",
     )
     res = await provider.verify({"id": "B1", "gstin": "27AAAAA0000A1Z5"}, "general.gstin")
@@ -113,14 +170,14 @@ async def test_live_provider_timeout(monkeypatch):
 async def test_portal_cached_provider_found_record():
     provider = PortalCachedProvider("gst", VerificationSource.GST_PORTAL_VERIFIED_CACHE)
     res = await provider.verify(
-        {"id": "B1", "bidder_name": "Bharat Cybernetics Pvt Ltd", "gstin": "27AAAAA0000A1Z5"},
+        {"id": "B1", "bidder_name": "Official Portal Verified Enterprise", "gstin": "07AAAAA0000A1Z5"},
         "general.gstin",
     )
 
     assert res.status == VerificationStatus.VERIFIED
     assert res.mode == VerificationMode.PORTAL_CACHED
     assert res.source == VerificationSource.GST_PORTAL_VERIFIED_CACHE
-    assert res.verification_reference == "GST-CACHE-27AAAAA0000A1Z5"
+    assert res.verification_reference == "GST-PORTAL-SNAPSHOT-07AAAAA0000A1Z5"
 
 
 @pytest.mark.asyncio

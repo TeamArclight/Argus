@@ -2,7 +2,7 @@ import os
 from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from app.schemas.canonical import VerificationMode
+from app.schemas.canonical import AuthMode, VerificationMode
 
 
 class Settings(BaseSettings):
@@ -21,29 +21,41 @@ class Settings(BaseSettings):
     # Core Verification Defaults (Default to LIVE mode per governance policy)
     DEFAULT_VERIFICATION_MODE: VerificationMode = VerificationMode.LIVE
 
-    # Per-Registry Verification Modes (None inherits DEFAULT_VERIFICATION_MODE)
+    # Per-Registry Verification Modes and Endpoints
     GST_VERIFICATION_MODE: VerificationMode | None = None
+    GST_API_URL: str | None = None
     GST_API_BASE_URL: str | None = None
+    GST_AUTH_MODE: AuthMode = AuthMode.BEARER
     GST_API_KEY: str | None = None
 
     UDYAM_VERIFICATION_MODE: VerificationMode | None = None
+    UDYAM_API_URL: str | None = None
     UDYAM_API_BASE_URL: str | None = None
+    UDYAM_AUTH_MODE: AuthMode = AuthMode.BEARER
     UDYAM_API_KEY: str | None = None
 
     MCA_VERIFICATION_MODE: VerificationMode | None = None
+    MCA_API_URL: str | None = None
     MCA_API_BASE_URL: str | None = None
+    MCA_AUTH_MODE: AuthMode = AuthMode.BEARER
     MCA_API_KEY: str | None = None
 
     EPFO_VERIFICATION_MODE: VerificationMode | None = None
+    EPFO_API_URL: str | None = None
     EPFO_API_BASE_URL: str | None = None
+    EPFO_AUTH_MODE: AuthMode = AuthMode.BEARER
     EPFO_API_KEY: str | None = None
 
     ESIC_VERIFICATION_MODE: VerificationMode | None = None
+    ESIC_API_URL: str | None = None
     ESIC_API_BASE_URL: str | None = None
+    ESIC_AUTH_MODE: AuthMode = AuthMode.BEARER
     ESIC_API_KEY: str | None = None
 
     BLACKLIST_VERIFICATION_MODE: VerificationMode | None = None
+    BLACKLIST_API_URL: str | None = None
     BLACKLIST_API_BASE_URL: str | None = None
+    BLACKLIST_AUTH_MODE: AuthMode = AuthMode.BEARER
     BLACKLIST_API_KEY: str | None = None
 
     # ARGUS Intelligence Gateway

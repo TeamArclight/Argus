@@ -75,6 +75,14 @@ class VerificationMode(str, Enum):
     DOCUMENT = "DOCUMENT"
 
 
+class AuthMode(str, Enum):
+    """Authentication modes for HTTP live providers."""
+    BEARER = "BEARER"
+    X_API_KEY = "X_API_KEY"
+    NONE = "NONE"
+    OAUTH_CLIENT_CREDENTIALS = "OAUTH_CLIENT_CREDENTIALS"
+
+
 class VerificationSource(str, Enum):
     """Truthful provenance sources for registry verifications."""
     # GST Sources

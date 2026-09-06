@@ -126,6 +126,6 @@ class PortalCachedProvider(BaseVerificationProvider):
             source=self.source,
             mode=self.mode,
             checked_at=now,
-            verification_reference=cached_entry.get("reference", f"CACHE-{identifier[:8]}"),
+            verification_reference=cached_entry.get("reference"),
             error_message=err_msg,
         )
