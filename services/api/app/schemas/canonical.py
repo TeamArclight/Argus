@@ -1,0 +1,400 @@
+from datetime import datetime
+from enum import Enum
+from typing import Any, Generic, TypeVar
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+# ---------------------------------------------------------------------------
+# CANONICAL STATUS ENUMS
+# ---------------------------------------------------------------------------
+
+class ComplianceStatus(str, Enum):
+    """Deterministic compliance evaluation states."""
+    PASS = "PASS"
+    FAIL = "FAIL"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    UNKNOWN = "UNKNOWN"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class HumanDecisionStatus(str, Enum):
+    """Human procurement officer decision states."""
+    PENDING = "PENDING"
+    QUALIFIED = "QUALIFIED"
+    DISQUALIFIED = "DISQUALIFIED"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+
+
+class OperatorEnum(str, Enum):
+    """Supported deterministic rule operators."""
+    EQ = "EQ"
+    NE = "NE"
+    GT = "GT"
+    GTE = "GTE"
+    LT = "LT"
+    LTE = "LTE"
+    EXISTS = "EXISTS"
+    NOT_EXISTS = "NOT_EXISTS"
+    COUNT_GTE = "COUNT_GTE"
+    DATE_BEFORE = "DATE_BEFORE"
+    DATE_AFTER = "DATE_AFTER"
+    IN = "IN"
+    NOT_IN = "NOT_IN"
+
+
+class RequirementType(str, Enum):
+    """Types of tender eligibility requirements."""
+    TURNOVER = "TURNOVER"
+    EXPERIENCE = "EXPERIENCE"
+    BLACK_LIST = "BLACK_LIST"
+    GST = "GST"
+    UDYAM = "UDYAM"
+    EPFO = "EPFO"
+    MCA = "MCA"
+    CUSTOM = "CUSTOM"
+
+
+class DocumentType(str, Enum):
+    """Bidder document categories."""
+    TURNOVER_CERT = "TURNOVER_CERT"
+    GST_CERT = "GST_CERT"
+    UDYAM_CERT = "UDYAM_CERT"
+    EXPERIENCE_CERT = "EXPERIENCE_CERT"
+    PAN_CERT = "PAN_CERT"
+    OTHER = "OTHER"
+
+
+class VerificationSource(str, Enum):
+    """Authorized or mock verification data sources."""
+    GST_MOCK = "GST_MOCK"
+    UDYAM_MOCK = "UDYAM_MOCK"
+    MCA_MOCK = "MCA_MOCK"
+    EPFO_MOCK = "EPFO_MOCK"
+    BLACKLIST_MOCK = "BLACKLIST_MOCK"
+
+
+class VerificationStatus(str, Enum):
+    """External verification outcome status."""
+    VERIFIED = "VERIFIED"
+    UNVERIFIED = "UNVERIFIED"
+    MISMATCH = "MISMATCH"
+    SERVICE_ERROR = "SERVICE_ERROR"
+    UNKNOWN = "UNKNOWN"
+    UNAVAILABLE = "UNAVAILABLE"
+    TIMEOUT = "TIMEOUT"
+
+
+class RiskSeverity(str, Enum):
+    """Severity levels for risk signals."""
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class JobStatus(str, Enum):
+    """Processing job lifecycle states."""
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+
+
+class JobStage(str, Enum):
+    """Processing workflow stages."""
+    UPLOAD = "UPLOAD"
+    PARSING = "PARSING"
+    OCR = "OCR"
+    EXTRACTION = "EXTRACTION"
+    VERIFICATION = "VERIFICATION"
+    COMPLIANCE = "COMPLIANCE"
+    RISK_ANALYSIS = "RISK_ANALYSIS"
+    REPORTING = "REPORTING"
+
+
+# ---------------------------------------------------------------------------
+# TENDER SCHEMAS
+# ---------------------------------------------------------------------------
+
+class TenderRequirementCreate(BaseModel):
+    clause: str = Field(..., description="Tender document clause reference, e.g. '4.2'")
+    requirement_type: RequirementType
+    field: str = Field(..., description="Canonical fact field key, e.g. 'financial.average_annual_turnover'")
+    operator: OperatorEnum
+    expected_value: Any = Field(..., description="Expected threshold or value")
+    unit: str | None = None
+    mandatory: bool = True
+    source_page: int | None = None
+    source_text: str | None = None
+    confidence: float = 1.0
+    requires_verification: bool = False
+
+
+class TenderRequirementRead(TenderRequirementCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    tender_id: str
+    created_at: datetime
+
+
+class TenderCreate(BaseModel):
+    tender_number: str = Field(..., description="Unique GeM or authority tender identifier")
+    title: str
+    category: str | None = None
+    authority: str | None = None
+    budget: float | None = None
+    deadline: datetime | None = None
+    raw_document_uri: str | None = None
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
+
+
+class TenderRead(TenderCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    status: JobStatus = JobStatus.QUEUED
+    requirements: list[TenderRequirementRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# BIDDER & DOCUMENT SCHEMAS
+# ---------------------------------------------------------------------------
+
+class FactRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    document_id: str
+    bidder_id: str
+    field: str
+    value: Any
+    source_page: int | None = None
+    source_text: str | None = None
+    confidence: float = 1.0
+    created_at: datetime
+
+
+class DocumentCreate(BaseModel):
+    document_type: DocumentType
+    storage_uri: str
+    filename: str
+    sha256: str | None = None
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
+
+
+class DocumentRead(DocumentCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    bidder_id: str
+    facts: list[FactRead] = Field(default_factory=list)
+    created_at: datetime
+
+
+class BidderCreate(BaseModel):
+    bidder_name: str
+    gstin: str | None = None
+    udyam_number: str | None = None
+    cin: str | None = None
+    pan: str | None = None
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
+
+
+class BidderRead(BidderCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    tender_id: str
+    status: HumanDecisionStatus = HumanDecisionStatus.PENDING
+    documents: list[DocumentRead] = Field(default_factory=list)
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# VERIFICATION, COMPLIANCE & RISK SCHEMAS
+# ---------------------------------------------------------------------------
+
+class VerificationResultRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    bidder_id: str
+    field: str
+    claimed_value: Any | None = None
+    verified_value: Any | None = None
+    status: VerificationStatus
+    source: VerificationSource
+    checked_at: datetime
+    verification_reference: str | None = None
+    error_message: str | None = None
+
+
+class EvidenceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    entity_type: str
+    entity_id: str
+    snippet: str
+    source_uri: str | None = None
+    page_number: int | None = None
+    location_metadata: dict[str, Any] | None = Field(default_factory=dict)
+    created_at: datetime
+
+    @field_validator("location_metadata", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
+
+
+class RuleEvaluationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    bidder_id: str
+    requirement_id: str
+    status: ComplianceStatus
+    reason_code: str
+    observed_value: Any | None = None
+    expected_value: Any | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    rule_version: str = "1.0"
+    evaluated_at: datetime
+
+
+class RiskSignalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    bidder_id: str
+    severity: RiskSeverity
+    signal_type: str
+    title: str
+    description: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class HumanDecisionCreate(BaseModel):
+    status: HumanDecisionStatus
+    reason_code: str
+    remarks: str | None = None
+    officer_id: str
+    officer_name: str
+
+
+class HumanDecisionRead(HumanDecisionCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    bidder_id: str
+    decided_at: datetime
+
+
+class ComplianceOverviewRead(BaseModel):
+    bidder_id: str
+    tender_id: str
+    overall_status: ComplianceStatus
+    human_decision_status: HumanDecisionStatus
+    rule_evaluations: list[RuleEvaluationRead] = Field(default_factory=list)
+    risk_signals: list[RiskSignalRead] = Field(default_factory=list)
+    latest_decision: HumanDecisionRead | None = None
+
+
+class ReportRead(BaseModel):
+    generated_at: datetime
+    tender: TenderRead
+    bidder: BidderRead
+    compliance_overview: ComplianceOverviewRead
+    verification_results: list[VerificationResultRead] = Field(default_factory=list)
+    evidence: list[EvidenceRead] = Field(default_factory=list)
+    audit_trail_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# PROCESSING JOB & SSE SCHEMAS
+# ---------------------------------------------------------------------------
+
+class JobEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    job_id: str
+    stage: JobStage
+    status: JobStatus
+    progress: int = Field(..., ge=0, le=100)
+    message: str
+    payload: dict[str, Any] | None = Field(default_factory=dict)
+    timestamp: datetime
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
+
+
+class JobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    target_type: str
+    target_id: str
+    job_type: str
+    status: JobStatus
+    current_stage: JobStage
+    progress: int = Field(0, ge=0, le=100)
+    error_message: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    events: list[JobEventRead] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# AI & RAG SERVICE SCHEMAS
+# ---------------------------------------------------------------------------
+
+class RAGQueryRequest(BaseModel):
+    query: str
+    tender_id: str | None = None
+    filters: dict[str, Any] | None = Field(default_factory=dict)
+    top_k: int = 5
+
+    @field_validator("filters", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
+
+
+class RAGQueryResponse(BaseModel):
+    query: str
+    results: list[EvidenceRead] = Field(default_factory=list)
+    retrieved_at: datetime
+
+
+class AIServiceResult(BaseModel):
+    success: bool
+    data: Any | None = None
+    error_code: str | None = None
+    retryable: bool = False
+    message: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# STANDARDIZED API ERROR SCHEMAS
+# ---------------------------------------------------------------------------
+
+class ErrorDetails(BaseModel):
+    code: str
+    message: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class APIErrorResponse(BaseModel):
+    error: ErrorDetails
