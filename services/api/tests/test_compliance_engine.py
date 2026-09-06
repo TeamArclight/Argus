@@ -60,7 +60,7 @@ def make_verification(
         claimed_value=150000000,
         verified_value=verified_value,
         status=status,
-        source=VerificationSource.GST_MOCK,
+        source=VerificationSource.GST_DEMO_DATA,
         checked_at=datetime.now(timezone.utc),
     )
 

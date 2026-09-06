@@ -35,6 +35,7 @@ from app.schemas.canonical import (
 from app.verification.adapters import (
     BlacklistVerificationAdapter,
     EPFOVerificationAdapter,
+    ESICVerificationAdapter,
     GSTVerificationAdapter,
     MCAVerificationAdapter,
     UdyamVerificationAdapter,
@@ -50,6 +51,7 @@ class BidVerificationService:
         self.udyam_adapter = UdyamVerificationAdapter()
         self.mca_adapter = MCAVerificationAdapter()
         self.epfo_adapter = EPFOVerificationAdapter()
+        self.esic_adapter = ESICVerificationAdapter()
         self.blacklist_adapter = BlacklistVerificationAdapter()
 
     async def run_verification_workflow(
@@ -101,7 +103,8 @@ class BidVerificationService:
             "udyam_number": bidder.udyam_number,
             "cin": bidder.cin,
             "pan": bidder.pan,
-            "simulated_mode": bidder_meta.get("simulated_mode", "success"),
+            "simulated_mode": bidder_meta.get("simulated_mode"),
+            "verification_mode": bidder_meta.get("verification_mode"),
         }
 
         verifications_schema: list[VerificationResultRead] = []
@@ -122,9 +125,14 @@ class BidVerificationService:
             verifications_schema.append(mca_res)
 
         # Run EPFO Verification
-        if bidder.pan:
+        if bidder.pan or bidder.bidder_name:
             epfo_res = await self.epfo_adapter.verify(bidder_data, "general.epfo")
             verifications_schema.append(epfo_res)
+
+        # Run ESIC Verification
+        if bidder.pan or bidder.bidder_name:
+            esic_res = await self.esic_adapter.verify(bidder_data, "general.esic")
+            verifications_schema.append(esic_res)
 
         # Run Blacklist Verification
         blk_res = await self.blacklist_adapter.verify(bidder_data, "debarment.status")
@@ -141,6 +149,7 @@ class BidVerificationService:
                 verified_value=v.verified_value,
                 status=v.status,
                 source=v.source,
+                mode=v.mode,
                 checked_at=v.checked_at,
                 verification_reference=v.verification_reference,
                 error_message=v.error_message,
@@ -234,7 +243,7 @@ class BidVerificationService:
             )
             self.db.add(db_r)
 
-        # 5. Compute overall compliance status (MUST FIX: empty evaluations must NOT produce PASS)
+        # 5. Compute overall compliance status (empty evaluations must NOT produce PASS)
         if not evaluations_schema:
             overall_status = ComplianceStatus.UNKNOWN
         else:

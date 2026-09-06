@@ -22,6 +22,7 @@ from app.schemas.canonical import (
     OperatorEnum,
     RequirementType,
     RiskSeverity,
+    VerificationMode,
     VerificationSource,
     VerificationStatus,
 )
@@ -141,6 +142,7 @@ class VerificationResult(Base):
     verified_value: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     status: Mapped[VerificationStatus] = mapped_column(String, nullable=False)
     source: Mapped[VerificationSource] = mapped_column(String, nullable=False)
+    mode: Mapped[VerificationMode] = mapped_column(String, default=VerificationMode.LIVE, nullable=False)
     checked_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
     verification_reference: Mapped[str | None] = mapped_column(String, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
