@@ -69,7 +69,23 @@ class RAGServiceAdapter:
                         error_code="RAG_SERVICE_ENDPOINT_NOT_FOUND",
                         error_message="RAG service endpoint not found (HTTP 404).",
                     )
-                elif resp.status_code in (408, 429, 500, 502, 503, 504) or resp.status_code >= 400:
+                elif resp.status_code in (408, 429):
+                    return RAGQueryResponse(
+                        query=request.query,
+                        results=[],
+                        retrieved_at=now,
+                        error_code="RAG_SERVICE_UNAVAILABLE",
+                        error_message=f"RAG service rate limited or timed out (HTTP {resp.status_code}).",
+                    )
+                elif 400 <= resp.status_code < 500:
+                    return RAGQueryResponse(
+                        query=request.query,
+                        results=[],
+                        retrieved_at=now,
+                        error_code="RAG_SERVICE_REQUEST_REJECTED",
+                        error_message=f"RAG service rejected the request (HTTP {resp.status_code}).",
+                    )
+                elif resp.status_code >= 500:
                     return RAGQueryResponse(
                         query=request.query,
                         results=[],

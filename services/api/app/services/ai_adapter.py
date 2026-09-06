@@ -83,7 +83,23 @@ class AIServiceAdapter:
                         retryable=False,
                         message="Intelligence service endpoint not found (HTTP 404).",
                     )
-                elif resp.status_code in (408, 429, 500, 502, 503, 504) or resp.status_code >= 400:
+                elif resp.status_code in (408, 429):
+                    return AIServiceResult(
+                        success=False,
+                        data=None,
+                        error_code="AI_SERVICE_UNAVAILABLE",
+                        retryable=True,
+                        message=f"Intelligence service rate limited or timed out (HTTP {resp.status_code}).",
+                    )
+                elif 400 <= resp.status_code < 500:
+                    return AIServiceResult(
+                        success=False,
+                        data=None,
+                        error_code="AI_SERVICE_REQUEST_REJECTED",
+                        retryable=False,
+                        message=f"Intelligence service rejected the request (HTTP {resp.status_code}).",
+                    )
+                elif resp.status_code >= 500:
                     return AIServiceResult(
                         success=False,
                         data=None,
@@ -247,7 +263,23 @@ class AIServiceAdapter:
                         retryable=False,
                         message="Intelligence service endpoint not found (HTTP 404).",
                     )
-                elif resp.status_code in (408, 429, 500, 502, 503, 504) or resp.status_code >= 400:
+                elif resp.status_code == 408:
+                    return AIServiceResult(
+                        success=False,
+                        data=None,
+                        error_code="AI_SERVICE_UNAVAILABLE",
+                        retryable=True,
+                        message="Intelligence service request timed out (HTTP 408).",
+                    )
+                elif 400 <= resp.status_code < 500:
+                    return AIServiceResult(
+                        success=False,
+                        data=None,
+                        error_code="AI_SERVICE_REQUEST_REJECTED",
+                        retryable=False,
+                        message=f"Intelligence service rejected the request (HTTP {resp.status_code}).",
+                    )
+                elif resp.status_code >= 500:
                     return AIServiceResult(
                         success=False,
                         data=None,

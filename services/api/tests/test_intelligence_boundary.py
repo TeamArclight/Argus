@@ -89,7 +89,10 @@ async def test_missing_explicit_rag_url_returns_unavailable(monkeypatch):
         (401, "AI_SERVICE_AUTH_ERROR", "RAG_SERVICE_AUTH_ERROR", False),
         (403, "AI_SERVICE_AUTH_ERROR", "RAG_SERVICE_AUTH_ERROR", False),
         (404, "AI_SERVICE_ENDPOINT_NOT_FOUND", "RAG_SERVICE_ENDPOINT_NOT_FOUND", False),
+        (405, "AI_SERVICE_REQUEST_REJECTED", "RAG_SERVICE_REQUEST_REJECTED", False),
+        (422, "AI_SERVICE_REQUEST_REJECTED", "RAG_SERVICE_REQUEST_REJECTED", False),
         (429, "AI_SERVICE_UNAVAILABLE", "RAG_SERVICE_UNAVAILABLE", True),
+        (501, "AI_SERVICE_UNAVAILABLE", "RAG_SERVICE_UNAVAILABLE", True),
         (503, "AI_SERVICE_UNAVAILABLE", "RAG_SERVICE_UNAVAILABLE", True),
     ],
 )
@@ -142,6 +145,54 @@ async def test_malformed_bidder_fact_payload_returns_schema_validation_failed(mo
     res2 = await adapter.extract_document("D1", "s3://doc.pdf", "B1")
     assert res2.success is False
     assert res2.error_code == "SCHEMA_VALIDATION_FAILED"
+
+
+def test_intelligence_health_endpoint_configurations(monkeypatch):
+    with TestClient(app) as client:
+        # 1. No endpoint URLs -> configured = False
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", None)
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL", None)
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_RAG_URL", None)
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_BASE_URL", None)
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_API_KEY", None)
+
+        res = client.get("/health/integrations").json()["intelligence"]
+        assert res["configured"] is False
+        assert "unconfigured" in res["details"].lower()
+
+        # 2. BASE_URL only -> configured = False
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_BASE_URL", "https://ai.argus.local")
+        res = client.get("/health/integrations").json()["intelligence"]
+        assert res["configured"] is False
+        assert "unconfigured" in res["details"].lower()
+
+        # 3. API key only -> configured = False
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_BASE_URL", None)
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_API_KEY", "secret-key")
+        res = client.get("/health/integrations").json()["intelligence"]
+        assert res["configured"] is False
+        assert "unconfigured" in res["details"].lower()
+
+        # 4. Tender URL only -> configured = True
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_API_KEY", None)
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", "https://ai.argus.local/tender")
+        res = client.get("/health/integrations").json()["intelligence"]
+        assert res["configured"] is True
+        assert "tender extraction" in res["details"]
+
+        # 5. Document URL only -> configured = True
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", None)
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL", "https://ai.argus.local/doc")
+        res = client.get("/health/integrations").json()["intelligence"]
+        assert res["configured"] is True
+        assert "document extraction" in res["details"]
+
+        # 6. RAG URL only -> configured = True
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL", None)
+        monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_RAG_URL", "https://ai.argus.local/rag")
+        res = client.get("/health/integrations").json()["intelligence"]
+        assert res["configured"] is True
+        assert "RAG" in res["details"]
 
 
 def test_tender_processing_without_raw_document_uri_fails():
