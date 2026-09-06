@@ -163,14 +163,7 @@ async def get_bidder_compliance(id: str, db: Session = Depends(get_db)):
         .first()
     )
 
-    statuses = [e.status for e in evaluations_db]
-    overall_status = "PASS"
-    if "FAIL" in statuses:
-        overall_status = "FAIL"
-    elif "REVIEW_REQUIRED" in statuses:
-        overall_status = "REVIEW_REQUIRED"
-    elif "UNKNOWN" in statuses:
-        overall_status = "UNKNOWN"
+    overall_status = service.compute_overall_status(evaluations_db)
 
     return ComplianceOverviewRead(
         bidder_id=id,
