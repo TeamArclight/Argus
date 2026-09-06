@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 import uuid
 from typing import Any
+
+from app.compliance.reason_codes import ReasonCode
 from app.schemas.canonical import (
     ComplianceStatus,
     FactRead,
@@ -14,10 +16,138 @@ from app.schemas.canonical import (
 
 class ComplianceEngine:
     """Pure deterministic compliance evaluation engine.
-    
+
     Evaluates tender requirement rules against extracted facts and verification results.
     Prohibited from invoking LLMs, databases, network calls, or side effects.
     """
+
+    @staticmethod
+    def _normalize_number(val: Any) -> float | int | None:
+        """Normalizes numeric representations including currency strings and Indian grouping."""
+        if val is None or isinstance(val, bool):
+            return None
+        if isinstance(val, (int, float)):
+            return val
+        if isinstance(val, str):
+            s = val.strip()
+            if not s:
+                return None
+            # Strip currency symbols and letters e.g. ₹, Rs., INR
+            s = s.replace("₹", "").replace("INR", "").replace("inr", "").replace("Rs.", "").replace("rs.", "").strip()
+            s = s.replace(",", "")
+            try:
+                num = float(s)
+                if num.is_integer():
+                    return int(num)
+                return num
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _normalize_bool(val: Any) -> bool | None:
+        """Normalizes boolean values from bools, numbers, and case-insensitive strings."""
+        if val is None:
+            return None
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            if val == 1:
+                return True
+            if val == 0:
+                return False
+            return None
+        if isinstance(val, str):
+            s = val.strip().lower()
+            if s in ("true", "yes", "1"):
+                return True
+            if s in ("false", "no", "0"):
+                return False
+            return None
+        return None
+
+    @staticmethod
+    def _normalize_string(val: Any) -> str | None:
+        """Trims whitespace from string representation."""
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return val.strip()
+        return str(val).strip()
+
+    @staticmethod
+    def _normalize_date(val: Any) -> datetime | None:
+        """Parses timezone-aware datetimes from datetime objects or ISO/standard date strings."""
+        if val is None:
+            return None
+        if isinstance(val, datetime):
+            if val.tzinfo is None:
+                return val.replace(tzinfo=timezone.utc)
+            return val
+        if isinstance(val, str):
+            s = val.strip()
+            if not s:
+                return None
+            try:
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except ValueError:
+                pass
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+                try:
+                    dt = datetime.strptime(s, fmt)
+                    return dt.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+        return None
+
+    @classmethod
+    def _values_equivalent(cls, a: Any, b: Any) -> bool:
+        """Determines semantic equality across numeric, boolean, date, and status string values."""
+        if a is None or b is None:
+            return a is b
+        if a == b:
+            return True
+
+        # 1. Numeric comparison
+        num_a = cls._normalize_number(a)
+        num_b = cls._normalize_number(b)
+        if num_a is not None and num_b is not None:
+            return num_a == num_b
+
+        # 2. Boolean comparison
+        bool_a = cls._normalize_bool(a)
+        bool_b = cls._normalize_bool(b)
+        if bool_a is not None and bool_b is not None:
+            return bool_a == bool_b
+
+        # 3. Date comparison
+        dt_a = cls._normalize_date(a)
+        dt_b = cls._normalize_date(b)
+        if dt_a is not None and dt_b is not None:
+            return dt_a == dt_b
+
+        # 4. Case-insensitive string / status comparison
+        str_a = cls._normalize_string(a)
+        str_b = cls._normalize_string(b)
+        if str_a is not None and str_b is not None:
+            return str_a.lower() == str_b.lower()
+
+        return False
+
+    @staticmethod
+    def _resolve_scalar(val: Any) -> tuple[Any, bool]:
+        """Resolves scalar value from structured dicts deterministically."""
+        if isinstance(val, dict):
+            if len(val) == 1:
+                return list(val.values())[0], True
+            for candidate in ("value", "verified_value", "claimed_value"):
+                if candidate in val:
+                    return val[candidate], True
+            return val, False
+        return val, True
 
     @classmethod
     def evaluate(
@@ -31,18 +161,15 @@ class ComplianceEngine:
         now = datetime.now(timezone.utc)
         eval_id = str(uuid.uuid4())
 
-        # 1. Filter facts relevant to this requirement's field
         matching_facts = [f for f in facts if f.field == rule.field]
-        evidence_ids = [f.id for f in matching_facts]
-
-        # 2. Filter verification results for this requirement's field
         matching_verifications = [v for v in verification_results if v.field == rule.field]
-        for v in matching_verifications:
-            evidence_ids.append(v.id)
 
-        # 3. Check for external verification failures/unavailability
+        evidence_ids = [f.id for f in matching_facts] + [v.id for v in matching_verifications]
+
+        # PRECEDENCE 1: External verification service error / unavailable / timeout
         unhealthy_verifications = [
-            v for v in matching_verifications
+            v
+            for v in matching_verifications
             if v.status in (VerificationStatus.SERVICE_ERROR, VerificationStatus.UNAVAILABLE, VerificationStatus.TIMEOUT)
         ]
         if unhealthy_verifications:
@@ -51,7 +178,7 @@ class ComplianceEngine:
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=ComplianceStatus.UNKNOWN,
-                reason_code="VERIFICATION_UNAVAILABLE",
+                reason_code=ReasonCode.VERIFICATION_UNAVAILABLE,
                 observed_value=None,
                 expected_value=rule.expected_value,
                 evidence_ids=evidence_ids,
@@ -59,16 +186,29 @@ class ComplianceEngine:
                 evaluated_at=now,
             )
 
-        # 4. Check for conflicting verified values across verification results
-        verified_with_val = [v for v in matching_verifications if v.verified_value is not None]
-        unique_verified_strings = list({str(v.verified_value) for v in verified_with_val})
-        if len(unique_verified_strings) > 1:
+        usable_verifications = [
+            v
+            for v in matching_verifications
+            if v.status not in (VerificationStatus.SERVICE_ERROR, VerificationStatus.UNAVAILABLE, VerificationStatus.TIMEOUT)
+        ]
+        verified_with_val = [v for v in usable_verifications if v.verified_value is not None]
+
+        # PRECEDENCE 2: Conflicting verification values across verification results
+        has_ver_conflict = False
+        if len(verified_with_val) > 1:
+            first_v = verified_with_val[0].verified_value
+            for v in verified_with_val[1:]:
+                if not cls._values_equivalent(first_v, v.verified_value):
+                    has_ver_conflict = True
+                    break
+
+        if has_ver_conflict:
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=ComplianceStatus.REVIEW_REQUIRED,
-                reason_code="CONFLICTING_VERIFICATION_RESULTS",
+                reason_code=ReasonCode.CONFLICTING_VERIFICATION_RESULTS,
                 observed_value=[v.verified_value for v in verified_with_val],
                 expected_value=rule.expected_value,
                 evidence_ids=evidence_ids,
@@ -76,10 +216,8 @@ class ComplianceEngine:
                 evaluated_at=now,
             )
 
-        # 5. Check for explicit verification status MISMATCH
-        mismatch_verifications = [
-            v for v in matching_verifications if v.status == VerificationStatus.MISMATCH
-        ]
+        # PRECEDENCE 3: Explicit verification status MISMATCH
+        mismatch_verifications = [v for v in usable_verifications if v.status == VerificationStatus.MISMATCH]
         if mismatch_verifications:
             first_mismatch = mismatch_verifications[0]
             return RuleEvaluationRead(
@@ -87,7 +225,7 @@ class ComplianceEngine:
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=ComplianceStatus.REVIEW_REQUIRED,
-                reason_code="VERIFICATION_MISMATCH",
+                reason_code=ReasonCode.VERIFICATION_MISMATCH,
                 observed_value={
                     "claimed": first_mismatch.claimed_value,
                     "verified": first_mismatch.verified_value,
@@ -98,54 +236,81 @@ class ComplianceEngine:
                 evaluated_at=now,
             )
 
-        # 6. Check for conflicting facts across documents
-        unique_claimed_values = list({str(f.value) for f in matching_facts})
-        if len(unique_claimed_values) > 1:
+        # PRECEDENCE 4: Conflicting facts across documents
+        facts_with_val = [f for f in matching_facts if f.value is not None]
+        has_fact_conflict = False
+        if len(facts_with_val) > 1:
+            first_f = facts_with_val[0].value
+            for f in facts_with_val[1:]:
+                if not cls._values_equivalent(first_f, f.value):
+                    has_fact_conflict = True
+                    break
+
+        if has_fact_conflict:
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=ComplianceStatus.REVIEW_REQUIRED,
-                reason_code="CONFLICTING_FACTS",
-                observed_value=[f.value for f in matching_facts],
+                reason_code=ReasonCode.CONFLICTING_FACTS,
+                observed_value=[f.value for f in facts_with_val],
                 expected_value=rule.expected_value,
                 evidence_ids=evidence_ids,
                 rule_version="1.0",
                 evaluated_at=now,
             )
 
-        # 7. Check for claim vs verified value conflict (when both exist and status is VERIFIED)
-        if matching_facts and verified_with_val:
-            claimed_val = matching_facts[0].value
-            verified_val = verified_with_val[0].verified_value
-            if str(claimed_val) != str(verified_val):
+        # PRECEDENCE 5: Claim vs verified mismatch (when both exist)
+        if facts_with_val and verified_with_val:
+            claimed_val = facts_with_val[0].value
+            raw_verified_val = verified_with_val[0].verified_value
+
+            resolved_verified_val, is_unambiguous = cls._resolve_scalar(raw_verified_val)
+            if not is_unambiguous:
                 return RuleEvaluationRead(
                     id=eval_id,
                     bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                     requirement_id=rule.id,
                     status=ComplianceStatus.REVIEW_REQUIRED,
-                    reason_code="CLAIM_VERIFICATION_MISMATCH",
-                    observed_value={"claimed": claimed_val, "verified": verified_val},
+                    reason_code=ReasonCode.AMBIGUOUS_VERIFIED_VALUE,
+                    observed_value={"claimed": claimed_val, "verified": raw_verified_val},
                     expected_value=rule.expected_value,
                     evidence_ids=evidence_ids,
                     rule_version="1.0",
                     evaluated_at=now,
                 )
 
-        # 8. Handle EXISTS / NOT_EXISTS operators
+            if not cls._values_equivalent(claimed_val, resolved_verified_val):
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=ComplianceStatus.REVIEW_REQUIRED,
+                    reason_code=ReasonCode.CLAIM_VERIFICATION_MISMATCH,
+                    observed_value={"claimed": claimed_val, "verified": resolved_verified_val},
+                    expected_value=rule.expected_value,
+                    evidence_ids=evidence_ids,
+                    rule_version="1.0",
+                    evaluated_at=now,
+                )
+
+        # PRECEDENCE 6: EXISTS / NOT_EXISTS operators
+        has_usable_evidence = bool(facts_with_val or verified_with_val)
+
         if rule.operator == OperatorEnum.EXISTS:
-            has_evidence = bool(matching_facts or verified_with_val)
-            status = ComplianceStatus.PASS if has_evidence else (
-                ComplianceStatus.FAIL if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
+            status = (
+                ComplianceStatus.PASS
+                if has_usable_evidence
+                else (ComplianceStatus.FAIL if rule.mandatory else ComplianceStatus.NOT_APPLICABLE)
             )
-            reason = "EVIDENCE_EXISTS" if status == ComplianceStatus.PASS else "EVIDENCE_MISSING"
+            reason = ReasonCode.EVIDENCE_EXISTS if status == ComplianceStatus.PASS else ReasonCode.EVIDENCE_MISSING
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=status,
                 reason_code=reason,
-                observed_value=has_evidence,
+                observed_value=has_usable_evidence,
                 expected_value=True,
                 evidence_ids=evidence_ids,
                 rule_version="1.0",
@@ -153,31 +318,30 @@ class ComplianceEngine:
             )
 
         if rule.operator == OperatorEnum.NOT_EXISTS:
-            has_evidence = bool(matching_facts or verified_with_val)
-            status = ComplianceStatus.PASS if not has_evidence else ComplianceStatus.FAIL
-            reason = "EVIDENCE_ABSENT" if status == ComplianceStatus.PASS else "EVIDENCE_PRESENT"
+            status = ComplianceStatus.PASS if not has_usable_evidence else ComplianceStatus.FAIL
+            reason = ReasonCode.EVIDENCE_ABSENT if status == ComplianceStatus.PASS else ReasonCode.EVIDENCE_PRESENT
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=status,
                 reason_code=reason,
-                observed_value=has_evidence,
+                observed_value=has_usable_evidence,
                 expected_value=False,
                 evidence_ids=evidence_ids,
                 rule_version="1.0",
                 evaluated_at=now,
             )
 
-        # 9. Handle missing evidence for non-existential operators
-        if not matching_facts and not verified_with_val:
+        # PRECEDENCE 7: Missing evidence for standard operators
+        if not has_usable_evidence:
             status = ComplianceStatus.UNKNOWN if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=status,
-                reason_code="MISSING_EVIDENCE",
+                reason_code=ReasonCode.MISSING_EVIDENCE,
                 observed_value=None,
                 expected_value=rule.expected_value,
                 evidence_ids=evidence_ids,
@@ -185,12 +349,26 @@ class ComplianceEngine:
                 evaluated_at=now,
             )
 
-        # Determine effective value to evaluate (prefer verified value if present, else fact value)
-        observed_val = verified_with_val[0].verified_value if verified_with_val else matching_facts[0].value
+        # PRECEDENCE 8: Deterministic operator evaluation against effective observed value
+        raw_obs_val = verified_with_val[0].verified_value if verified_with_val else facts_with_val[0].value
+        resolved_obs_val, is_unambiguous = cls._resolve_scalar(raw_obs_val)
 
-        # 10. Evaluate operator against observed value and expected value
+        if not is_unambiguous:
+            return RuleEvaluationRead(
+                id=eval_id,
+                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule.id,
+                status=ComplianceStatus.REVIEW_REQUIRED,
+                reason_code=ReasonCode.AMBIGUOUS_VERIFIED_VALUE,
+                observed_value=raw_obs_val,
+                expected_value=rule.expected_value,
+                evidence_ids=evidence_ids,
+                rule_version="1.0",
+                evaluated_at=now,
+            )
+
         status, reason_code = cls._evaluate_operator(
-            rule.operator, observed_val, rule.expected_value
+            rule.operator, resolved_obs_val, rule.expected_value
         )
 
         return RuleEvaluationRead(
@@ -199,7 +377,7 @@ class ComplianceEngine:
             requirement_id=rule.id,
             status=status,
             reason_code=reason_code,
-            observed_value=observed_val,
+            observed_value=resolved_obs_val,
             expected_value=rule.expected_value,
             evidence_ids=evidence_ids,
             rule_version="1.0",
@@ -211,70 +389,68 @@ class ComplianceEngine:
         cls, operator: OperatorEnum, observed: Any, expected: Any
     ) -> tuple[ComplianceStatus, str]:
         if observed is None:
-            return ComplianceStatus.UNKNOWN, "OBSERVED_VALUE_NULL"
+            return ComplianceStatus.UNKNOWN, ReasonCode.OBSERVED_VALUE_NULL
 
-        try:
-            if operator == OperatorEnum.EQ:
-                match = (observed == expected)
-                return (ComplianceStatus.PASS, "EQUAL") if match else (ComplianceStatus.FAIL, "NOT_EQUAL")
+        if operator == OperatorEnum.EQ:
+            match = cls._values_equivalent(observed, expected)
+            return (ComplianceStatus.PASS, ReasonCode.EQUAL) if match else (ComplianceStatus.FAIL, ReasonCode.NOT_EQUAL)
 
-            elif operator == OperatorEnum.NE:
-                match = (observed != expected)
-                return (ComplianceStatus.PASS, "NOT_EQUAL") if match else (ComplianceStatus.FAIL, "EQUAL")
+        elif operator == OperatorEnum.NE:
+            match = cls._values_equivalent(observed, expected)
+            return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
-            elif operator in (OperatorEnum.GT, OperatorEnum.GTE, OperatorEnum.LT, OperatorEnum.LTE):
-                obs_num = float(observed)
-                exp_num = float(expected)
+        elif operator in (OperatorEnum.GT, OperatorEnum.GTE, OperatorEnum.LT, OperatorEnum.LTE):
+            obs_num = cls._normalize_number(observed)
+            exp_num = cls._normalize_number(expected)
 
-                if operator == OperatorEnum.GT:
-                    return (ComplianceStatus.PASS, "GREATER_THAN") if obs_num > exp_num else (ComplianceStatus.FAIL, "NOT_GREATER_THAN")
-                elif operator == OperatorEnum.GTE:
-                    return (ComplianceStatus.PASS, "GREATER_THAN_OR_EQUAL") if obs_num >= exp_num else (ComplianceStatus.FAIL, "LESS_THAN")
-                elif operator == OperatorEnum.LT:
-                    return (ComplianceStatus.PASS, "LESS_THAN") if obs_num < exp_num else (ComplianceStatus.FAIL, "NOT_LESS_THAN")
-                elif operator == OperatorEnum.LTE:
-                    return (ComplianceStatus.PASS, "LESS_THAN_OR_EQUAL") if obs_num <= exp_num else (ComplianceStatus.FAIL, "GREATER_THAN")
+            if obs_num is None or exp_num is None:
+                return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TYPE_CONVERSION_ERROR
 
-            elif operator == OperatorEnum.COUNT_GTE:
-                obs_count = int(observed) if not isinstance(observed, list) else len(observed)
-                exp_count = int(expected)
-                return (ComplianceStatus.PASS, "COUNT_SUFFICIENT") if obs_count >= exp_count else (ComplianceStatus.FAIL, "COUNT_INSUFFICIENT")
+            if operator == OperatorEnum.GT:
+                return (ComplianceStatus.PASS, ReasonCode.GREATER_THAN) if obs_num > exp_num else (ComplianceStatus.FAIL, ReasonCode.NOT_GREATER_THAN)
+            elif operator == OperatorEnum.GTE:
+                return (ComplianceStatus.PASS, ReasonCode.GREATER_THAN_OR_EQUAL) if obs_num >= exp_num else (ComplianceStatus.FAIL, ReasonCode.LESS_THAN)
+            elif operator == OperatorEnum.LT:
+                return (ComplianceStatus.PASS, ReasonCode.LESS_THAN) if obs_num < exp_num else (ComplianceStatus.FAIL, ReasonCode.NOT_LESS_THAN)
+            elif operator == OperatorEnum.LTE:
+                return (ComplianceStatus.PASS, ReasonCode.LESS_THAN_OR_EQUAL) if obs_num <= exp_num else (ComplianceStatus.FAIL, ReasonCode.GREATER_THAN)
 
-            elif operator == OperatorEnum.DATE_BEFORE:
-                obs_dt = cls._parse_date(observed)
-                exp_dt = cls._parse_date(expected)
-                if obs_dt and exp_dt:
-                    return (ComplianceStatus.PASS, "BEFORE_DATE") if obs_dt < exp_dt else (ComplianceStatus.FAIL, "ON_OR_AFTER_DATE")
-                return ComplianceStatus.REVIEW_REQUIRED, "MALFORMED_DATE"
+        elif operator == OperatorEnum.COUNT_GTE:
+            if isinstance(observed, (list, tuple, set)):
+                obs_count = len(observed)
+            else:
+                num = cls._normalize_number(observed)
+                if num is None:
+                    return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TYPE_CONVERSION_ERROR
+                obs_count = int(num)
 
+            exp_num = cls._normalize_number(expected)
+            if exp_num is None or obs_count < 0:
+                return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TYPE_CONVERSION_ERROR
+
+            exp_count = int(exp_num)
+            return (ComplianceStatus.PASS, ReasonCode.COUNT_SUFFICIENT) if obs_count >= exp_count else (ComplianceStatus.FAIL, ReasonCode.COUNT_INSUFFICIENT)
+
+        elif operator in (OperatorEnum.DATE_BEFORE, OperatorEnum.DATE_AFTER):
+            obs_dt = cls._normalize_date(observed)
+            exp_dt = cls._normalize_date(expected)
+
+            if obs_dt is None or exp_dt is None:
+                return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.MALFORMED_DATE
+
+            if operator == OperatorEnum.DATE_BEFORE:
+                return (ComplianceStatus.PASS, ReasonCode.BEFORE_DATE) if obs_dt < exp_dt else (ComplianceStatus.FAIL, ReasonCode.ON_OR_AFTER_DATE)
             elif operator == OperatorEnum.DATE_AFTER:
-                obs_dt = cls._parse_date(observed)
-                exp_dt = cls._parse_date(expected)
-                if obs_dt and exp_dt:
-                    return (ComplianceStatus.PASS, "AFTER_DATE") if obs_dt > exp_dt else (ComplianceStatus.FAIL, "ON_OR_BEFORE_DATE")
-                return ComplianceStatus.REVIEW_REQUIRED, "MALFORMED_DATE"
+                return (ComplianceStatus.PASS, ReasonCode.AFTER_DATE) if obs_dt > exp_dt else (ComplianceStatus.FAIL, ReasonCode.ON_OR_BEFORE_DATE)
 
-            elif operator == OperatorEnum.IN:
-                exp_list = expected if isinstance(expected, list) else [expected]
-                return (ComplianceStatus.PASS, "VALUE_IN_SET") if observed in exp_list else (ComplianceStatus.FAIL, "VALUE_NOT_IN_SET")
+        elif operator == OperatorEnum.IN:
+            exp_list = expected if isinstance(expected, (list, tuple, set)) else [expected]
+            match = any(cls._values_equivalent(observed, item) for item in exp_list)
+            return (ComplianceStatus.PASS, ReasonCode.VALUE_IN_SET) if match else (ComplianceStatus.FAIL, ReasonCode.VALUE_NOT_IN_SET)
 
-            elif operator == OperatorEnum.NOT_IN:
-                exp_list = expected if isinstance(expected, list) else [expected]
-                return (ComplianceStatus.PASS, "VALUE_NOT_IN_SET") if observed not in exp_list else (ComplianceStatus.FAIL, "VALUE_IN_SET")
+        elif operator == OperatorEnum.NOT_IN:
+            exp_list = expected if isinstance(expected, (list, tuple, set)) else [expected]
+            match = any(cls._values_equivalent(observed, item) for item in exp_list)
+            return (ComplianceStatus.PASS, ReasonCode.VALUE_NOT_IN_SET) if not match else (ComplianceStatus.FAIL, ReasonCode.VALUE_IN_SET)
 
-        except (ValueError, TypeError) as exc:
-            return ComplianceStatus.REVIEW_REQUIRED, f"TYPE_CONVERSION_ERROR: {exc}"
-
-        return ComplianceStatus.UNKNOWN, "UNSUPPORTED_OPERATOR"
-
-    @staticmethod
-    def _parse_date(val: Any) -> datetime | None:
-        if isinstance(val, datetime):
-            return val
-        if isinstance(val, str):
-            for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%d/%m/%Y"):
-                try:
-                    return datetime.strptime(val, fmt).replace(tzinfo=timezone.utc)
-                except ValueError:
-                    continue
-        return None
+        return ComplianceStatus.UNKNOWN, ReasonCode.UNSUPPORTED_OPERATOR
