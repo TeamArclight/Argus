@@ -25,6 +25,23 @@ class HumanDecisionStatus(str, Enum):
     MANUAL_REVIEW = "MANUAL_REVIEW"
 
 
+class UserRole(str, Enum):
+    """Canonical procurement RBAC roles."""
+    ADMIN = "ADMIN"
+    PROCUREMENT_OFFICER = "PROCUREMENT_OFFICER"
+    REVIEWER = "REVIEWER"
+    AUDITOR = "AUDITOR"
+
+
+class AuthenticatedPrincipal(BaseModel):
+    """Lightweight authenticated principal representation derived from validated JWT claims."""
+    user_id: str
+    name: str | None = None
+    role: UserRole
+    email: str | None = None
+
+
+
 class OperatorEnum(str, Enum):
     """Supported deterministic rule operators."""
     EQ = "EQ"
@@ -345,18 +362,23 @@ class RiskSignalRead(BaseModel):
 
 
 class HumanDecisionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: HumanDecisionStatus
+    reason_code: str
+    remarks: str | None = None
+
+
+class HumanDecisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    bidder_id: str
     status: HumanDecisionStatus
     reason_code: str
     remarks: str | None = None
     officer_id: str
     officer_name: str
-
-
-class HumanDecisionRead(HumanDecisionCreate):
-    model_config = ConfigDict(from_attributes=True)
-    id: str
-    bidder_id: str
     decided_at: datetime
+
 
 
 class ComplianceRunRead(BaseModel):

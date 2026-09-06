@@ -89,7 +89,12 @@ class BidVerificationService:
         self.blacklist_adapter = BlacklistVerificationAdapter()
 
     async def run_verification_workflow(
-        self, bidder_id: str, job_id: str | None = None
+        self,
+        bidder_id: str,
+        job_id: str | None = None,
+        triggered_by: str | None = None,
+        actor_id: str = "SYSTEM",
+        actor_role: str = "SYSTEM",
     ) -> ComplianceOverviewRead:
         # 1. Fetch bidder and associated tender
         bidder = self.db.query(Bidder).filter(Bidder.id == bidder_id).first()
@@ -168,6 +173,7 @@ class BidVerificationService:
             job_id=job_id,
             execution_status=JobStatus.RUNNING,
             overall_status=None,
+            triggered_by=triggered_by,
             started_at=datetime.now(timezone.utc),
             created_at=datetime.now(timezone.utc),
             rule_version="1.0",
@@ -194,8 +200,11 @@ class BidVerificationService:
             action="VERIFICATION_STARTED",
             entity_type="BIDDER",
             entity_id=bidder.id,
+            actor_id=actor_id,
+            actor_role=actor_role,
             payload={"gstin": bidder.gstin, "udyam": bidder.udyam_number, "job_id": job_id, "run_id": run.id},
         )
+
 
         try:
             # 2. Collect bidder facts

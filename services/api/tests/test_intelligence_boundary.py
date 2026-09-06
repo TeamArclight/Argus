@@ -7,9 +7,10 @@ from app.core.config import settings
 from app.db.session import Base, engine, get_db
 from app.main import app
 from app.models.domain import Bidder, Document, ExtractedFact, Tender
-from app.schemas.canonical import RAGQueryRequest
+from app.schemas.canonical import RAGQueryRequest, UserRole
 from app.services.ai_adapter import AIServiceAdapter
 from app.services.rag_adapter import RAGServiceAdapter
+from tests.auth_helpers import get_auth_headers
 
 
 @pytest.fixture(autouse=True)
@@ -196,17 +197,18 @@ def test_intelligence_health_endpoint_configurations(monkeypatch):
 
 
 def test_tender_processing_without_raw_document_uri_fails():
+    headers = get_auth_headers(UserRole.ADMIN)
     with TestClient(app) as client:
         t_payload = {
             "tender_number": "GEM/2026/NO_DOC/001",
             "title": "Tender Missing Raw Document URI",
             "raw_document_uri": None,
         }
-        resp = client.post("/api/v1/tenders", json=t_payload)
+        resp = client.post("/api/v1/tenders", json=t_payload, headers=headers)
         assert resp.status_code == 201
         tender_id = resp.json()["id"]
 
-        proc_resp = client.post(f"/api/v1/tenders/{tender_id}/process")
+        proc_resp = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers)
         assert proc_resp.status_code == 200
         job = proc_resp.json()
         assert job["status"] == "FAILED"
@@ -214,20 +216,21 @@ def test_tender_processing_without_raw_document_uri_fails():
 
 
 def test_bidder_creation_creates_no_documents_or_extracted_facts():
+    headers = get_auth_headers(UserRole.ADMIN)
     with TestClient(app) as client:
         t_payload = {
             "tender_number": "GEM/2026/BIDDER_TEST/001",
             "title": "Tender for Bidder Creation Test",
             "raw_document_uri": "s3://tenders/doc.pdf",
         }
-        t_resp = client.post("/api/v1/tenders", json=t_payload).json()
+        t_resp = client.post("/api/v1/tenders", json=t_payload, headers=headers).json()
         tender_id = t_resp["id"]
 
         b_payload = {
             "bidder_name": "Clean Entity Pvt Ltd",
             "gstin": "27AAAAA0000A1Z5",
         }
-        b_resp = client.post(f"/api/v1/tenders/{tender_id}/bidders", json=b_payload)
+        b_resp = client.post(f"/api/v1/tenders/{tender_id}/bidders", json=b_payload, headers=headers)
         assert b_resp.status_code == 201
         bidder_id = b_resp.json()["id"]
 
@@ -238,6 +241,7 @@ def test_bidder_creation_creates_no_documents_or_extracted_facts():
 
         assert doc_count == 0
         assert fact_count == 0
+
 
 
 @pytest.mark.asyncio

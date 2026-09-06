@@ -6,6 +6,33 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get Current User Profile",
+        "description": "Returns profile and active role of the currently authenticated principal.",
+        "operationId": "get_current_user_profile_api_v1_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticatedPrincipal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/tenders": {
       "post": {
         "tags": [
@@ -13,6 +40,11 @@
         ],
         "summary": "Create Tender",
         "operationId": "create_tender_api_v1_tenders_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -52,6 +84,11 @@
         ],
         "summary": "List Tenders",
         "operationId": "list_tenders_api_v1_tenders_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "skip",
@@ -109,6 +146,11 @@
         ],
         "summary": "Get Tender",
         "operationId": "get_tender_api_v1_tenders__id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -151,6 +193,11 @@
         ],
         "summary": "Process Tender",
         "operationId": "process_tender_api_v1_tenders__id__process_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -193,6 +240,11 @@
         ],
         "summary": "Get Tender Requirements",
         "operationId": "get_tender_requirements_api_v1_tenders__id__requirements_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -239,6 +291,11 @@
         ],
         "summary": "Create Bidder",
         "operationId": "create_bidder_api_v1_tenders__tender_id__bidders_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "tender_id",
@@ -289,6 +346,11 @@
         ],
         "summary": "List Bidders For Tender",
         "operationId": "list_bidders_for_tender_api_v1_tenders__tender_id__bidders_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "tender_id",
@@ -335,6 +397,11 @@
         ],
         "summary": "Get Bidder",
         "operationId": "get_bidder_api_v1_bidders__id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -377,6 +444,11 @@
         ],
         "summary": "Verify Bidder",
         "operationId": "verify_bidder_api_v1_bidders__id__verify_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -419,6 +491,11 @@
         ],
         "summary": "Get Bidder Compliance",
         "operationId": "get_bidder_compliance_api_v1_bidders__id__compliance_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -454,6 +531,113 @@
         }
       }
     },
+    "/api/v1/bidders/{bidder_id}/runs": {
+      "get": {
+        "tags": [
+          "Bidders"
+        ],
+        "summary": "List Bidder Compliance Runs",
+        "operationId": "list_bidder_compliance_runs_api_v1_bidders__bidder_id__runs_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bidder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bidder Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComplianceRunSummaryRead"
+                  },
+                  "title": "Response List Bidder Compliance Runs Api V1 Bidders  Bidder Id  Runs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bidders/{bidder_id}/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "Bidders"
+        ],
+        "summary": "Get Bidder Compliance Run Detail",
+        "operationId": "get_bidder_compliance_run_detail_api_v1_bidders__bidder_id__runs__run_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bidder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bidder Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplianceRunDetailRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bidders/{id}/decision": {
       "post": {
         "tags": [
@@ -461,6 +645,11 @@
         ],
         "summary": "Record Human Decision",
         "operationId": "record_human_decision_api_v1_bidders__id__decision_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -513,6 +702,11 @@
         ],
         "summary": "Get Bidder Report",
         "operationId": "get_bidder_report_api_v1_bidders__id__report_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -522,6 +716,24 @@
               "type": "string",
               "title": "Id"
             }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional compliance run ID",
+              "title": "Run Id"
+            },
+            "description": "Optional compliance run ID"
           }
         ],
         "responses": {
@@ -555,6 +767,11 @@
         ],
         "summary": "Get Evaluation Evidence",
         "operationId": "get_evaluation_evidence_api_v1_evaluations__id__evidence_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -601,6 +818,11 @@
         ],
         "summary": "Get Job Status",
         "operationId": "get_job_status_api_v1_jobs__id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -643,6 +865,11 @@
         ],
         "summary": "Stream Job Events",
         "operationId": "stream_job_events_api_v1_jobs__id__events_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -709,6 +936,114 @@
               }
             }
           }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/audit/events": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "summary": "List Audit Events",
+        "description": "Returns audit log records matching specified entity/action filters.",
+        "operationId": "list_audit_events_api_v1_audit_events_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "entity_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by entity type (e.g. BIDDER, TENDER)",
+              "title": "Entity Type"
+            },
+            "description": "Filter by entity type (e.g. BIDDER, TENDER)"
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by entity ID",
+              "title": "Entity Id"
+            },
+            "description": "Filter by entity ID"
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by action name",
+              "title": "Action"
+            },
+            "description": "Filter by action name"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -756,6 +1091,46 @@
   },
   "components": {
     "schemas": {
+      "AuthenticatedPrincipal": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "title": "AuthenticatedPrincipal",
+        "description": "Lightweight authenticated principal representation derived from validated JWT claims."
+      },
       "BidderCreate": {
         "properties": {
           "bidder_name": {
@@ -970,6 +1345,215 @@
           "human_decision_status"
         ],
         "title": "ComplianceOverviewRead"
+      },
+      "ComplianceRunDetailRead": {
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/ComplianceRunRead"
+          },
+          "verification_results": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationResultRead"
+            },
+            "type": "array",
+            "title": "Verification Results"
+          },
+          "rule_evaluations": {
+            "items": {
+              "$ref": "#/components/schemas/RuleEvaluationRead"
+            },
+            "type": "array",
+            "title": "Rule Evaluations"
+          },
+          "risk_signals": {
+            "items": {
+              "$ref": "#/components/schemas/RiskSignalRead"
+            },
+            "type": "array",
+            "title": "Risk Signals"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run"
+        ],
+        "title": "ComplianceRunDetailRead"
+      },
+      "ComplianceRunRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "bidder_id": {
+            "type": "string",
+            "title": "Bidder Id"
+          },
+          "tender_id": {
+            "type": "string",
+            "title": "Tender Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "execution_status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "overall_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComplianceStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "triggered_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggered By"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "rule_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Version",
+            "default": "1.0"
+          },
+          "summary_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Summary Json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "bidder_id",
+          "tender_id",
+          "execution_status",
+          "started_at",
+          "created_at"
+        ],
+        "title": "ComplianceRunRead"
+      },
+      "ComplianceRunSummaryRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "bidder_id": {
+            "type": "string",
+            "title": "Bidder Id"
+          },
+          "tender_id": {
+            "type": "string",
+            "title": "Tender Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "execution_status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "overall_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComplianceStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "evaluation_count": {
+            "type": "integer",
+            "title": "Evaluation Count",
+            "default": 0
+          },
+          "risk_count": {
+            "type": "integer",
+            "title": "Risk Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "bidder_id",
+          "tender_id",
+          "execution_status",
+          "started_at"
+        ],
+        "title": "ComplianceRunSummaryRead"
       },
       "ComplianceStatus": {
         "type": "string",
@@ -1231,27 +1815,26 @@
               }
             ],
             "title": "Remarks"
-          },
-          "officer_id": {
-            "type": "string",
-            "title": "Officer Id"
-          },
-          "officer_name": {
-            "type": "string",
-            "title": "Officer Name"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "status",
-          "reason_code",
-          "officer_id",
-          "officer_name"
+          "reason_code"
         ],
         "title": "HumanDecisionCreate"
       },
       "HumanDecisionRead": {
         "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "bidder_id": {
+            "type": "string",
+            "title": "Bidder Id"
+          },
           "status": {
             "$ref": "#/components/schemas/HumanDecisionStatus"
           },
@@ -1278,14 +1861,6 @@
             "type": "string",
             "title": "Officer Name"
           },
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "bidder_id": {
-            "type": "string",
-            "title": "Bidder Id"
-          },
           "decided_at": {
             "type": "string",
             "format": "date-time",
@@ -1294,12 +1869,12 @@
         },
         "type": "object",
         "required": [
+          "id",
+          "bidder_id",
           "status",
           "reason_code",
           "officer_id",
           "officer_name",
-          "id",
-          "bidder_id",
           "decided_at"
         ],
         "title": "HumanDecisionRead"
@@ -1732,6 +2307,17 @@
             "type": "string",
             "title": "Bidder Id"
           },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
           "severity": {
             "$ref": "#/components/schemas/RiskSeverity"
           },
@@ -1781,6 +2367,17 @@
           "bidder_id": {
             "type": "string",
             "title": "Bidder Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
           },
           "requirement_id": {
             "type": "string",
@@ -2139,6 +2736,17 @@
         ],
         "title": "TenderRequirementRead"
       },
+      "UserRole": {
+        "type": "string",
+        "enum": [
+          "ADMIN",
+          "PROCUREMENT_OFFICER",
+          "REVIEWER",
+          "AUDITOR"
+        ],
+        "title": "UserRole",
+        "description": "Canonical procurement RBAC roles."
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -2199,6 +2807,17 @@
           "bidder_id": {
             "type": "string",
             "title": "Bidder Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
           },
           "field": {
             "type": "string",
@@ -2312,6 +2931,12 @@
         ],
         "title": "VerificationStatus",
         "description": "External verification outcome status."
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   }
