@@ -49,14 +49,16 @@ def get_evaluation_evidence(id: str, db: Session = Depends(get_db)):
         # Check VerificationResult table
         ver_db = db.query(VerificationResult).filter(VerificationResult.id == ev_id).first()
         if ver_db:
+            source_val = ver_db.source.value if hasattr(ver_db.source, "value") else str(ver_db.source)
+            status_val = ver_db.status.value if hasattr(ver_db.status, "value") else str(ver_db.status)
             evidence_list.append(
                 EvidenceRead(
                     id=ver_db.id,
                     entity_type="VERIFICATION_RESULT",
                     entity_id=ver_db.bidder_id,
-                    snippet=f"Registry '{ver_db.source.value}' response for field '{ver_db.field}': status {ver_db.status.value}",
+                    snippet=f"Registry '{source_val}' response for field '{ver_db.field}': status {status_val}",
                     source_uri=ver_db.verification_reference,
-                    location_metadata={"status": ver_db.status.value},
+                    location_metadata={"status": status_val},
                     created_at=ver_db.checked_at,
                 )
             )
