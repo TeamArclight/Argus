@@ -263,7 +263,7 @@ class Evidence(Base):
     verification_mode: Mapped[VerificationMode | None] = mapped_column(String, nullable=True)
     verification_status: Mapped[VerificationStatus | None] = mapped_column(String, nullable=True)
     provider_identifier: Mapped[str | None] = mapped_column(String, nullable=True)
-    observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     compliance_run: Mapped["ComplianceRun | None"] = relationship("ComplianceRun", back_populates="evidence")
     bidder: Mapped["Bidder | None"] = relationship("Bidder")

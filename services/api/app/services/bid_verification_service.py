@@ -293,10 +293,15 @@ class BidVerificationService:
                 )
                 self.db.add(db_v)
 
-                ev_v = EvidenceNormalizationService.normalize_verification_evidence(
-                    self.db, bidder.id, tender.id, db_v, run_id=run.id
-                )
-                ver_evidence_map[db_v.id] = ev_v
+            self.db.flush()
+
+            for v in verifications_schema:
+                db_v = self.db.query(VerificationResult).filter_by(id=v.id).first()
+                if db_v:
+                    ev_v = EvidenceNormalizationService.normalize_verification_evidence(
+                        self.db, bidder.id, tender.id, db_v, run_id=run.id
+                    )
+                    ver_evidence_map[db_v.id] = ev_v
 
             if job:
                 job.current_stage = JobStage.COMPLIANCE

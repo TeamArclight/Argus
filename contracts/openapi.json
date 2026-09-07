@@ -1744,7 +1744,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Get Metrics Api V1 Metrics Get"
                 }
@@ -1855,7 +1854,6 @@
           "metadata_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -1924,7 +1922,6 @@
           "metadata_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -1971,7 +1968,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "contentMediaType": "application/octet-stream",
+            "format": "binary",
             "title": "File"
           },
           "document_type": {
@@ -1989,7 +1986,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "contentMediaType": "application/octet-stream",
+            "format": "binary",
             "title": "File"
           },
           "document_type": {
@@ -2158,7 +2155,6 @@
           },
           "evidence_refs": {
             "items": {
-              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -2166,7 +2162,6 @@
           },
           "verification_refs": {
             "items": {
-              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -2174,7 +2169,6 @@
           },
           "source_refs": {
             "items": {
-              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -2378,12 +2372,10 @@
             "default": "1.0"
           },
           "summary_json": {
-            "additionalProperties": true,
             "type": "object",
             "title": "Summary Json"
           },
           "input_snapshot_json": {
-            "additionalProperties": true,
             "type": "object",
             "title": "Input Snapshot Json"
           }
@@ -2558,7 +2550,6 @@
           "metadata_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2653,7 +2644,6 @@
           "location_metadata": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2881,7 +2871,6 @@
           "metadata_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3107,7 +3096,6 @@
           "payload": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3365,7 +3353,6 @@
           "filters": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3546,7 +3533,6 @@
             "title": "Id"
           },
           "metadata": {
-            "additionalProperties": true,
             "type": "object",
             "title": "Metadata"
           }
@@ -3660,7 +3646,6 @@
             "title": "Source Mode"
           },
           "metadata_json": {
-            "additionalProperties": true,
             "type": "object",
             "title": "Metadata Json"
           },
@@ -3878,7 +3863,6 @@
           "metadata_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3965,7 +3949,6 @@
           "metadata_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -4099,7 +4082,6 @@
           "metadata_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -4208,7 +4190,6 @@
           "metadata_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -4278,13 +4259,6 @@
           "type": {
             "type": "string",
             "title": "Error Type"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "ctx": {
-            "type": "object",
-            "title": "Context"
           }
         },
         "type": "object",
@@ -4389,7 +4363,6 @@
           "location_metadata": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {

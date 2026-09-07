@@ -21,7 +21,7 @@ def test_settings_loading_and_cors():
 
 def test_database_url_single_source():
     assert DATABASE_URL == settings.DATABASE_URL
-    assert str(engine.url) == settings.DATABASE_URL
+    assert engine.url.render_as_string(hide_password=False) == settings.DATABASE_URL
 
 
 @pytest.mark.asyncio

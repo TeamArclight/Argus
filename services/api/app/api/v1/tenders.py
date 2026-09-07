@@ -440,7 +440,7 @@ def create_manual_tender_requirement(
         doc_row = db.query(Document).filter(Document.id == payload.document_id).first()
         if not doc_row or doc_row.tender_id != tender_id or doc_row.bidder_id is not None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid document_id '{payload.document_id}': document does not belong to tender {tender_id}.",
             )
 
