@@ -393,7 +393,6 @@ class BidVerificationService:
                 documents=bidder_docs_dict,
                 bidder_data=bidder_data,
                 comparison_metadata=comparison_metadata,
-                comparison_authorized=True,
                 freshness_policy=RiskEngine.DEFAULT_FRESHNESS_DAYS,
                 evaluation_timestamp=eval_ts,
             )
@@ -450,7 +449,10 @@ class BidVerificationService:
                             continue
                         if f_obj.document_id:
                             d_obj = doc_by_id.get(f_obj.document_id)
-                            if not d_obj or d_obj.bidder_id != bidder.id:
+                            if not d_obj:
+                                unmapped_ids.append(ref.id)
+                                continue
+                            if d_obj.bidder_id is not None and d_obj.bidder_id != bidder.id:
                                 unmapped_ids.append(ref.id)
                                 continue
 
@@ -482,7 +484,18 @@ class BidVerificationService:
 
                     elif ref.ref_type == RiskInputType.DOCUMENT:
                         d_obj = doc_by_id.get(ref.id)
-                        if not d_obj or d_obj.bidder_id != bidder.id or d_obj.tender_id != tender.id:
+                        if not d_obj:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        if d_obj.bidder_id is not None:
+                            if d_obj.bidder_id != bidder.id or bidder.tender_id != tender.id:
+                                unmapped_ids.append(ref.id)
+                                continue
+                        elif d_obj.tender_id is not None:
+                            if d_obj.tender_id != tender.id:
+                                unmapped_ids.append(ref.id)
+                                continue
+                        else:
                             unmapped_ids.append(ref.id)
                             continue
                         mapped_refs.append(RiskInputRef(ref_type=RiskInputType.DOCUMENT, id=ref.id))

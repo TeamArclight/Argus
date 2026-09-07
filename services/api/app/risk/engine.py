@@ -63,7 +63,6 @@ class RiskEngine:
         bidder_data: dict[str, Any],
         evaluation_timestamp: datetime,
         comparison_metadata: list[dict[str, Any]] | None = None,
-        comparison_authorized: bool = True,
         freshness_policy: dict[str, int] | None = None,
     ) -> list[RiskSignalCandidate]:
         """
@@ -81,7 +80,7 @@ class RiskEngine:
 
         # 2. Cross-Document Consistency & OEM Expiry Checks
         cls._check_cross_document_financials(facts, candidates)
-        cls._check_duplicate_document_hashes(documents, comparison_metadata, comparison_authorized, candidates)
+        cls._check_duplicate_document_hashes(documents, comparison_metadata, candidates)
         cls._check_oem_authorizations(facts, eval_ts, candidates)
 
         # 3. Financial Consistency & Claimed vs Verified Checks
@@ -365,7 +364,7 @@ class RiskEngine:
                 other_meta = other_fact.metadata_json if isinstance(other_fact.metadata_json, dict) else {}
                 curr_2, unit_2, val_2, exp_2 = cls._parse_currency_and_scale(other_fact.value, other_meta)
 
-                # Check non-finite / malformed
+                # 1. Non-finite / unparseable check
                 if val_1 is None or val_2 is None:
                     candidates.append(
                         RiskSignalCandidate(
@@ -383,8 +382,64 @@ class RiskEngine:
                     )
                     continue
 
-                # Check currency compatibility
-                if curr_1 and curr_2 and curr_1 != curr_2:
+                # 2. Check defined financial period for average_annual_turnover
+                if field_name == "financial.average_annual_turnover":
+                    p1 = base_meta.get("averaging_period")
+                    p2 = other_meta.get("averaging_period")
+                    p1_clean = str(p1).strip() if p1 and str(p1).strip().upper() not in ("UNSPECIFIED_PERIOD", "NONE", "") else None
+                    p2_clean = str(p2).strip() if p2 and str(p2).strip().upper() not in ("UNSPECIFIED_PERIOD", "NONE", "") else None
+
+                    if not p1_clean or not p2_clean:
+                        candidates.append(
+                            RiskSignalCandidate(
+                                severity=RiskSeverity.MEDIUM,
+                                signal_type="MISSING_FINANCIAL_PERIOD",
+                                title="Missing Financial Averaging Period",
+                                description=f"Extracted average annual turnover claim for FY {fy} lacks a defined averaging period (e.g. 3-year vs 5-year average). Numerical comparison deferred.",
+                                reason_code="MISSING_FINANCIAL_PERIOD",
+                                input_refs=[
+                                    RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=base_fact.id),
+                                    RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=other_fact.id),
+                                ],
+                                metadata_json={"period_1": p1_clean, "period_2": p2_clean, "financial_year": fy},
+                            )
+                        )
+                        continue
+                    elif p1_clean != p2_clean:
+                        candidates.append(
+                            RiskSignalCandidate(
+                                severity=RiskSeverity.MEDIUM,
+                                signal_type="AVERAGING_PERIOD_MISMATCH",
+                                title="Incompatible Turnover Averaging Periods",
+                                description=f"Extracted average annual turnover claims for FY {fy} use conflicting averaging periods ({p1_clean} vs {p2_clean}). Numerical comparison deferred.",
+                                reason_code="AVERAGING_PERIOD_MISMATCH",
+                                input_refs=[
+                                    RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=base_fact.id),
+                                    RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=other_fact.id),
+                                ],
+                                metadata_json={"period_1": p1_clean, "period_2": p2_clean, "financial_year": fy},
+                            )
+                        )
+                        continue
+
+                # 3. Check explicit currency context
+                if not curr_1 or not curr_2:
+                    candidates.append(
+                        RiskSignalCandidate(
+                            severity=RiskSeverity.MEDIUM,
+                            signal_type="MISSING_FINANCIAL_CURRENCY",
+                            title="Missing Currency Context in Financial Claims",
+                            description=f"Turnover claims for FY {fy} lack explicit currency context. Silent assumption of currency equivalence is prohibited.",
+                            reason_code="MISSING_FINANCIAL_CURRENCY",
+                            input_refs=[
+                                RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=base_fact.id),
+                                RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=other_fact.id),
+                            ],
+                            metadata_json={"currency_1": curr_1, "currency_2": curr_2, "financial_year": fy},
+                        )
+                    )
+                    continue
+                elif curr_1.upper() != curr_2.upper():
                     candidates.append(
                         RiskSignalCandidate(
                             severity=RiskSeverity.MEDIUM,
@@ -401,8 +456,24 @@ class RiskEngine:
                     )
                     continue
 
-                # Check unit compatibility (explicit vs missing bare number)
-                if exp_1 != exp_2:
+                # 4. Check explicit scale/unit context
+                if not exp_1 and not exp_2:
+                    candidates.append(
+                        RiskSignalCandidate(
+                            severity=RiskSeverity.MEDIUM,
+                            signal_type="MISSING_FINANCIAL_UNIT",
+                            title="Missing Unit/Scale Context on Financial Claims",
+                            description=f"Turnover claims for FY {fy} lack explicit scale/unit context. Bare numbers cannot be assumed to be base units.",
+                            reason_code="MISSING_FINANCIAL_UNIT",
+                            input_refs=[
+                                RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=base_fact.id),
+                                RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=other_fact.id),
+                            ],
+                            metadata_json={"unit_1": unit_1, "unit_2": unit_2, "financial_year": fy},
+                        )
+                    )
+                    continue
+                elif exp_1 != exp_2:
                     candidates.append(
                         RiskSignalCandidate(
                             severity=RiskSeverity.MEDIUM,
@@ -419,7 +490,7 @@ class RiskEngine:
                     )
                     continue
 
-                # Compatible metric, FY, currency, unit -> numerical comparison
+                # 5. Compatible metric, FY, period, currency, scale -> numerical comparison
                 if abs(val_1 - val_2) > 0.01:
                     candidates.append(
                         RiskSignalCandidate(
@@ -447,10 +518,9 @@ class RiskEngine:
         cls,
         documents: list[dict[str, Any]],
         comparison_metadata: list[dict[str, Any]] | None,
-        comparison_authorized: bool,
         candidates: list[RiskSignalCandidate],
     ) -> None:
-        if not comparison_authorized or not comparison_metadata:
+        if not comparison_metadata:
             return
 
         doc_hashes = {d.get("sha256"): d for d in documents if d.get("sha256")}

@@ -271,8 +271,14 @@ async def get_bidder_compliance(
     snapshot_data = latest_run.input_snapshot_json or {}
     has_snapshot = _is_phase9_snapshot(snapshot_data)
 
-    if has_snapshot and "risk_signals" in snapshot_data and isinstance(snapshot_data["risk_signals"], list):
-        risk_schema = [RiskSignalRead.model_validate(r) if isinstance(r, dict) else r for r in snapshot_data["risk_signals"]]
+    if has_snapshot:
+        if "risk_signals" in snapshot_data and isinstance(snapshot_data["risk_signals"], list):
+            try:
+                risk_schema = [RiskSignalRead.model_validate(r) if isinstance(r, dict) else r for r in snapshot_data["risk_signals"]]
+            except Exception:
+                risk_schema = []
+        else:
+            risk_schema = []
     else:
         risk_db = (
             db.query(RiskSignal)

@@ -16,7 +16,7 @@ class ProviderRegistry:
         "gst": {
             "name": "GST Official Registry",
             "supported_fields": ["general.gstin", "financial.turnover"],
-            "capabilities": ["GSTIN Format Validation", "GST Active Registration Lookup", "Tax Filing Status Check"],
+            "capabilities": ["GSTIN Format Validation", "GST Active Registration Lookup", "Turnover Verification"],
         },
         "udyam": {
             "name": "MSME Udyam Portal",

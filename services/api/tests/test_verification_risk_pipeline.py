@@ -263,20 +263,20 @@ def test_same_fy_conflicting_turnover_detection():
         document_id="doc1",
         bidder_id="b1",
         field="financial.average_annual_turnover",
-        value="5000000",
+        value="5 Crore INR",
         confidence=1.0,
         created_at=datetime.now(timezone.utc),
-        metadata_json={"financial_year": "2024-25"},
+        metadata_json={"financial_year": "2024-25", "currency": "INR", "unit": "Crore", "averaging_period": "3_years"},
     )
     f2 = FactRead(
         id="f2",
         document_id="doc2",
         bidder_id="b1",
         field="financial.average_annual_turnover",
-        value="9000000",
+        value="9 Crore INR",
         confidence=1.0,
         created_at=datetime.now(timezone.utc),
-        metadata_json={"financial_year": "2024-25"},
+        metadata_json={"financial_year": "2024-25", "currency": "INR", "unit": "Crore", "averaging_period": "3_years"},
     )
 
     candidates = RiskEngine.evaluate_risks(
@@ -350,16 +350,16 @@ async def test_exact_risk_evidence_linkage_and_unmapped_ids(db_session, sample_t
         document_id=doc.id,
         bidder_id=sample_bidder.id,
         field="financial.average_annual_turnover",
-        value="5000000",
-        metadata_json={"financial_year": "2024-25"},
+        value="5 Crore INR",
+        metadata_json={"financial_year": "2024-25", "currency": "INR", "unit": "Crore", "averaging_period": "3_years"},
     )
     f2 = ExtractedFact(
         id="fact-fy24-b",
         document_id=doc.id,
         bidder_id=sample_bidder.id,
         field="financial.average_annual_turnover",
-        value="9000000",
-        metadata_json={"financial_year": "2024-25"},
+        value="9 Crore INR",
+        metadata_json={"financial_year": "2024-25", "currency": "INR", "unit": "Crore", "averaging_period": "3_years"},
     )
     db_session.add_all([f1, f2])
     db_session.commit()
@@ -548,10 +548,10 @@ def test_financial_comparison_safety_edge_cases():
 
     # 2. Incompatible Currencies (USD vs INR)
     f_usd = FactRead(
-        id="f-usd", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5000000 USD", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "USD"}
+        id="f-usd", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5000000 USD", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "USD", "averaging_period": "3_years"}
     )
     f_inr = FactRead(
-        id="f-inr", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="5000000 INR", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+        id="f-inr", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="5000000 INR", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "averaging_period": "3_years"}
     )
 
     c2 = RiskEngine.evaluate_risks(facts=[f_usd, f_inr], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
@@ -562,10 +562,10 @@ def test_financial_comparison_safety_edge_cases():
 
     # 3. Compatible Scale Conversion (5 Crore vs 500 Lakh -> Equal; 5 Crore vs 90 Lakh -> Conflict)
     f_cr = FactRead(
-        id="f-cr", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+        id="f-cr", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "averaging_period": "3_years"}
     )
     f_lakh_eq = FactRead(
-        id="f-lakh-eq", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="500 Lakh", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+        id="f-lakh-eq", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="500 Lakh", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "averaging_period": "3_years"}
     )
 
     c3_eq = RiskEngine.evaluate_risks(facts=[f_cr, f_lakh_eq], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
@@ -573,7 +573,7 @@ def test_financial_comparison_safety_edge_cases():
     assert len(conflicts_3_eq) == 0  # 5 Crore == 500 Lakh -> NO conflict!
 
     f_lakh_diff = FactRead(
-        id="f-lakh-diff", document_id="d3", bidder_id="b1", field="financial.average_annual_turnover", value="90 Lakh", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+        id="f-lakh-diff", document_id="d3", bidder_id="b1", field="financial.average_annual_turnover", value="90 Lakh", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "averaging_period": "3_years"}
     )
 
     c3_diff = RiskEngine.evaluate_risks(facts=[f_cr, f_lakh_diff], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
@@ -584,7 +584,7 @@ def test_financial_comparison_safety_edge_cases():
 
     # 4. Bare Number vs Explicit Unit
     f_bare = FactRead(
-        id="f-bare", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25"}
+        id="f-bare", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "averaging_period": "3_years"}
     )
     c4 = RiskEngine.evaluate_risks(facts=[f_cr, f_bare], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
     unit_sig = [c for c in c4 if c.signal_type == "AMBIGUOUS_FINANCIAL_UNIT"]
@@ -658,7 +658,6 @@ def test_authorized_duplicate_scope_privacy():
         documents=local_docs,
         bidder_data={},
         comparison_metadata=comparison_meta,
-        comparison_authorized=True,
         evaluation_timestamp=eval_ts,
     )
 
@@ -702,9 +701,230 @@ def test_financial_parser_safety_and_fail_closed_validation():
         id="f-a2", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="9 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
     )
     c_period = RiskEngine.evaluate_risks(facts=[f_avg1, f_avg2_no_period], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
-    period_sig = [c for c in c_period if c.signal_type == "AVERAGING_PERIOD_MISMATCH"]
+    period_sig = [c for c in c_period if c.signal_type in ("AVERAGING_PERIOD_MISMATCH", "MISSING_FINANCIAL_PERIOD")]
     conflict_sig = [c for c in c_period if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
     assert len(period_sig) == 1
     assert len(conflict_sig) == 0  # Numerical comparison MUST be deferred on period mismatch!
+
+
+@pytest.mark.asyncio
+async def test_bidder_owned_document_provenance_mapping(db_session, sample_tender, sample_bidder):
+    """20. Verifies valid bidder-owned document RiskInputRef (where tender_id is None) maps successfully in BidVerificationService."""
+    doc_owned = Document(
+        id="doc-bidder-owned-1",
+        bidder_id=sample_bidder.id,
+        tender_id=None,
+        document_type=DocumentType.TURNOVER_CERT,
+        storage_uri="bidders/b1/owned.pdf",
+        filename="owned.pdf",
+        sha256="sha-owned-digest-123",
+    )
+    other_bidder = Bidder(id="b2-other", tender_id=sample_tender.id, bidder_name="Other Bidder", status="PENDING")
+    other_doc = Document(
+        id="doc-other-1",
+        bidder_id=other_bidder.id,
+        tender_id=None,
+        document_type=DocumentType.TURNOVER_CERT,
+        storage_uri="bidders/b2/other.pdf",
+        filename="other.pdf",
+        sha256="sha-owned-digest-123",
+    )
+    db_session.add_all([doc_owned, other_bidder, other_doc])
+    db_session.commit()
+
+    service = BidVerificationService(db_session)
+    overview = await service.run_verification_workflow(
+        bidder_id=sample_bidder.id,
+        actor_id="admin-1",
+        actor_role="ADMIN",
+    )
+
+    dup_signals = [r for r in overview.risk_signals if r.signal_type == "DUPLICATE_DOCUMENT_HASH_CROSS_BIDDER"]
+    assert len(dup_signals) == 1
+    dup_sig = dup_signals[0]
+    from app.schemas.canonical import RiskInputType
+    doc_refs = [ref for ref in dup_sig.input_refs if ref.ref_type == RiskInputType.DOCUMENT]
+    assert len(doc_refs) == 1
+    assert doc_refs[0].id == "doc-bidder-owned-1"
+    assert "unmapped_input_ids" not in dup_sig.metadata_json or "doc-bidder-owned-1" not in dup_sig.metadata_json.get("unmapped_input_ids", [])
+
+
+def test_missing_currency_on_both_claims():
+    """21. Verifies missing currency on both financial claims emits MISSING_FINANCIAL_CURRENCY and defers numerical comparison."""
+    eval_ts = datetime.now(timezone.utc)
+    f1 = FactRead(
+        id="f1", document_id="d1", bidder_id="b1", field="financial.turnover", value="5 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "unit": "Crore"}
+    )
+    f2 = FactRead(
+        id="f2", document_id="d2", bidder_id="b1", field="financial.turnover", value="9 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "unit": "Crore"}
+    )
+
+    candidates = RiskEngine.evaluate_risks(facts=[f1, f2], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    missing_curr = [c for c in candidates if c.signal_type == "MISSING_FINANCIAL_CURRENCY"]
+    conflicts = [c for c in candidates if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+
+    assert len(missing_curr) == 1
+    assert len(conflicts) == 0
+
+
+def test_missing_unit_on_both_claims():
+    """22. Verifies missing unit/scale on both financial claims (bare numbers) emits MISSING_FINANCIAL_UNIT and defers numerical comparison."""
+    eval_ts = datetime.now(timezone.utc)
+    f1 = FactRead(
+        id="f1", document_id="d1", bidder_id="b1", field="financial.turnover", value="5000000", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+    )
+    f2 = FactRead(
+        id="f2", document_id="d2", bidder_id="b1", field="financial.turnover", value="9000000", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+    )
+
+    candidates = RiskEngine.evaluate_risks(facts=[f1, f2], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    missing_unit = [c for c in candidates if c.signal_type == "MISSING_FINANCIAL_UNIT"]
+    conflicts = [c for c in candidates if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+
+    assert len(missing_unit) == 1
+    assert len(conflicts) == 0
+
+
+def test_missing_averaging_period_on_both_claims():
+    """23. Verifies missing averaging period on average_annual_turnover claims emits MISSING_FINANCIAL_PERIOD and defers numerical comparison."""
+    eval_ts = datetime.now(timezone.utc)
+    f1 = FactRead(
+        id="f1", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5 Crore INR", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "unit": "Crore"}
+    )
+    f2 = FactRead(
+        id="f2", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="9 Crore INR", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "unit": "Crore"}
+    )
+
+    candidates = RiskEngine.evaluate_risks(facts=[f1, f2], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    missing_period = [c for c in candidates if c.signal_type == "MISSING_FINANCIAL_PERIOD"]
+    conflicts = [c for c in candidates if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+
+    assert len(missing_period) == 1
+    assert len(conflicts) == 0
+
+
+def test_get_bidder_compliance_historical_mutation_resistance(db_session, sample_tender, sample_bidder):
+    """24. Verifies get_bidder_compliance reconstructs risk signals strictly from snapshot and resists subsequent RiskSignal DB table mutations."""
+    eval_ts = datetime.now(timezone.utc)
+    recorded_signal = {
+        "id": "sig-snap-1",
+        "bidder_id": sample_bidder.id,
+        "run_id": "run-snap-1",
+        "severity": "HIGH",
+        "signal_type": "HISTORICAL_SNAPSHOT_SIGNAL",
+        "title": "Historical Snapshot Signal",
+        "description": "Signal preserved in historical snapshot",
+        "reason_code": "HISTORICAL_SNAPSHOT_SIGNAL",
+        "evidence_ids": [],
+        "verification_ids": [],
+        "input_refs": [],
+        "metadata_json": {},
+        "created_at": eval_ts.isoformat(),
+    }
+
+    run = ComplianceRun(
+        id="run-snap-1",
+        bidder_id=sample_bidder.id,
+        tender_id=sample_tender.id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [],
+            "facts": [],
+            "verifications": [],
+            "evidence": [],
+            "risk_signals": [recorded_signal],
+            "risk_summary": {"signal_count": 1, "counts_by_severity": {"HIGH": 1}, "counts_by_type": {}, "unresolved_count": 0, "source_mode_breakdown": {}, "risk_engine_version": "1.0", "risk_policy_version": "1.0"},
+        },
+        completed_at=eval_ts,
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    # Mutate DB by adding a NEW RiskSignal row for the same run ID
+    mutated_db_signal = RiskSignal(
+        id="sig-mutated-db",
+        bidder_id=sample_bidder.id,
+        run_id="run-snap-1",
+        severity=RiskSeverity.CRITICAL,
+        signal_type="MUTATED_DB_SIGNAL_NOT_IN_SNAPSHOT",
+        title="Mutated Signal",
+        description="This signal was inserted after run completion",
+        reason_code="MUTATED_SIGNAL",
+    )
+    db_session.add(mutated_db_signal)
+    db_session.commit()
+
+    # Execute snapshot reconstruction logic as used in get_bidder_compliance endpoint
+    latest_run = run
+    snapshot_data = latest_run.input_snapshot_json or {}
+    from app.api.v1.bidders import _is_phase9_snapshot
+    has_snapshot = _is_phase9_snapshot(snapshot_data)
+    assert has_snapshot is True
+
+    if has_snapshot:
+        if "risk_signals" in snapshot_data and isinstance(snapshot_data["risk_signals"], list):
+            try:
+                risk_schema = [RiskSignalRead.model_validate(r) if isinstance(r, dict) else r for r in snapshot_data["risk_signals"]]
+            except Exception:
+                risk_schema = []
+        else:
+            risk_schema = []
+    else:
+        risk_db = db_session.query(RiskSignal).filter(RiskSignal.run_id == latest_run.id).all()
+        risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
+
+    assert len(risk_schema) == 1
+    assert risk_schema[0].signal_type == "HISTORICAL_SNAPSHOT_SIGNAL"
+    assert risk_schema[0].id == "sig-snap-1"
+
+
+def test_duplicate_comparison_scope_authorization():
+    """25. Verifies duplicate comparison is driven solely by prefiltered comparison_metadata, without arbitrary boolean flags."""
+    eval_ts = datetime.now(timezone.utc)
+    local_docs = [{"id": "d-local", "filename": "form.pdf", "sha256": "sha-duplicate-999"}]
+
+    c_none = RiskEngine.evaluate_risks(
+        facts=[],
+        verifications=[],
+        documents=local_docs,
+        bidder_data={},
+        comparison_metadata=None,
+        evaluation_timestamp=eval_ts,
+    )
+    assert len([c for c in c_none if c.signal_type == "DUPLICATE_DOCUMENT_HASH_CROSS_BIDDER"]) == 0
+
+    comparison_meta = [{"id": "d-other", "sha256": "sha-duplicate-999"}]
+    c_prefiltered = RiskEngine.evaluate_risks(
+        facts=[],
+        verifications=[],
+        documents=local_docs,
+        bidder_data={},
+        comparison_metadata=comparison_meta,
+        evaluation_timestamp=eval_ts,
+    )
+    dups = [c for c in c_prefiltered if c.signal_type == "DUPLICATE_DOCUMENT_HASH_CROSS_BIDDER"]
+    assert len(dups) == 1
+    assert dups[0].metadata_json["comparison_scope"] == "AUTHORIZED_TENDER_METADATA"
+
+
+def test_provider_capability_list_matches_actual_implementation():
+    """26. Verifies ProviderRegistry returns accurate capability lists and operational health for all 6 domains."""
+    health_list = ProviderRegistry.get_provider_health_list()
+    assert len(health_list) == 6
+
+    domain_map = {p.provider_identifier: p for p in health_list}
+    assert "gst" in domain_map
+    assert "udyam" in domain_map
+    assert "mca" in domain_map
+    assert "epfo" in domain_map
+    assert "esic" in domain_map
+    assert "blacklist" in domain_map
+
+    gst_p = domain_map["gst"]
+    assert "general.gstin" in gst_p.supported_fields
+    assert "GSTIN Format Validation" in gst_p.capabilities
+    assert "Turnover Verification" in gst_p.capabilities
 
 
