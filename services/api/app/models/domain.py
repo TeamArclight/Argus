@@ -328,3 +328,21 @@ class AuditEvent(Base):
     actor_role: Mapped[str] = mapped_column(String, nullable=False)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    key: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    principal_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False)
+    operation: Mapped[str] = mapped_column(String, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="PROCESSING", nullable=False)
+    response_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+

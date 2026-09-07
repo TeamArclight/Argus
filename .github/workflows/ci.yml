@@ -34,5 +34,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: pytest
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+      - name: Run Backend Pytest Suite
+        env:
+          ARGUS_JWT_SECRET: "12345678901234567890123456789012"
+        run: pytest
+      - name: Verify Alembic Migration Smoke Test
+        env:
+          ARGUS_JWT_SECRET: "12345678901234567890123456789012"
+          DATABASE_URL: "sqlite:///./ci_test_disposable.db"
+        run: |
+          python -m alembic upgrade head
+          python -m alembic check
+      - name: Verify OpenAPI Schema Drift
+        env:
+          ARGUS_JWT_SECRET: "12345678901234567890123456789012"
+        run: |
+          python -m app.export_openapi
+          diff -u candidate_openapi.json ../../contracts/openapi.json

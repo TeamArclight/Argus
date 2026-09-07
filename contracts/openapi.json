@@ -207,6 +207,22 @@
               "type": "string",
               "title": "Id"
             }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
+            }
           }
         ],
         "responses": {
@@ -690,6 +706,22 @@
             "schema": {
               "type": "string",
               "title": "Id"
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
             }
           }
         ],
@@ -1412,6 +1444,7 @@
           "Jobs & SSE"
         ],
         "summary": "Stream Job Events",
+        "description": "Streams real-time Server-Sent Events (SSE) for job progress with reconnection support.",
         "operationId": "stream_job_events_api_v1_jobs__id__events_get",
         "security": [
           {
@@ -1426,6 +1459,22 @@
             "schema": {
               "type": "string",
               "title": "Id"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
             }
           }
         ],
@@ -1648,6 +1697,23 @@
         }
       }
     },
+    "/health/readiness": {
+      "get": {
+        "summary": "Health Readiness",
+        "description": "Readiness probe checking database connectivity and storage availability.",
+        "operationId": "health_readiness_health_readiness_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/integrations": {
       "get": {
         "summary": "Health Integrations",
@@ -1665,6 +1731,32 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/metrics": {
+      "get": {
+        "summary": "Get Metrics",
+        "description": "Returns operational metrics (protected: ADMIN role required).",
+        "operationId": "get_metrics_api_v1_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Metrics Api V1 Metrics Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     }
   },

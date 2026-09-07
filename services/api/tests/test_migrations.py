@@ -50,6 +50,7 @@ def test_alembic_migration_upgrade_and_tables():
             "job_events",
             "human_decisions",
             "audit_events",
+            "idempotency_records",
             "alembic_version",
         }
 
@@ -59,7 +60,8 @@ def test_alembic_migration_upgrade_and_tables():
         with test_engine.connect() as connection:
             context = MigrationContext.configure(connection)
             current_rev = context.get_current_revision()
-            assert current_rev == "9e4516a29044", f"Unexpected current revision: {current_rev}"
+            assert current_rev == "9f5627b30055", f"Unexpected current revision: {current_rev}"
+
 
     finally:
         if test_engine is not None:
