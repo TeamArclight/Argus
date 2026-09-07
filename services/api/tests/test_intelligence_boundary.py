@@ -445,7 +445,7 @@ async def test_adapter_rejects_mismatched_file_bytes_sha256(monkeypatch):
     )
     assert res.success is False
     assert res.error_code == "DOCUMENT_SHA256_MISMATCH"
-    assert "does not match recorded document_sha256" in res.message
+    assert res.message == "Document content integrity verification failed."
     assert did_dispatch["called"] is False
 
 

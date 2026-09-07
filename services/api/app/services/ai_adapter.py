@@ -43,7 +43,8 @@ def _validate_adapter_inputs(
 
     computed_sha = hashlib.sha256(file_bytes).hexdigest()
     if computed_sha.lower() != document_sha256.lower():
-        return False, "DOCUMENT_SHA256_MISMATCH", f"Computed file_bytes SHA-256 digest ({computed_sha}) does not match recorded document_sha256 ({document_sha256})."
+        logger.warning(f"Document SHA-256 mismatch for document_id '{document_id}': computed digest does not match recorded digest.")
+        return False, "DOCUMENT_SHA256_MISMATCH", "Document content integrity verification failed."
 
     return True, None, None
 
