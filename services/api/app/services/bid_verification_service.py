@@ -288,8 +288,6 @@ class BidVerificationService:
                     error_message=v.error_message,
                 )
                 self.db.add(db_v)
-                self.db.commit()
-                self.db.refresh(db_v)
 
                 ev_v = EvidenceNormalizationService.normalize_verification_evidence(
                     self.db, bidder.id, tender.id, db_v, run_id=run.id
@@ -299,7 +297,6 @@ class BidVerificationService:
             if job:
                 job.current_stage = JobStage.COMPLIANCE
                 job.progress = 60
-                self.db.commit()
 
             # 4. Load ONLY APPROVED tender requirements and evaluate compliance
             requirements_db = (
@@ -316,17 +313,6 @@ class BidVerificationService:
             risk_signals_schema: list[RiskSignalRead] = []
 
             for req in requirements_schema:
-                # Evaluation-specific evidence linkage: gather evidence IDs specifically matching req.field
-                field_fact_evidence_ids = [
-                    ev.id for f_id, ev in fact_evidence_map.items()
-                    if any(f.id == f_id and f.field == req.field for f in facts_db)
-                ]
-                field_ver_evidence_ids = [
-                    ev.id for v_id, ev in ver_evidence_map.items()
-                    if any(v.id == v_id and v.field == req.field for v in verifications_schema)
-                ]
-                specific_evidence_ids = field_fact_evidence_ids + field_ver_evidence_ids
-
                 eval_res = ComplianceEngine.evaluate(
                     rule=req,
                     facts=facts_schema,
@@ -334,7 +320,17 @@ class BidVerificationService:
                     context={"bidder_id": bidder.id, "tender_id": tender.id, "run_id": run.id},
                 )
                 eval_res.run_id = run.id
-                eval_res.evidence_ids = specific_evidence_ids
+
+                # Map exact contributing input IDs from ComplianceEngine to staged Evidence IDs
+                mapped_evidence_ids = []
+                for input_id in eval_res.evidence_ids:
+                    if input_id in fact_evidence_map:
+                        mapped_evidence_ids.append(fact_evidence_map[input_id].id)
+                    elif input_id in ver_evidence_map:
+                        mapped_evidence_ids.append(ver_evidence_map[input_id].id)
+                    else:
+                        mapped_evidence_ids.append(input_id)
+                eval_res.evidence_ids = mapped_evidence_ids
                 evaluations_schema.append(eval_res)
 
                 # Save RuleEvaluation to DB assigned to run.id
@@ -399,7 +395,7 @@ class BidVerificationService:
                 self.db.add(db_r)
 
             # 5. Build explicit run input snapshot
-            run_evidence_db = self.db.query(Evidence).filter(Evidence.run_id == run.id).all()
+            staged_evidence_list = list(fact_evidence_map.values()) + list(ver_evidence_map.values())
             bidder_docs = self.db.query(Document).filter(Document.bidder_id == bidder.id).all()
 
             input_snapshot = {
@@ -418,12 +414,18 @@ class BidVerificationService:
                         "document_id": e.document_id,
                         "extracted_fact_id": e.extracted_fact_id,
                         "verification_result_id": e.verification_result_id,
+                        "source_type": e.source_type,
+                        "source_reference": e.source_reference,
                         "sha256": e.sha256,
-                        "verification_mode": e.verification_mode.value if hasattr(e.verification_mode, "value") else str(e.verification_mode),
-                        "verification_status": e.verification_status.value if hasattr(e.verification_status, "value") else str(e.verification_status),
+                        "verification_mode": e.verification_mode.value if hasattr(e.verification_mode, "value") else str(e.verification_mode) if e.verification_mode else None,
+                        "verification_status": e.verification_status.value if hasattr(e.verification_status, "value") else str(e.verification_status) if e.verification_status else None,
+                        "provider_identifier": e.provider_identifier,
+                        "observed_at": e.observed_at.isoformat() if hasattr(e.observed_at, "isoformat") and e.observed_at else str(e.observed_at) if e.observed_at else None,
+                        "location_metadata": e.location_metadata,
                     }
-                    for e in run_evidence_db
+                    for e in staged_evidence_list
                 ],
+                "exact_evaluation_linkage": [e.model_dump(mode="json") for e in evaluations_schema],
                 "documents": [
                     {
                         "id": d.id,

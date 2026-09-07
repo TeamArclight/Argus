@@ -2,7 +2,7 @@
 
 ## Overview & Technical Scope
 
-Phase 9 implements an evidence-backed, snapshot-reproducible compliance pipeline in the Argus backend (`services/api`). The system guarantees historical report integrity, evidence ownership isolation, strict trust distinction between document claims and live registry verifications, and deterministic rule evaluation.
+Phase 9 implements an evidence-backed, snapshot-reproducible compliance pipeline in the Argus backend (`services/api`). The system guarantees historical report integrity, evidence ownership isolation, strict trust distinction between document claims and live registry verifications, exact evidence linkage, atomic transaction boundaries, and deterministic rule evaluation.
 
 ---
 
@@ -21,7 +21,7 @@ The `Evidence` domain model ([domain.py](file:///c:/Users/user/OneDrive/Document
 * `source_type`: Provenance category (`"DOCUMENT"`, `"REGISTRY"`, `"PORTAL_CACHE"`, `"DEMO"`).
 * `source_reference`: Reference string (e.g. document filename or API reference ID).
 * `page_number`: 1-based page number where extracted text was located.
-* `snippet`: Raw text snippet or verified summary representation.
+* `snippet`: Raw text snippet or verified summary representation (no synthetic snippets fabricated).
 * `sha256`: Digest of the underlying document bytes at extraction time.
 * `verification_mode`: Sourcing operational mode (`LIVE`, `PORTAL_CACHED`, `DEMO`, `DOCUMENT`).
 * `verification_status`: Verification outcome (`VERIFIED`, `UNVERIFIED`, `MISMATCH`, `SERVICE_ERROR`, `UNAVAILABLE`, `TIMEOUT`).
@@ -50,28 +50,30 @@ The pipeline enforces strict truthfulness boundaries between extracted document 
 `EvidenceNormalizationService` ([evidence_service.py](file:///c:/Users/user/OneDrive/Documents/My%20Projects/Argus-main/services/api/app/services/evidence_service.py)) provides centralized validation:
 
 * **Ownership Validation**:
-  - `validate_ownership()` verifies that bidder IDs, tender IDs, document IDs, facts, and verification results belong to the target entity.
-  - Cross-bidder or cross-tender linkage raises explicit `ValueError` exceptions to prevent data leakage.
-* **Deterministic UUID Generation**:
-  - Generates authoritative primary keys for evidence entries.
+  - `validate_ownership()` verifies that bidder IDs, tender IDs, document IDs, facts, and verification results belong to the target entity across DB relationships.
+  - Cross-bidder or cross-tender linkage raises explicit `ValueError` or `EvidenceOwnershipError` exceptions to prevent data leakage.
+* **Transaction Boundary**:
+  - `normalize_fact_evidence()` and `normalize_verification_evidence()` stage evidence records in the active DB session without intermediate `commit()` or `refresh()` calls.
+  - Transaction boundaries are owned strictly by workflow entry points (`BidVerificationService`), guaranteeing atomic commits or clean rollbacks upon failure.
 
 ---
 
-## 4. Historical Input Snapshot Strategy
+## 4. Historical Input Snapshot Authority & Exact Linkage
 
 To prevent historical report mutation when new facts are extracted or rules are reprocessed:
 
-* `ComplianceRun.input_snapshot_json` records a complete, self-contained input snapshot at run execution time:
-  - `snapshot_version`: Version string (e.g., `"1.0"`).
+* `ComplianceRun.input_snapshot_json` is the **sole authoritative source** for historical Phase 9 compliance runs:
+  - `snapshot_version`: Version string (`"1.0"`).
   - `evaluated_at`: ISO timestamp of run execution.
   - `approved_requirements`: List of approved `TenderRequirement` definitions active at run time.
   - `facts`: List of `ExtractedFact` records active at run time.
   - `verifications`: List of `VerificationResult` records generated during the run.
   - `evidence`: List of `Evidence` records created during the run.
   - `documents`: List of document metadata and SHA-256 digests.
+  - `exact_evaluation_linkage`: Mapping of `rule_evaluation_id` to exact `evidence_ids` that directly influenced the evaluation.
 * **Historical Reconstruction**:
-  - `GET /api/v1/bidders/{id}/report?run_id=...` and `GET /api/v1/bidders/{id}/matrix` reconstruct matrix rows and evidence citations strictly from the recorded `input_snapshot_json` and run-scoped records.
-  - Post-run fact extractions or requirement updates do not alter historical reports.
+  - `GET /api/v1/bidders/{id}/report?run_id=...` and `GET /api/v1/bidders/{id}/matrix` reconstruct matrix rows and evidence citations strictly from the recorded `input_snapshot_json`.
+  - The API does not query live DB tables or substitute live values for Phase 9 historical runs. Post-run fact extractions or requirement updates do not alter historical reports.
 
 ---
 

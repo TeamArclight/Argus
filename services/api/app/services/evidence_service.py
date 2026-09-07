@@ -31,6 +31,7 @@ class EvidenceNormalizationService:
     @classmethod
     def validate_ownership(
         cls,
+        db: Session | None,
         bidder_id: str,
         tender_id: str,
         document: Document | None = None,
@@ -39,6 +40,11 @@ class EvidenceNormalizationService:
         run: ComplianceRun | None = None,
     ) -> None:
         """Validates that all evidence components strictly belong to the specified bidder and tender."""
+        if db:
+            bidder = db.query(Bidder).filter(Bidder.id == bidder_id).first()
+            if bidder and bidder.tender_id != tender_id:
+                raise EvidenceOwnershipError(f"Bidder '{bidder_id}' tender_id '{bidder.tender_id}' does not match target tender_id '{tender_id}'.")
+
         if run:
             if run.bidder_id != bidder_id:
                 raise EvidenceOwnershipError(f"ComplianceRun '{run.id}' bidder_id '{run.bidder_id}' does not match target bidder_id '{bidder_id}'.")
@@ -73,10 +79,10 @@ class EvidenceNormalizationService:
         document: Document | None = None,
         run_id: str | None = None,
     ) -> Evidence:
-        """Normalizes an ExtractedFact (document claim) into a canonical Evidence record."""
-        cls.validate_ownership(bidder_id, tender_id, document=document, fact=fact)
+        """Normalizes an ExtractedFact (document claim) into a canonical Evidence record without internal commits."""
+        cls.validate_ownership(db, bidder_id, tender_id, document=document, fact=fact)
 
-        snippet_text = fact.source_text or f"Claimed value for {fact.field}: {fact.value}"
+        snippet_text = fact.source_text or ""
         doc_sha = document.sha256 if document else None
         doc_id = document.id if document else fact.document_id
 
@@ -89,7 +95,9 @@ class EvidenceNormalizationService:
             page_number=fact.source_page,
             location_metadata={
                 "field": fact.field,
+                "value": fact.value,
                 "confidence": fact.confidence,
+                "summary": f"Claimed value for {fact.field}: {fact.value}",
                 "document_filename": document.filename if document else None,
                 "document_type": document.document_type.value if document and hasattr(document.document_type, "value") else str(getattr(document, "document_type", "")),
             },
@@ -100,17 +108,15 @@ class EvidenceNormalizationService:
             extracted_fact_id=fact.id,
             verification_result_id=None,
             run_id=run_id,
-            source_type="DOCUMENT_CLAIM",
-            source_reference=fact.field,
+            source_type="DOCUMENT",
+            source_reference=None,
             sha256=doc_sha,
             verification_mode=VerificationMode.DOCUMENT,
             verification_status=VerificationStatus.UNVERIFIED,
-            provider_identifier="DOCUMENT_EXTRACTION",
+            provider_identifier=None,
             observed_at=fact.created_at,
         )
         db.add(evidence)
-        db.commit()
-        db.refresh(evidence)
         return evidence
 
     @classmethod
@@ -122,12 +128,14 @@ class EvidenceNormalizationService:
         verification: VerificationResult,
         run_id: str | None = None,
     ) -> Evidence:
-        """Normalizes a VerificationResult into a canonical Evidence record preserving trust mode."""
-        cls.validate_ownership(bidder_id, tender_id, verification=verification)
+        """Normalizes a VerificationResult into a canonical Evidence record preserving trust mode without internal commits."""
+        cls.validate_ownership(db, bidder_id, tender_id, verification=verification)
 
         mode_val = verification.mode
-        source_val = verification.source.value if hasattr(verification.source, "value") else str(verification.source)
-        snippet_text = f"Registry verification for {verification.field}: status={verification.status.value if hasattr(verification.status, 'value') else verification.status}, verified={verification.verified_value}"
+        mode_str = mode_val.value if hasattr(mode_val, "value") else str(mode_val) if mode_val else "UNKNOWN"
+        source_val = verification.source.value if verification.source and hasattr(verification.source, "value") else str(verification.source) if verification.source else None
+        snippet_text = verification.error_message or verification.verification_reference or ""
+        summary_text = f"Registry verification for {verification.field}: status={verification.status.value if hasattr(verification.status, 'value') else verification.status}, verified={verification.verified_value}"
 
         evidence = Evidence(
             id=str(uuid.uuid4()),
@@ -141,6 +149,7 @@ class EvidenceNormalizationService:
                 "claimed_value": verification.claimed_value,
                 "verified_value": verification.verified_value,
                 "verification_reference": verification.verification_reference,
+                "summary": summary_text,
             },
             created_at=datetime.now(timezone.utc),
             bidder_id=bidder_id,
@@ -149,8 +158,8 @@ class EvidenceNormalizationService:
             extracted_fact_id=None,
             verification_result_id=verification.id,
             run_id=run_id or verification.run_id,
-            source_type="REGISTRY_VERIFICATION",
-            source_reference=verification.verification_reference or verification.field,
+            source_type=mode_str,
+            source_reference=verification.verification_reference,
             sha256=None,
             verification_mode=mode_val,
             verification_status=verification.status,
@@ -158,6 +167,4 @@ class EvidenceNormalizationService:
             observed_at=verification.checked_at,
         )
         db.add(evidence)
-        db.commit()
-        db.refresh(evidence)
         return evidence

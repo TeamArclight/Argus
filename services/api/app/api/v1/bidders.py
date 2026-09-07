@@ -421,13 +421,14 @@ def build_compliance_matrix(
     verifications_db: list[VerificationResult],
 ) -> tuple[ComplianceMatrixRead, list[EvidenceRead], str | None]:
     """Reconstruct compliance matrix, evidence list, and historical limitations notice from run input snapshot."""
-    evidence_db = db.query(Evidence).filter(Evidence.run_id == run.id).all()
+    snapshot_data = run.input_snapshot_json or {}
+    has_snapshot = bool(snapshot_data.get("snapshot_version") or snapshot_data.get("approved_requirements"))
+    notice = None if has_snapshot else "Historical compliance run was completed before snapshot recording (Phase 9). Evidence citations and exact evaluation inputs cannot be reconstructed historically for this run."
+
     evidence_schema: list[EvidenceRead] = []
 
-    if evidence_db:
-        evidence_schema = [EvidenceRead.model_validate(e) for e in evidence_db]
-    else:
-        snapshot_ev = (run.input_snapshot_json or {}).get("evidence", [])
+    if has_snapshot and "evidence" in snapshot_data:
+        snapshot_ev = snapshot_data.get("evidence", [])
         for item in snapshot_ev:
             if isinstance(item, dict):
                 evidence_schema.append(
@@ -438,6 +439,7 @@ def build_compliance_matrix(
                         snippet=item.get("snippet", ""),
                         source_uri=item.get("source_uri"),
                         page_number=item.get("page_number"),
+                        location_metadata=item.get("location_metadata", {}),
                         bidder_id=bidder.id,
                         tender_id=bidder.tender_id,
                         document_id=item.get("document_id"),
@@ -454,10 +456,9 @@ def build_compliance_matrix(
                         created_at=datetime.now(timezone.utc),
                     )
                 )
-
-    snapshot_data = run.input_snapshot_json or {}
-    has_snapshot = bool(snapshot_data.get("snapshot_version") or snapshot_data.get("approved_requirements"))
-    notice = None if has_snapshot else "Historical compliance run was completed before snapshot recording (Phase 9). Evidence citations and exact evaluation inputs cannot be reconstructed historically for this run."
+    else:
+        evidence_db = db.query(Evidence).filter(Evidence.run_id == run.id).all()
+        evidence_schema = [EvidenceRead.model_validate(e) for e in evidence_db]
 
     approved_reqs = snapshot_data.get("approved_requirements", [])
     req_map: dict[str, dict[str, Any]] = {}
@@ -465,32 +466,53 @@ def build_compliance_matrix(
         if isinstance(r, dict) and "id" in r:
             req_map[r["id"]] = r
 
-    missing_req_ids = [e.requirement_id for e in evaluations_db if e.requirement_id not in req_map]
-    if missing_req_ids:
-        db_reqs = db.query(TenderRequirement).filter(TenderRequirement.id.in_(missing_req_ids)).all()
-        for dr in db_reqs:
-            req_map[dr.id] = {
-                "clause": dr.clause,
-                "requirement_type": dr.requirement_type,
-                "field": dr.field,
-                "operator": dr.operator,
-                "expected_value": dr.expected_value,
-                "unit": dr.unit,
-                "mandatory": dr.mandatory,
-            }
+    verifications_list = snapshot_data.get("verifications", []) if has_snapshot else [v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in verifications_db]
+    ver_by_id: dict[str, dict[str, Any]] = {}
+    ver_by_field: dict[str, list[dict[str, Any]]] = {}
+    for v in verifications_list:
+        if isinstance(v, dict):
+            if "id" in v:
+                ver_by_id[v["id"]] = v
+            if "field" in v:
+                ver_by_field.setdefault(v["field"], []).append(v)
+
+    facts_list = snapshot_data.get("facts", []) if has_snapshot else []
+    facts_by_id: dict[str, dict[str, Any]] = {}
+    facts_by_field: dict[str, list[dict[str, Any]]] = {}
+    for f in facts_list:
+        if isinstance(f, dict):
+            if "id" in f:
+                facts_by_id[f["id"]] = f
+            if "field" in f:
+                facts_by_field.setdefault(f["field"], []).append(f)
 
     evidence_by_id = {e.id: e for e in evidence_schema}
-    ver_by_field = {v.field: v for v in verifications_db}
 
-    facts_snapshot = snapshot_data.get("facts", [])
-    facts_by_field: dict[str, list[dict[str, Any]]] = {}
-    for f in facts_snapshot:
-        if isinstance(f, dict) and "field" in f:
-            facts_by_field.setdefault(f["field"], []).append(f)
+    eval_list = snapshot_data.get("exact_evaluation_linkage", []) if has_snapshot and "exact_evaluation_linkage" in snapshot_data else evaluations_db
 
     rows: list[ComplianceMatrixRow] = []
-    for eval_item in evaluations_db:
-        req_info = req_map.get(eval_item.requirement_id, {})
+    for eval_item in eval_list:
+        is_dict = isinstance(eval_item, dict)
+        req_id = eval_item.get("requirement_id") if is_dict else eval_item.requirement_id
+        eval_status = eval_item.get("status") if is_dict else eval_item.status
+        reason_code = eval_item.get("reason_code") if is_dict else eval_item.reason_code
+        observed_value = eval_item.get("observed_value") if is_dict else eval_item.observed_value
+        ev_ids = eval_item.get("evidence_ids", []) if is_dict else (eval_item.evidence_ids or [])
+
+        req_info = req_map.get(req_id, {}) if has_snapshot else {}
+        if not req_info and not has_snapshot:
+            db_req = db.query(TenderRequirement).filter(TenderRequirement.id == req_id).first()
+            if db_req:
+                req_info = {
+                    "clause": db_req.clause,
+                    "requirement_type": db_req.requirement_type,
+                    "field": db_req.field,
+                    "operator": db_req.operator,
+                    "expected_value": db_req.expected_value,
+                    "unit": db_req.unit,
+                    "mandatory": db_req.mandatory,
+                }
+
         clause = req_info.get("clause", "N/A")
         req_type = req_info.get("requirement_type", RequirementType.CUSTOM)
         field = req_info.get("field", "unknown")
@@ -500,7 +522,10 @@ def build_compliance_matrix(
         mandatory = req_info.get("mandatory", True)
 
         evidence_refs: list[dict[str, Any]] = []
-        for ev_id in (eval_item.evidence_ids or []):
+        verification_refs: list[dict[str, Any]] = []
+        source_refs: list[dict[str, Any]] = []
+
+        for ev_id in ev_ids:
             if ev_id in evidence_by_id:
                 ev_obj = evidence_by_id[ev_id]
                 evidence_refs.append(
@@ -520,42 +545,43 @@ def build_compliance_matrix(
                         "observed_at": ev_obj.observed_at.isoformat() if hasattr(ev_obj.observed_at, "isoformat") and ev_obj.observed_at else str(ev_obj.observed_at) if ev_obj.observed_at else None,
                     }
                 )
+                if ev_obj.verification_result_id and ev_obj.verification_result_id in ver_by_id:
+                    v_item = ver_by_id[ev_obj.verification_result_id]
+                    if v_item not in verification_refs:
+                        verification_refs.append(v_item)
+                if ev_obj.extracted_fact_id and ev_obj.extracted_fact_id in facts_by_id:
+                    f_item = facts_by_id[ev_obj.extracted_fact_id]
+                    if f_item not in source_refs:
+                        source_refs.append(
+                            {
+                                "document_id": f_item.get("document_id"),
+                                "source_page": f_item.get("source_page"),
+                                "source_text": f_item.get("source_text"),
+                                "confidence": f_item.get("confidence"),
+                            }
+                        )
 
-        verification_refs: list[dict[str, Any]] = []
-        if field in ver_by_field:
-            v_obj = ver_by_field[field]
-            verification_refs.append(
-                {
-                    "id": v_obj.id,
-                    "field": v_obj.field,
-                    "status": v_obj.status.value if hasattr(v_obj.status, "value") else str(v_obj.status),
-                    "mode": v_obj.mode.value if hasattr(v_obj.mode, "value") else str(v_obj.mode),
-                    "source": v_obj.source.value if hasattr(v_obj.source, "value") else str(v_obj.source),
-                    "claimed_value": v_obj.claimed_value,
-                    "verified_value": v_obj.verified_value,
-                    "checked_at": v_obj.checked_at.isoformat() if hasattr(v_obj.checked_at, "isoformat") and v_obj.checked_at else str(v_obj.checked_at) if v_obj.checked_at else None,
-                }
-            )
-
-        source_refs: list[dict[str, Any]] = []
-        for f_item in facts_by_field.get(field, []):
-            source_refs.append(
-                {
-                    "document_id": f_item.get("document_id"),
-                    "source_page": f_item.get("source_page"),
-                    "source_text": f_item.get("source_text"),
-                    "confidence": f_item.get("confidence"),
-                }
-            )
+        if not verification_refs and field in ver_by_field:
+            verification_refs = ver_by_field[field]
+        if not source_refs and field in facts_by_field:
+            for f_item in facts_by_field[field]:
+                source_refs.append(
+                    {
+                        "document_id": f_item.get("document_id"),
+                        "source_page": f_item.get("source_page"),
+                        "source_text": f_item.get("source_text"),
+                        "confidence": f_item.get("confidence"),
+                    }
+                )
 
         review_req = bool(
-            eval_item.status in (ComplianceStatus.REVIEW_REQUIRED, ComplianceStatus.UNKNOWN, ComplianceStatus.FAIL)
-            or (eval_item.status != ComplianceStatus.PASS and mandatory)
+            eval_status in (ComplianceStatus.REVIEW_REQUIRED, ComplianceStatus.UNKNOWN, ComplianceStatus.FAIL)
+            or (eval_status != ComplianceStatus.PASS and mandatory)
         )
 
         rows.append(
             ComplianceMatrixRow(
-                requirement_id=eval_item.requirement_id,
+                requirement_id=req_id,
                 clause=clause,
                 requirement_type=req_type,
                 field=field,
@@ -563,10 +589,10 @@ def build_compliance_matrix(
                 expected_value=expected_value,
                 unit=unit,
                 mandatory=mandatory,
-                status=eval_item.status,
-                reason_code=eval_item.reason_code,
-                observed_value=eval_item.observed_value,
-                evidence_ids=eval_item.evidence_ids or [],
+                status=eval_status,
+                reason_code=reason_code,
+                observed_value=observed_value,
+                evidence_ids=ev_ids,
                 evidence_refs=evidence_refs,
                 verification_refs=verification_refs,
                 source_refs=source_refs,
