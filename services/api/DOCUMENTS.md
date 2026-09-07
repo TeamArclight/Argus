@@ -88,7 +88,14 @@ Every uploaded file undergoes multi-phase validation before storage:
 
 ---
 
-## Safe Error Handling & Transaction Safety
+## Safe Error Handling & Transaction Boundaries
 
 - **Information Leakage Prevention**: Errors return generic messages and stable machine-readable error codes (`DOCUMENT_STORAGE_FAILED`, `DOCUMENT_NOT_FOUND`, `DOCUMENT_SIGNATURE_INVALID`, `DOCUMENT_MIME_MISMATCH`, `DOCUMENT_DUPLICATE`, `DOCUMENT_EMPTY`, `DOCUMENT_SIZE_EXCEEDED`). Internal exceptions, SQL errors, connection strings, and filesystem paths are logged silently to system logs and never leaked in HTTP responses.
-- **Single-Transaction Persistence**: Metadata creation and `DOCUMENT_UPLOADED` audit event creation execute within a single database transaction. If database commit or audit logging fails, the transaction rolls back and ONLY the newly staged physical file (`storage_uri`) is deleted. Existing stored files are strictly preserved.
+- **Single DB Transaction**: Document metadata creation and `DOCUMENT_UPLOADED` audit event creation commit together in a single database transaction (`AuditLogger.create_entry()`).
+- **Atomic No-Clobber File Publication**: Local file publication uses unique temporary files (`.tmp_<uuid>_<filename>`) published via atomic `os.link()`, ensuring existing target keys are never overwritten and partial writes are impossible.
+- **Cross-System Transaction Limitations**:
+  - The local filesystem and database are **not** joined in a single distributed transaction (no 2PC / XA transaction coordinator).
+  - Physical file cleanup is best-effort for pre-commit failure scenarios: if an exception occurs before database commit, the uncommitted target file is unlinked.
+  - If a process crash or network timeout occurs after DB commit, or during post-commit session operations, the committed physical file is strictly preserved.
+  - Ambiguous commit outcomes or process crashes may leave unreferenced physical files requiring out-of-band background reconciliation.
+  - Absolute cross-system atomicity between independent storage layers (filesystem and DB) is never claimed.
