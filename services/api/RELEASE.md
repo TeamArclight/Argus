@@ -135,7 +135,22 @@ docker compose -f infra/compose.yaml up -d --build
 
 ---
 
-## 10. Known Limitations
+---
 
-- Production government registry adapters require active credentials for `LIVE` verification mode.
-- Local execution environment does not run a local PostgreSQL daemon; PostgreSQL dialect compatibility is verified via dialect DDL compilation and Alembic migration tests, and verified in GitHub Actions CI with PostgreSQL service containers.
+## 10. Verification Matrix & Validation Tiers
+
+| Tier | Environment | Scope | Validation Method |
+|---|---|---|---|
+| **Local SQLite Suite** | Local Dev / In-Memory & File SQLite | Unit, regression, error contracts, API endpoints, deterministic compliance rules | Pytest suite (214 tests, 213 passed, 1 live PG skipped locally) |
+| **PostgreSQL Migration Validation** | PostgreSQL 16 (CI Service) | Schema creation, baseline-to-head migration upgrade (`44d5c5ca3f11` -> `9f5627b30055`), populated data backfill, zero schema drift | `alembic upgrade head` and `alembic check` |
+| **PostgreSQL Concurrency Validation** | PostgreSQL 16 (CI Service) | Same-key concurrent requests, different-key concurrent requests for same bidder, database unique constraint enforcement, multi-threaded `JobEvent` sequence allocation with `SELECT ... FOR UPDATE`, transaction rollback isolation, fail-closed ambiguous lock recovery, completed operation response recovery | Dedicated multi-threaded test suite in `test_postgresql_compatibility.py` |
+| **Docker Deployment Verification** | Linux Container | Non-root `appuser` (UID 10001), healthchecks (`pg_isready`, HTTP liveness), volume persistence | Dockerfile & compose validation |
+
+---
+
+## 11. Known Operational & Concurrency Limitations
+
+- **Single-Node / In-Process Execution**: Job processing runs within FastAPI background tasks / in-process workers. Concurrency safety is enforced at the database layer via row-level locks (`SELECT ... FOR UPDATE`) and database unique constraints (`uq_active_operation_locks_resource`, `uq_job_events_job_seq`, `uq_idempotency_scoped_key`). Distributed task queues (e.g. Celery, Redis Streams, Kafka) are outside the current architectural scope.
+- **Fail-Closed Ambiguous Lock Recovery**: If a process crashes unexpectedly after acquiring an `ActiveOperationLock` but before creating a durable `ProcessingJob` or `ComplianceRun`, the lock remains in an ambiguous state. Subsequent requests fail closed with HTTP 409 (`OPERATION_LOCK_RECOVERY_REQUIRED`) to prevent automated replay of external verification without administrative or operational inspection.
+- **Live Registry Credentials**: External verification adapters require production gateway credentials for `LIVE` mode. In development and test environments, `DEMO` and `PORTAL_CACHED` modes provide verified deterministic fixture responses.
+

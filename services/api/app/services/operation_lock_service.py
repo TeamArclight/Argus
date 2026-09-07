@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.models.domain import ActiveOperationLock, ProcessingJob
+from app.models.domain import ActiveOperationLock, ComplianceRun, ProcessingJob
 from app.schemas.canonical import JobStatus
 
 
@@ -21,20 +21,29 @@ class OperationLockService:
         run_id: str | None = None,
     ) -> ActiveOperationLock:
         """Acquires an exclusive active-operation lock for the given resource and operation.
-        Raises HTTPException(409, OPERATION_IN_PROGRESS) if already locked by an active operation.
+
+        Distinguishes:
+        - Own reservation: lock already held by current job_id -> returns existing lock
+        - Active operation: linked job/run is QUEUED or RUNNING -> 409 OPERATION_IN_PROGRESS
+        - Completed operation: linked job/run is COMPLETED or REVIEW_REQUIRED -> reconciles stale lock
+        - Failed operation: linked job/run is FAILED -> reconciles stale lock
+        - Ambiguous/Interrupted operation: linked job/run missing or in non-terminal state -> fails closed (409 OPERATION_LOCK_RECOVERY_REQUIRED)
         """
-        existing_lock = (
-            db.query(ActiveOperationLock)
-            .filter(
-                ActiveOperationLock.resource_type == resource_type,
-                ActiveOperationLock.resource_id == resource_id,
-                ActiveOperationLock.operation == operation,
-            )
-            .first()
+        bind = db.get_bind()
+        query = db.query(ActiveOperationLock).filter(
+            ActiveOperationLock.resource_type == resource_type,
+            ActiveOperationLock.resource_id == resource_id,
+            ActiveOperationLock.operation == operation,
         )
+        if bind is not None and bind.dialect.name == "postgresql":
+            query = query.with_for_update()
+
+        existing_lock = query.first()
+
         if existing_lock:
-            from app.models.domain import ComplianceRun
-            from app.audit.logger import AuditLogger
+            # 1. Own reservation in current transaction/job
+            if existing_lock.job_id == job_id:
+                return existing_lock
 
             linked_job = db.query(ProcessingJob).filter(ProcessingJob.id == existing_lock.job_id).first()
             linked_run = (
@@ -43,8 +52,9 @@ class OperationLockService:
                 else None
             )
 
-            is_job_active = linked_job and linked_job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
-            is_run_active = linked_run and linked_run.execution_status == JobStatus.RUNNING
+            # 2. Check active states
+            is_job_active = linked_job is not None and linked_job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+            is_run_active = linked_run is not None and linked_run.execution_status in (JobStatus.QUEUED, JobStatus.RUNNING)
 
             if is_job_active or is_run_active:
                 raise HTTPException(
@@ -62,22 +72,35 @@ class OperationLockService:
                     },
                 )
 
-            # Reconcile terminal state or orphaned lock
-            if linked_job is None and linked_run is None:
-                AuditLogger.log(
-                    db,
-                    action="ORPHAN_LOCK_RECONCILED",
-                    entity_type=resource_type,
-                    entity_id=resource_id,
-                    actor_id=principal_id,
-                    payload={
-                        "reconciled_lock_id": existing_lock.id,
-                        "orphan_job_id": existing_lock.job_id,
-                        "operation": operation,
+            # 3. Check definitive terminal states
+            is_job_completed = linked_job is not None and linked_job.status in (JobStatus.COMPLETED, JobStatus.REVIEW_REQUIRED)
+            is_run_completed = linked_run is not None and linked_run.execution_status == JobStatus.COMPLETED
+            is_job_failed = linked_job is not None and linked_job.status == JobStatus.FAILED
+            is_run_failed = linked_run is not None and linked_run.execution_status == JobStatus.FAILED
+
+            is_terminal = is_job_completed or is_run_completed or is_job_failed or is_run_failed
+
+            if is_terminal:
+                # Atomically delete stale terminal lock within session
+                db.delete(existing_lock)
+                db.flush()
+            else:
+                # 4. Ambiguous / Missing / Interrupted durable state -> FAIL CLOSED
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "OPERATION_LOCK_RECOVERY_REQUIRED",
+                        "message": f"Active operation lock for {resource_type} {resource_id} is in an ambiguous or unverified state. Linked job/run was not cleanly terminated. Manual administrative recovery required before acquiring a new lock.",
+                        "details": {
+                            "resource_type": resource_type,
+                            "resource_id": resource_id,
+                            "operation": operation,
+                            "lock_id": existing_lock.id,
+                            "job_id": existing_lock.job_id,
+                            "run_id": existing_lock.run_id,
+                        },
                     },
                 )
-            db.delete(existing_lock)
-            db.commit()
 
         active_job = (
             db.query(ProcessingJob)
@@ -149,16 +172,26 @@ class OperationLockService:
         resource_id: str,
         operation: str,
         job_id: str | None = None,
-    ) -> None:
-        """Releases the active operation lock."""
+        run_id: str | None = None,
+    ) -> bool:
+        """Releases the active operation lock only if it matches the expected job_id / run_id."""
         query = db.query(ActiveOperationLock).filter(
             ActiveOperationLock.resource_type == resource_type,
             ActiveOperationLock.resource_id == resource_id,
             ActiveOperationLock.operation == operation,
         )
-        if job_id:
+        if job_id is not None:
             query = query.filter(ActiveOperationLock.job_id == job_id)
+        if run_id is not None:
+            query = query.filter(ActiveOperationLock.run_id == run_id)
+
+        bind = db.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            query = query.with_for_update()
+
         lock = query.first()
         if lock:
             db.delete(lock)
             db.commit()
+            return True
+        return False

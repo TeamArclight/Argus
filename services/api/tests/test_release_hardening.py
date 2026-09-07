@@ -1,6 +1,8 @@
 import asyncio
 import os
+import uuid
 from unittest.mock import patch
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import create_engine
@@ -9,9 +11,10 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.db.session import Base, SessionLocal, engine, get_db
 from app.main import app
-from app.models.domain import Bidder, ProcessingJob, Tender, TenderRequirement
+from app.models.domain import ActiveOperationLock, Bidder, ProcessingJob, Tender, TenderRequirement
 from app.schemas.canonical import JobStage, JobStatus, RequirementType, UserRole
 from app.services.idempotency_service import IdempotencyService
+from app.services.operation_lock_service import OperationLockService
 from tests.auth_helpers import get_auth_headers
 
 client = TestClient(app)
@@ -571,5 +574,43 @@ def test_sse_event_sanitization():
     assert "supersecret" not in content
     assert "AIzaSy" not in content
     assert "[REDACTED]" in content
+
+
+def test_ambiguous_lock_recovery_fails_closed():
+    """Verifies that an orphaned lock with missing linked job fails closed and is NOT silently deleted."""
+    res_id = f"b-ambig-unit-{uuid.uuid4()}"
+    with SessionLocal() as db:
+        orphan_lock = ActiveOperationLock(
+            resource_type="BIDDER",
+            resource_id=res_id,
+            operation="VERIFY_BIDDER",
+            job_id="missing-job-unit-999",
+            owner_principal_id="test-user-001",
+        )
+        db.add(orphan_lock)
+        db.commit()
+
+        # Attempt to acquire lock for a new job
+        with pytest.raises(HTTPException) as exc_info:
+            OperationLockService.acquire_lock(
+                db=db,
+                resource_type="BIDDER",
+                resource_id=res_id,
+                operation="VERIFY_BIDDER",
+                job_id="new-job-unit-111",
+                principal_id="test-user-002",
+            )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "OPERATION_LOCK_RECOVERY_REQUIRED"
+
+        # Verify orphan lock was NOT silently deleted
+        remaining_lock = db.query(ActiveOperationLock).filter_by(resource_id=res_id).first()
+        assert remaining_lock is not None
+        assert remaining_lock.job_id == "missing-job-unit-999"
+
+        # Clean up
+        db.delete(remaining_lock)
+        db.commit()
+
 
 

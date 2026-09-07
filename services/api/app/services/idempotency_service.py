@@ -168,9 +168,6 @@ class IdempotencyService:
                                 "details": {"key": key, "job_id": job.id, "error_message": job.error_message},
                             },
                         )
-                else:
-                    # Stale reservation where no background job or business operation started
-                    return None, None, existing
 
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,

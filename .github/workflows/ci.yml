@@ -77,6 +77,7 @@ jobs:
         env:
           ARGUS_JWT_SECRET: "12345678901234567890123456789012"
           DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/argus_test"
+          TEST_POSTGRES_URL: "postgresql://postgres:postgres@127.0.0.1:5432/argus_test"
         run: pytest
       - name: Run Backend Pytest Suite (SQLite Fallback)
         env:
