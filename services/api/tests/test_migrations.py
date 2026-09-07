@@ -59,7 +59,7 @@ def test_alembic_migration_upgrade_and_tables():
         with test_engine.connect() as connection:
             context = MigrationContext.configure(connection)
             current_rev = context.get_current_revision()
-            assert current_rev == "5b14a9f27911", f"Unexpected current revision: {current_rev}"
+            assert current_rev == "6c25b8a18022", f"Unexpected current revision: {current_rev}"
 
     finally:
         if test_engine is not None:

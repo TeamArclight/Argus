@@ -48,7 +48,7 @@ def test_empty_evaluations_produce_unknown():
         assert len(c_resp["rule_evaluations"]) == 0
 
 
-def test_end_to_end_p0_workflow():
+def test_end_to_end_p0_workflow(monkeypatch):
     headers = get_auth_headers(role=UserRole.ADMIN, user_id="OFFICER-4021", name="Rajesh Kumar")
     with TestClient(app) as client:
         # 1. Create Tender
@@ -71,7 +71,7 @@ def test_end_to_end_p0_workflow():
         from app.schemas.canonical import AIServiceResult, RequirementType, OperatorEnum
         from app.api.v1.tenders import ai_adapter as tender_ai_adapter
 
-        async def mock_extract_tender(tender_id, document_uri):
+        async def mock_extract_tender(tender_id, document_uri="", **kwargs):
             return AIServiceResult(
                 success=True,
                 data=[
@@ -104,7 +104,6 @@ def test_end_to_end_p0_workflow():
                 message="Extracted requirements",
             )
 
-        monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(tender_ai_adapter, "extract_tender", mock_extract_tender)
 
         resp = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers)

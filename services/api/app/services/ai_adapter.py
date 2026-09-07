@@ -1,3 +1,5 @@
+import base64
+import uuid
 from typing import Any
 import httpx
 from pydantic import ValidationError
@@ -15,20 +17,24 @@ class AIServiceAdapter:
 
     The backend validates all extracted payloads against canonical Pydantic models.
     Does NOT invoke LLMs directly inside backend; interfaces via structured HTTP service calls.
+    Follows contract-first integration with secure document byte transfer and bounded retries.
     """
 
     async def extract_tender(
-        self, tender_id: str, document_uri: str
+        self,
+        tender_id: str,
+        document_id: str | None = None,
+        document_uri: str | None = None,
+        document_sha256: str | None = None,
+        file_bytes: bytes | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+        request_id: str | None = None,
+        **kwargs: Any,
     ) -> AIServiceResult:
         """Extract tender requirements via configured ARGUS Intelligence gateway."""
-        if not document_uri:
-            return AIServiceResult(
-                success=False,
-                data=None,
-                error_code="MISSING_TENDER_DOCUMENT",
-                retryable=False,
-                message="Tender document URI cannot be empty.",
-            )
+        doc_id = document_id or f"doc_tender_{tender_id}"
+        doc_uri = document_uri or ""
 
         url = settings.ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL
 
@@ -41,170 +47,225 @@ class AIServiceAdapter:
                 message="ARGUS Intelligence tender extraction URL is unconfigured or unavailable.",
             )
 
+        req_id = request_id or str(uuid.uuid4())
+        file_b64 = base64.b64encode(file_bytes).decode("utf-8") if file_bytes else None
+
+        payload: dict[str, Any] = {
+            "contract_version": "1.0",
+            "request_id": req_id,
+            "tender_id": tender_id,
+            "document_id": doc_id,
+            "document_uri": doc_uri,
+            "document_sha256": document_sha256,
+            "filename": filename,
+            "content_type": content_type,
+            "file_bytes_base64": file_b64,
+        }
+
         headers: dict[str, str] = {
             "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": "ARGUS-Procurement-Platform/1.0",
+            "X-Request-ID": req_id,
         }
         if settings.ARGUS_INTELLIGENCE_API_KEY:
             headers["Authorization"] = f"Bearer {settings.ARGUS_INTELLIGENCE_API_KEY}"
 
         timeout = httpx.Timeout(settings.REQUEST_TIMEOUT_SECONDS)
+        max_attempts = 3
 
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    url,
-                    headers=headers,
-                    json={"tender_id": tender_id, "document_uri": document_uri},
-                )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
 
-                if resp.status_code == 400:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_REQUEST_REJECTED",
-                        retryable=False,
-                        message="Intelligence service rejected the request (HTTP 400).",
-                    )
-                elif resp.status_code in (401, 403):
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_AUTH_ERROR",
-                        retryable=False,
-                        message=f"Intelligence service authentication error (HTTP {resp.status_code}).",
-                    )
-                elif resp.status_code == 404:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_ENDPOINT_NOT_FOUND",
-                        retryable=False,
-                        message="Intelligence service endpoint not found (HTTP 404).",
-                    )
-                elif resp.status_code in (408, 429):
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_UNAVAILABLE",
-                        retryable=True,
-                        message=f"Intelligence service rate limited or timed out (HTTP {resp.status_code}).",
-                    )
-                elif 400 <= resp.status_code < 500:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_REQUEST_REJECTED",
-                        retryable=False,
-                        message=f"Intelligence service rejected the request (HTTP {resp.status_code}).",
-                    )
-                elif resp.status_code >= 500:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_UNAVAILABLE",
-                        retryable=True,
-                        message=f"Intelligence service HTTP error (status {resp.status_code}).",
-                    )
-
-                try:
-                    resp_data = resp.json()
-                except Exception as parse_err:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="SCHEMA_VALIDATION_FAILED",
-                        retryable=False,
-                        message=f"Failed to parse intelligence JSON response: {parse_err}",
-                    )
-
-                if not isinstance(resp_data, dict):
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="SCHEMA_VALIDATION_FAILED",
-                        retryable=False,
-                        message="Intelligence service response must be a JSON object.",
-                    )
-
-                raw_items = resp_data.get("requirements") if "requirements" in resp_data else resp_data.get("data")
-                if not isinstance(raw_items, list):
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="SCHEMA_VALIDATION_FAILED",
-                        retryable=False,
-                        message="Intelligence service response missing required 'requirements' list.",
-                    )
-
-                validated_requirements = []
-                for item in raw_items:
-                    if not isinstance(item, dict):
+                    if resp.status_code == 400:
                         return AIServiceResult(
                             success=False,
                             data=None,
-                            error_code="SCHEMA_VALIDATION_FAILED",
+                            error_code="AI_SERVICE_REQUEST_REJECTED",
                             retryable=False,
-                            message="Requirement item must be a JSON object.",
+                            message="Intelligence service rejected the request (HTTP 400).",
                         )
+                    elif resp.status_code in (401, 403):
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_AUTH_ERROR",
+                            retryable=False,
+                            message=f"Intelligence service authentication error (HTTP {resp.status_code}).",
+                        )
+                    elif resp.status_code == 404:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_ENDPOINT_NOT_FOUND",
+                            retryable=False,
+                            message="Intelligence service endpoint not found (HTTP 404).",
+                        )
+                    elif resp.status_code in (408, 429):
+                        if attempt < max_attempts:
+                            continue
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_UNAVAILABLE",
+                            retryable=True,
+                            message=f"Intelligence service rate limited or timed out (HTTP {resp.status_code}).",
+                        )
+                    elif 400 <= resp.status_code < 500:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_REQUEST_REJECTED",
+                            retryable=False,
+                            message=f"Intelligence service rejected request (HTTP {resp.status_code}).",
+                        )
+                    elif resp.status_code >= 500:
+                        if attempt < max_attempts:
+                            continue
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_UNAVAILABLE",
+                            retryable=True,
+                            message=f"Intelligence service HTTP error (status {resp.status_code}).",
+                        )
+
                     try:
-                        req_obj = TenderRequirementCreate.model_validate(item)
-                        validated_requirements.append(req_obj.model_dump())
-                    except ValidationError as val_err:
+                        resp_data = resp.json()
+                    except Exception as parse_err:
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message=f"Requirement payload failed schema validation: {val_err}",
+                            message=f"Failed to parse intelligence JSON response: {parse_err}",
                         )
 
+                    if not isinstance(resp_data, dict):
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="SCHEMA_VALIDATION_FAILED",
+                            retryable=False,
+                            message="Intelligence service response must be a JSON object.",
+                        )
+
+                    if resp_data.get("status") in ("FAILED", "ERROR"):
+                        err_msg = resp_data.get("error") or resp_data.get("message") or "Extraction failed on service."
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_REQUEST_REJECTED",
+                            retryable=False,
+                            message=f"Intelligence processing failure: {err_msg}",
+                        )
+
+                    raw_items = resp_data.get("requirements") if "requirements" in resp_data else resp_data.get("data")
+                    if not isinstance(raw_items, list):
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="SCHEMA_VALIDATION_FAILED",
+                            retryable=False,
+                            message="Intelligence service response missing required 'requirements' list.",
+                        )
+
+                    validated_requirements = []
+                    for item in raw_items:
+                        if not isinstance(item, dict):
+                            return AIServiceResult(
+                                success=False,
+                                data=None,
+                                error_code="SCHEMA_VALIDATION_FAILED",
+                                retryable=False,
+                                message="Requirement item must be a JSON object.",
+                            )
+                        try:
+                            item_meta = item.get("metadata_json") or {}
+                            item_meta.setdefault("request_id", req_id)
+                            item_meta.setdefault("document_id", doc_id)
+                            if document_sha256:
+                                item_meta.setdefault("document_sha256", document_sha256)
+                            if "provider_model" in resp_data:
+                                item_meta.setdefault("provider_model", resp_data["provider_model"])
+
+                            item["metadata_json"] = item_meta
+                            item["document_id"] = doc_id
+
+                            req_obj = TenderRequirementCreate.model_validate(item)
+                            validated_requirements.append(req_obj.model_dump())
+                        except ValidationError as val_err:
+                            return AIServiceResult(
+                                success=False,
+                                data=None,
+                                error_code="SCHEMA_VALIDATION_FAILED",
+                                retryable=False,
+                                message=f"Requirement payload failed schema validation: {val_err}",
+                            )
+
+                    return AIServiceResult(
+                        success=True,
+                        data=validated_requirements,
+                        error_code=None,
+                        retryable=False,
+                        message=f"Successfully extracted {len(validated_requirements)} requirement candidates.",
+                    )
+
+            except httpx.TimeoutException:
+                if attempt < max_attempts:
+                    continue
                 return AIServiceResult(
-                    success=True,
-                    data=validated_requirements,
-                    error_code=None,
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
+                    retryable=True,
+                    message=f"Intelligence service request timed out after {settings.REQUEST_TIMEOUT_SECONDS}s.",
+                )
+            except httpx.RequestError as req_err:
+                if attempt < max_attempts:
+                    continue
+                return AIServiceResult(
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
+                    retryable=True,
+                    message=f"Intelligence service transport failure: {req_err}",
+                )
+            except Exception as exc:
+                return AIServiceResult(
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Successfully extracted {len(validated_requirements)} requirements from intelligence service.",
+                    message=f"Unexpected internal error: {exc}",
                 )
 
-        except httpx.TimeoutException:
-            return AIServiceResult(
-                success=False,
-                data=None,
-                error_code="AI_SERVICE_UNAVAILABLE",
-                retryable=True,
-                message=f"Intelligence service request timed out after {settings.REQUEST_TIMEOUT_SECONDS}s.",
-            )
-        except httpx.RequestError as req_err:
-            return AIServiceResult(
-                success=False,
-                data=None,
-                error_code="AI_SERVICE_UNAVAILABLE",
-                retryable=True,
-                message=f"Intelligence service transport failure: {req_err}",
-            )
-        except Exception as exc:
-            return AIServiceResult(
-                success=False,
-                data=None,
-                error_code="AI_SERVICE_UNAVAILABLE",
-                retryable=False,
-                message=f"Unexpected internal error: {exc}",
-            )
+        return AIServiceResult(
+            success=False,
+            data=None,
+            error_code="AI_SERVICE_UNAVAILABLE",
+            retryable=True,
+            message="Intelligence service unavailable after maximum retries.",
+        )
 
     async def extract_document(
-        self, document_id: str, document_uri: str, bidder_id: str
+        self,
+        document_id: str,
+        document_uri: str | None = None,
+        bidder_id: str | None = None,
+        document_type: str | None = None,
+        document_sha256: str | None = None,
+        file_bytes: bytes | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+        request_id: str | None = None,
+        **kwargs: Any,
     ) -> AIServiceResult:
         """Extract bidder facts from bidder document via configured ARGUS Intelligence gateway."""
-        if not document_uri:
-            return AIServiceResult(
-                success=False,
-                data=None,
-                error_code="INVALID_DOCUMENT_URI",
-                retryable=False,
-                message="Document URI missing.",
-            )
+        b_id = bidder_id or ""
+        doc_uri = document_uri or ""
 
         url = settings.ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL
 
@@ -217,158 +278,205 @@ class AIServiceAdapter:
                 message="ARGUS Intelligence document extraction URL is unconfigured or unavailable.",
             )
 
+        req_id = request_id or str(uuid.uuid4())
+        file_b64 = base64.b64encode(file_bytes).decode("utf-8") if file_bytes else None
+
+        payload: dict[str, Any] = {
+            "contract_version": "1.0",
+            "request_id": req_id,
+            "document_id": document_id,
+            "document_uri": doc_uri,
+            "bidder_id": b_id,
+            "document_type": document_type,
+            "document_sha256": document_sha256,
+            "filename": filename,
+            "content_type": content_type,
+            "file_bytes_base64": file_b64,
+        }
+
         headers: dict[str, str] = {
             "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": "ARGUS-Procurement-Platform/1.0",
+            "X-Request-ID": req_id,
         }
         if settings.ARGUS_INTELLIGENCE_API_KEY:
             headers["Authorization"] = f"Bearer {settings.ARGUS_INTELLIGENCE_API_KEY}"
 
         timeout = httpx.Timeout(settings.REQUEST_TIMEOUT_SECONDS)
+        max_attempts = 3
 
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    url,
-                    headers=headers,
-                    json={
-                        "document_id": document_id,
-                        "document_uri": document_uri,
-                        "bidder_id": bidder_id,
-                    },
-                )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
 
-                if resp.status_code == 400:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_REQUEST_REJECTED",
-                        retryable=False,
-                        message="Intelligence service rejected the request (HTTP 400).",
-                    )
-                elif resp.status_code in (401, 403):
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_AUTH_ERROR",
-                        retryable=False,
-                        message=f"Intelligence service authentication error (HTTP {resp.status_code}).",
-                    )
-                elif resp.status_code == 404:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_ENDPOINT_NOT_FOUND",
-                        retryable=False,
-                        message="Intelligence service endpoint not found (HTTP 404).",
-                    )
-                elif resp.status_code == 408:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_UNAVAILABLE",
-                        retryable=True,
-                        message="Intelligence service request timed out (HTTP 408).",
-                    )
-                elif 400 <= resp.status_code < 500:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_REQUEST_REJECTED",
-                        retryable=False,
-                        message=f"Intelligence service rejected the request (HTTP {resp.status_code}).",
-                    )
-                elif resp.status_code >= 500:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="AI_SERVICE_UNAVAILABLE",
-                        retryable=True,
-                        message=f"Intelligence service HTTP error (status {resp.status_code}).",
-                    )
-
-                try:
-                    resp_data = resp.json()
-                except Exception as parse_err:
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="SCHEMA_VALIDATION_FAILED",
-                        retryable=False,
-                        message=f"Failed to parse intelligence JSON response: {parse_err}",
-                    )
-
-                if not isinstance(resp_data, dict):
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="SCHEMA_VALIDATION_FAILED",
-                        retryable=False,
-                        message="Intelligence service response must be a JSON object.",
-                    )
-
-                raw_facts = resp_data.get("facts") if "facts" in resp_data else resp_data.get("data")
-                if not isinstance(raw_facts, list):
-                    return AIServiceResult(
-                        success=False,
-                        data=None,
-                        error_code="SCHEMA_VALIDATION_FAILED",
-                        retryable=False,
-                        message="Intelligence service response missing required 'facts' list.",
-                    )
-
-                validated_facts = []
-                for item in raw_facts:
-                    if not isinstance(item, dict):
+                    if resp.status_code == 400:
                         return AIServiceResult(
                             success=False,
                             data=None,
-                            error_code="SCHEMA_VALIDATION_FAILED",
+                            error_code="AI_SERVICE_REQUEST_REJECTED",
                             retryable=False,
-                            message="Extracted fact item must be a JSON object.",
+                            message="Intelligence service rejected request (HTTP 400).",
                         )
+                    elif resp.status_code in (401, 403):
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_AUTH_ERROR",
+                            retryable=False,
+                            message=f"Intelligence service auth error (HTTP {resp.status_code}).",
+                        )
+                    elif resp.status_code == 404:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_ENDPOINT_NOT_FOUND",
+                            retryable=False,
+                            message="Intelligence service endpoint not found (HTTP 404).",
+                        )
+                    elif resp.status_code in (408, 429):
+                        if attempt < max_attempts:
+                            continue
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_UNAVAILABLE",
+                            retryable=True,
+                            message=f"Intelligence service rate limited or timed out (HTTP {resp.status_code}).",
+                        )
+                    elif 400 <= resp.status_code < 500:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_REQUEST_REJECTED",
+                            retryable=False,
+                            message=f"Intelligence service rejected request (HTTP {resp.status_code}).",
+                        )
+                    elif resp.status_code >= 500:
+                        if attempt < max_attempts:
+                            continue
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_UNAVAILABLE",
+                            retryable=True,
+                            message=f"Intelligence service HTTP error (status {resp.status_code}).",
+                        )
+
                     try:
-                        fact_obj = ExtractedFactCreate.model_validate(item)
-                        validated_facts.append(fact_obj.model_dump())
-                    except ValidationError as val_err:
+                        resp_data = resp.json()
+                    except Exception as parse_err:
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message=f"Extracted fact payload failed schema validation: {val_err}",
+                            message=f"Failed to parse intelligence JSON response: {parse_err}",
                         )
 
+                    if not isinstance(resp_data, dict):
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="SCHEMA_VALIDATION_FAILED",
+                            retryable=False,
+                            message="Intelligence service response must be a JSON object.",
+                        )
+
+                    if resp_data.get("status") in ("FAILED", "ERROR"):
+                        err_msg = resp_data.get("error") or resp_data.get("message") or "Extraction failed on service."
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="AI_SERVICE_REQUEST_REJECTED",
+                            retryable=False,
+                            message=f"Intelligence processing failure: {err_msg}",
+                        )
+
+                    raw_facts = resp_data.get("facts") if "facts" in resp_data else resp_data.get("data")
+                    if not isinstance(raw_facts, list):
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="SCHEMA_VALIDATION_FAILED",
+                            retryable=False,
+                            message="Intelligence service response missing required 'facts' list.",
+                        )
+
+                    validated_facts = []
+                    for item in raw_facts:
+                        if not isinstance(item, dict):
+                            return AIServiceResult(
+                                success=False,
+                                data=None,
+                                error_code="SCHEMA_VALIDATION_FAILED",
+                                retryable=False,
+                                message="Extracted fact item must be a JSON object.",
+                            )
+                        try:
+                            item_meta = item.get("metadata_json") or {}
+                            item_meta.setdefault("request_id", req_id)
+                            item_meta.setdefault("document_id", document_id)
+                            if document_sha256:
+                                item_meta.setdefault("document_sha256", document_sha256)
+                            if "provider_model" in resp_data:
+                                item_meta.setdefault("provider_model", resp_data["provider_model"])
+
+                            item["metadata_json"] = item_meta
+
+                            fact_obj = ExtractedFactCreate.model_validate(item)
+                            validated_facts.append(fact_obj.model_dump())
+                        except ValidationError as val_err:
+                            return AIServiceResult(
+                                success=False,
+                                data=None,
+                                error_code="SCHEMA_VALIDATION_FAILED",
+                                retryable=False,
+                                message=f"Extracted fact payload failed schema validation: {val_err}",
+                            )
+
+                    return AIServiceResult(
+                        success=True,
+                        data=validated_facts,
+                        error_code=None,
+                        retryable=False,
+                        message=f"Successfully extracted {len(validated_facts)} facts from bidder document.",
+                    )
+
+            except httpx.TimeoutException:
+                if attempt < max_attempts:
+                    continue
                 return AIServiceResult(
-                    success=True,
-                    data=validated_facts,
-                    error_code=None,
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
+                    retryable=True,
+                    message=f"Intelligence service request timed out after {settings.REQUEST_TIMEOUT_SECONDS}s.",
+                )
+            except httpx.RequestError as req_err:
+                if attempt < max_attempts:
+                    continue
+                return AIServiceResult(
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
+                    retryable=True,
+                    message=f"Intelligence service transport failure: {req_err}",
+                )
+            except Exception as exc:
+                return AIServiceResult(
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Successfully extracted {len(validated_facts)} facts from bidder document.",
+                    message=f"Unexpected internal error: {exc}",
                 )
 
-        except httpx.TimeoutException:
-            return AIServiceResult(
-                success=False,
-                data=None,
-                error_code="AI_SERVICE_UNAVAILABLE",
-                retryable=True,
-                message=f"Intelligence service request timed out after {settings.REQUEST_TIMEOUT_SECONDS}s.",
-            )
-        except httpx.RequestError as req_err:
-            return AIServiceResult(
-                success=False,
-                data=None,
-                error_code="AI_SERVICE_UNAVAILABLE",
-                retryable=True,
-                message=f"Intelligence service transport failure: {req_err}",
-            )
-        except Exception as exc:
-            return AIServiceResult(
-                success=False,
-                data=None,
-                error_code="AI_SERVICE_UNAVAILABLE",
-                retryable=False,
-                message=f"Unexpected internal error: {exc}",
-            )
+        return AIServiceResult(
+            success=False,
+            data=None,
+            error_code="AI_SERVICE_UNAVAILABLE",
+            retryable=True,
+            message="Intelligence service unavailable after maximum retries.",
+        )

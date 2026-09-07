@@ -21,6 +21,7 @@ from app.schemas.canonical import (
 )
 from app.services.ai_adapter import AIServiceAdapter
 from app.services.document_service import DocumentService
+from app.storage.factory import get_storage_provider
 
 router = APIRouter(prefix="/tenders", tags=["Tenders"])
 ai_adapter = AIServiceAdapter()
@@ -140,8 +141,23 @@ async def process_tender(
         payload={"job_id": job.id},
     )
 
-    # Require real tender raw_document_uri
-    if not tender.raw_document_uri:
+    # Select tender document from DB (or raw_document_uri)
+    doc = db.query(Document).filter(Document.tender_id == id).order_by(Document.created_at.desc()).first()
+
+    document_id = doc.id if doc else f"doc_tender_{id}"
+    document_sha256 = doc.sha256 if doc else None
+    filename = doc.filename if doc else None
+    content_type = doc.content_type if doc else None
+    file_bytes = None
+
+    storage = get_storage_provider()
+    if doc and doc.storage_uri and storage.file_exists(doc.storage_uri):
+        try:
+            file_bytes = storage.read_file(doc.storage_uri)
+        except Exception:
+            file_bytes = None
+
+    if not doc and not tender.raw_document_uri:
         job.status = JobStatus.FAILED
         job.error_message = "Missing tender raw_document_uri: cannot process tender without document."
         job.progress = 100
@@ -151,7 +167,7 @@ async def process_tender(
 
         AuditLogger.log(
             db,
-            action="TENDER_PROCESSING_FAILED",
+            action="TENDER_EXTRACTION_FAILED",
             entity_type="TENDER",
             entity_id=id,
             actor_id=principal.user_id,
@@ -160,7 +176,27 @@ async def process_tender(
         )
         return job
 
-    ai_result = await ai_adapter.extract_tender(tender_id=id, document_uri=tender.raw_document_uri)
+    req_id = str(uuid.uuid4())
+    AuditLogger.log(
+        db,
+        action="TENDER_EXTRACTION_REQUESTED",
+        entity_type="TENDER",
+        entity_id=id,
+        actor_id=principal.user_id,
+        actor_role=principal.role.value,
+        payload={"job_id": job.id, "request_id": req_id, "document_id": document_id},
+    )
+
+    ai_result = await ai_adapter.extract_tender(
+        tender_id=id,
+        document_uri=tender.raw_document_uri or doc.storage_uri if doc else "",
+        document_id=document_id,
+        document_sha256=document_sha256,
+        file_bytes=file_bytes,
+        filename=filename,
+        content_type=content_type,
+        request_id=req_id,
+    )
 
     if not ai_result.success or not ai_result.data:
         job.status = JobStatus.FAILED
@@ -169,15 +205,43 @@ async def process_tender(
         job.completed_at = datetime.now(timezone.utc)
         tender.status = JobStatus.FAILED
         db.commit()
+
+        AuditLogger.log(
+            db,
+            action="TENDER_EXTRACTION_FAILED",
+            entity_type="TENDER",
+            entity_id=id,
+            actor_id=principal.user_id,
+            actor_role=principal.role.value,
+            payload={"job_id": job.id, "request_id": req_id, "error_code": ai_result.error_code, "message": ai_result.message},
+        )
         return job
 
-    # Persist extracted requirements into DB
-    db.query(TenderRequirement).filter(TenderRequirement.tender_id == id).delete()
+    # Non-destructive reprocessing: do NOT delete existing requirements referenced by RuleEvaluation
+    from app.models.domain import RuleEvaluation
+    referenced_req_ids = {
+        r[0] for r in db.query(RuleEvaluation.requirement_id).distinct().all() if r[0]
+    }
 
+    # Delete unreferenced existing requirements for this tender
+    unreferenced_reqs = (
+        db.query(TenderRequirement)
+        .filter(TenderRequirement.tender_id == id)
+        .all()
+    )
+    for existing_req in unreferenced_reqs:
+        if existing_req.id not in referenced_req_ids:
+            db.delete(existing_req)
+
+    new_count = 0
     for item in ai_result.data:
         req_obj = TenderRequirementCreate.model_validate(item)
+        # Candidate Approval Policy: confidence >= 0.9 auto-approved; otherwise set is_approved=False
+        is_appr = req_obj.is_approved if hasattr(req_obj, "is_approved") and req_obj.is_approved is not None else (req_obj.confidence >= 0.9)
+
         db_req = TenderRequirement(
             tender_id=id,
+            document_id=doc.id if doc else None,
             clause=req_obj.clause,
             requirement_type=req_obj.requirement_type,
             field=req_obj.field,
@@ -189,8 +253,11 @@ async def process_tender(
             source_text=req_obj.source_text,
             confidence=req_obj.confidence,
             requires_verification=req_obj.requires_verification,
+            is_approved=is_appr,
+            metadata_json=req_obj.metadata_json or {},
         )
         db.add(db_req)
+        new_count += 1
 
     job.status = JobStatus.COMPLETED
     job.progress = 100
@@ -200,12 +267,12 @@ async def process_tender(
 
     AuditLogger.log(
         db,
-        action="TENDER_REQUIREMENTS_EXTRACTED",
+        action="TENDER_EXTRACTION_COMPLETED",
         entity_type="TENDER",
         entity_id=id,
         actor_id=principal.user_id,
         actor_role=principal.role.value,
-        payload={"requirements_count": len(ai_result.data)},
+        payload={"job_id": job.id, "request_id": req_id, "requirements_count": new_count},
     )
 
     return job

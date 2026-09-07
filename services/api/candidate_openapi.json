@@ -976,6 +976,54 @@
         }
       }
     },
+    "/api/v1/bidders/{bidder_id}/process-documents": {
+      "post": {
+        "tags": [
+          "Bidders"
+        ],
+        "summary": "Process Bidder Documents",
+        "description": "Trigger AI fact extraction across all uploaded bidder documents.",
+        "operationId": "process_bidder_documents_api_v1_bidders__bidder_id__process_documents_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bidder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bidder Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/documents/{document_id}": {
       "get": {
         "tags": [
@@ -2156,6 +2204,18 @@
             "title": "Confidence",
             "default": 1.0
           },
+          "metadata_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Json"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -3098,6 +3158,40 @@
             "type": "boolean",
             "title": "Requires Verification",
             "default": false
+          },
+          "is_approved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Approved"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "metadata_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Json"
           },
           "id": {
             "type": "string",
