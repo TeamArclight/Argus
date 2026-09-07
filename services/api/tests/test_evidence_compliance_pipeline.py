@@ -813,3 +813,214 @@ def test_fail_closed_ownership_missing_entities_and_cross_run(db_session, sample
             run=run1,
         )
 
+
+def test_no_field_based_evidence_fallback_on_unresolvable_linkage(db_session, sample_bidder):
+    """18. Verifies build_compliance_matrix attaches NO evidence citations when exact evaluation linkage is unresolvable or missing, even if matching fields exist."""
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_bidder.tender_id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [
+                {
+                    "id": "req-1",
+                    "clause": "3.1",
+                    "requirement_type": "TURNOVER",
+                    "field": "financial.average_annual_turnover",
+                    "operator": "GTE",
+                    "expected_value": "5000000",
+                    "mandatory": True,
+                }
+            ],
+            "facts": [
+                {
+                    "id": "fact-1",
+                    "field": "financial.average_annual_turnover",
+                    "value": "6000000",
+                    "source_text": "Turnover 60L",
+                }
+            ],
+            "verifications": [
+                {
+                    "id": "ver-1",
+                    "field": "financial.average_annual_turnover",
+                    "status": "VERIFIED",
+                    "verified_value": "6000000",
+                }
+            ],
+            "evidence": [],
+            "exact_evaluation_linkage": [
+                {
+                    "requirement_id": "req-1",
+                    "status": ComplianceStatus.PASS,
+                    "reason_code": "THRESHOLD_MET",
+                    "observed_value": "6000000",
+                    "evidence_ids": [],  # Unresolvable / empty linkage
+                }
+            ],
+        },
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    matrix, ev_schema, notice = build_compliance_matrix(db_session, sample_bidder, run, [], [])
+    row = matrix.rows[0]
+    # References MUST be empty because exact evaluation linkage has no evidence_ids
+    assert row.evidence_refs == []
+    assert row.verification_refs == []
+    assert row.source_refs == []
+
+
+def test_missing_requirement_definition_leaves_fields_none(db_session, sample_bidder):
+    """19. Verifies build_compliance_matrix leaves requirement fields as None without inventing default values when missing from snapshot."""
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_bidder.tender_id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [],  # req-missing is omitted
+            "facts": [],
+            "verifications": [],
+            "evidence": [],
+            "exact_evaluation_linkage": [
+                {
+                    "requirement_id": "req-missing",
+                    "status": ComplianceStatus.UNKNOWN,
+                    "reason_code": "REQUIREMENT_NOT_FOUND",
+                    "observed_value": None,
+                    "evidence_ids": [],
+                }
+            ],
+        },
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    matrix, ev_schema, notice = build_compliance_matrix(db_session, sample_bidder, run, [], [])
+    row = matrix.rows[0]
+    assert row.requirement_id == "req-missing"
+    assert row.clause is None
+    assert row.requirement_type is None
+    assert row.field is None
+    assert row.operator is None
+    assert row.expected_value is None
+    assert row.unit is None
+    assert row.mandatory is None
+    assert notice is not None
+    assert "Historical requirement definition for requirement_id 'req-missing' missing from run snapshot" in notice
+
+
+def test_missing_evidence_timestamp_remains_none(db_session, sample_bidder):
+    """20. Verifies reconstructed evidence with missing timestamp retains None without substituting run.created_at."""
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_bidder.tender_id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [],
+            "facts": [],
+            "verifications": [],
+            "evidence": [
+                {
+                    "id": "ev-no-timestamp",
+                    "entity_type": "EXTRACTED_FACT",
+                    "snippet": "No timestamp snippet",
+                    # created_at is omitted
+                }
+            ],
+            "exact_evaluation_linkage": [],
+        },
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    _, evidence_list, _ = build_compliance_matrix(db_session, sample_bidder, run, [], [])
+    assert len(evidence_list) == 1
+    assert evidence_list[0].created_at is None
+
+
+@pytest.mark.asyncio
+async def test_report_verification_results_snapshot_authority(db_session, sample_tender, sample_bidder):
+    """21. Verifies get_bidder_report reads verification results strictly from snapshot, unaffected by DB row mutations."""
+    from app.api.v1.bidders import get_bidder_report
+    from app.auth.dependencies import AuthenticatedPrincipal
+    from app.schemas.canonical import UserRole
+
+    ver_id = str(uuid.uuid4())
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_tender.id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [],
+            "facts": [],
+            "verifications": [
+                {
+                    "id": ver_id,
+                    "bidder_id": sample_bidder.id,
+                    "field": "general.gstin",
+                    "claimed_value": "27AAACA12341ZV",
+                    "verified_value": "27AAACA12341ZV",
+                    "status": "VERIFIED",
+                    "source": "GST_DEMO_DATA",
+                    "mode": "DEMO",
+                    "checked_at": "2026-02-01T12:00:00+00:00",
+                }
+            ],
+            "evidence": [],
+            "exact_evaluation_linkage": [],
+        },
+    )
+    db_session.add(run)
+
+    # DB row with different status (mutated after run)
+    ver_db = VerificationResult(
+        id=ver_id,
+        bidder_id=sample_bidder.id,
+        run_id=run.id,
+        field="general.gstin",
+        claimed_value="27AAACA12341ZV",
+        verified_value="MUTATED_VALUE",
+        status=VerificationStatus.MISMATCH,
+        source="MUTATED_SOURCE",
+        mode=VerificationMode.LIVE,
+        checked_at=datetime.now(timezone.utc),
+    )
+    db_session.add(ver_db)
+    db_session.commit()
+
+    principal = AuthenticatedPrincipal(user_id="test-user", role=UserRole.ADMIN)
+    report = await get_bidder_report(id=sample_bidder.id, run_id=run.id, principal=principal, db=db_session)
+
+    # Report verification results MUST reflect snapshot values (VERIFIED), not DB row (MISMATCH)
+    assert len(report.verification_results) == 1
+    snapshot_v = report.verification_results[0]
+    assert snapshot_v.id == ver_id
+    assert snapshot_v.status == VerificationStatus.VERIFIED
+    assert snapshot_v.verified_value == "27AAACA12341ZV"
+
+

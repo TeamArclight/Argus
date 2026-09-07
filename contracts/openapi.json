@@ -1938,20 +1938,54 @@
             "title": "Requirement Id"
           },
           "clause": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Clause"
           },
           "requirement_type": {
-            "$ref": "#/components/schemas/RequirementType"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequirementType"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "field": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Field"
           },
           "operator": {
-            "$ref": "#/components/schemas/OperatorEnum"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperatorEnum"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expected_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
             "title": "Expected Value"
           },
           "unit": {
@@ -1966,7 +2000,14 @@
             "title": "Unit"
           },
           "mandatory": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Mandatory"
           },
           "status": {
@@ -2025,12 +2066,6 @@
         "type": "object",
         "required": [
           "requirement_id",
-          "clause",
-          "requirement_type",
-          "field",
-          "operator",
-          "expected_value",
-          "mandatory",
           "status",
           "reason_code"
         ],
@@ -2641,8 +2676,15 @@
             "title": "Id"
           },
           "created_at": {
-            "type": "string",
-            "format": "date-time",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Created At"
           }
         },
@@ -2651,8 +2693,7 @@
           "entity_type",
           "entity_id",
           "snippet",
-          "id",
-          "created_at"
+          "id"
         ],
         "title": "EvidenceRead"
       },

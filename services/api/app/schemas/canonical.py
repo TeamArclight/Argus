@@ -376,7 +376,7 @@ class EvidenceCreate(BaseModel):
 class EvidenceRead(EvidenceCreate):
     model_config = ConfigDict(from_attributes=True)
     id: str
-    created_at: datetime
+    created_at: datetime | None = None
 
 
 class RuleEvaluationRead(BaseModel):
@@ -472,13 +472,13 @@ class ComplianceRunDetailRead(BaseModel):
 
 class ComplianceMatrixRow(BaseModel):
     requirement_id: str
-    clause: str
-    requirement_type: RequirementType
-    field: str
-    operator: OperatorEnum
-    expected_value: Any
+    clause: str | None = None
+    requirement_type: RequirementType | None = None
+    field: str | None = None
+    operator: OperatorEnum | None = None
+    expected_value: Any | None = None
     unit: str | None = None
-    mandatory: bool
+    mandatory: bool | None = None
     status: ComplianceStatus
     reason_code: str
     observed_value: Any | None = None
