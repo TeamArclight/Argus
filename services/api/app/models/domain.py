@@ -74,7 +74,7 @@ class TenderRequirement(Base):
     source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     requires_verification: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    is_approved: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     document_id: Mapped[str | None] = mapped_column(String, ForeignKey("documents.id"), nullable=True, index=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)

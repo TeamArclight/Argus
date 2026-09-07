@@ -198,7 +198,7 @@ class TenderRequirementCreate(BaseModel):
     source_text: str | None = None
     confidence: float = 1.0
     requires_verification: bool = False
-    is_approved: bool | None = None
+    is_approved: bool = False
     document_id: str | None = None
     metadata_json: dict[str, Any] | None = Field(default_factory=dict)
 

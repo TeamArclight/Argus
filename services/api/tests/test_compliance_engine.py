@@ -33,6 +33,7 @@ def make_requirement(
         mandatory=mandatory,
         confidence=1.0,
         requires_verification=True,
+        is_approved=True,
         created_at=datetime.now(timezone.utc),
     )
 

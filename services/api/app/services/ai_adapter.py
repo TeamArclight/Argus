@@ -183,6 +183,12 @@ class AIServiceAdapter:
                                 message="Requirement item must be a JSON object.",
                             )
                         try:
+                            # Scrub model-supplied authority and approval fields
+                            for authority_field in ("is_approved", "approved_by", "approved_at", "approval_status", "approved"):
+                                item.pop(authority_field, None)
+                                if isinstance(item.get("metadata_json"), dict):
+                                    item["metadata_json"].pop(authority_field, None)
+
                             item_meta = item.get("metadata_json") or {}
                             item_meta.setdefault("request_id", req_id)
                             item_meta.setdefault("document_id", doc_id)
@@ -193,6 +199,7 @@ class AIServiceAdapter:
 
                             item["metadata_json"] = item_meta
                             item["document_id"] = doc_id
+                            item["is_approved"] = False
 
                             req_obj = TenderRequirementCreate.model_validate(item)
                             validated_requirements.append(req_obj.model_dump())
@@ -415,6 +422,11 @@ class AIServiceAdapter:
                                 message="Extracted fact item must be a JSON object.",
                             )
                         try:
+                            for authority_field in ("is_approved", "approved_by", "approved_at", "approval_status", "approved"):
+                                item.pop(authority_field, None)
+                                if isinstance(item.get("metadata_json"), dict):
+                                    item["metadata_json"].pop(authority_field, None)
+
                             item_meta = item.get("metadata_json") or {}
                             item_meta.setdefault("request_id", req_id)
                             item_meta.setdefault("document_id", document_id)

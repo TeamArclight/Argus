@@ -116,6 +116,12 @@ def test_end_to_end_p0_workflow(monkeypatch):
         requirements = resp.json()
         assert len(requirements) >= 3
 
+        # 2b. Procurement Officer approves extracted candidate requirements
+        for r in requirements:
+            appr_res = client.post(f"/api/v1/tenders/{tender_id}/requirements/{r['id']}/approve", headers=headers)
+            assert appr_res.status_code == 200
+            assert appr_res.json()["is_approved"] is True
+
         # 3. Create Bidder
         bidder_payload = {
             "bidder_name": "Bharat Cybernetics Pvt Ltd",

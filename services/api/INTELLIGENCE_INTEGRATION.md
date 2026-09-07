@@ -128,34 +128,41 @@ To ensure zero information leakage and prevent path traversal vulnerability vect
 
 ## 5. Candidate Approval Policy & Deterministic Compliance Boundary
 
-1. **Candidate Approval Policy (`is_approved`)**:
-   - AI model outputs extract candidate rules (`TenderRequirement`).
-   - High-confidence candidates (`confidence >= 0.9`) default to `is_approved = True`. Lower confidence candidates default to `is_approved = False` requiring procurement officer approval.
-   - Manually created requirements default to `is_approved = True`.
+1. **Candidate vs. Approved Rule Distinction**:
+   - AI model extractions produce **candidate rules** (`TenderRequirement`) that default strictly to `is_approved = False`.
+   - AI confidence measures extraction uncertainty, not procurement authority. Confidence scores (even `1.0`) **never** auto-approve candidate rules.
+   - All model-supplied authority fields (`is_approved`, `approved_by`, `approved_at`, `approval_status`) are scrubbed from extraction payloads upon receipt.
+   - AI model output is prohibited from setting compliance status (`PASS`, `FAIL`) or human decisions (`QUALIFIED`, `DISQUALIFIED`).
 
-2. **Deterministic Compliance Boundary**:
+2. **Officer Approval Workflow**:
+   - Procurement Officers (`ADMIN`, `PROCUREMENT_OFFICER`) review candidate rules and invoke `POST /api/v1/tenders/{tender_id}/requirements/{requirement_id}/approve`.
+   - Validates rule completeness (`clause`, `field`, `operator`, `expected_value`, `confidence`).
+   - Sets `is_approved = True`, records `approved_by` officer ID and `approved_at` timestamp from the authenticated JWT principal into `metadata_json`, and emits `TENDER_REQUIREMENT_APPROVED` audit event.
+   - Approval is idempotent and preserves original approval attribution on repeated calls.
+
+3. **Manual Requirement Creation**:
+   - Authorized officers can directly author executable rules via `POST /api/v1/tenders/{tender_id}/requirements`.
+   - Manually created rules default to `is_approved = True` (authored by human officer) with `approved_by` set from the authenticated principal.
+
+4. **Zero-Approved UNKNOWN Semantics**:
    - The `ComplianceEngine` evaluates **only** approved rules (`is_approved == True`).
-   - Model outputs are prohibited from setting compliance status (`PASS`, `FAIL`, `REVIEW_REQUIRED`) or human decision status (`QUALIFIED`, `DISQUALIFIED`).
+   - If zero approved requirements exist for a tender, compliance evaluation reports `overall_status = UNKNOWN`, `evaluation_count = 0`, and `reason_code = "NO_APPROVED_REQUIREMENTS"`.
 
 ---
 
 ## 6. Non-Destructive Reprocessing & Idempotency
 
-- When re-extracting requirements or facts for an existing tender or bidder document:
-  - Any existing `TenderRequirement` or `ExtractedFact` row referenced in a prior `RuleEvaluation` (`evidence_ids`) is **preserved** to maintain historical compliance audit trails.
-  - Only unreferenced existing rows for that target document are updated/replaced.
+- Reprocessing (`POST /api/v1/tenders/{id}/process`) is strictly non-destructive.
+- No existing `TenderRequirement` or `ExtractedFact` records are deleted or pruned.
+- Existing approved rules retain their approval status and are never mutated or replaced by AI re-extraction.
+- Newly extracted candidates are deduplicated against existing database records to prevent duplicate candidate rows on repeated process requests.
 
 ---
 
-## 7. Truthful Provenance Model
+## 7. Truthful Provenance & Historical Integrity
 
-Every extracted fact and requirement records full provenance metadata:
-- `document_id`: ID of physical document
-- `document_sha256`: SHA-256 checksum of physical file
-- `source_page`: 1-based page number where fact was detected (or `null` if unpaged)
-- `source_text`: Exact verbatim snippet from source file
-- `confidence`: Calibrated score between `0.0` and `1.0`
-- `metadata_json`: Contains `request_id`, `provider_model`, and extraction timestamp.
+- Every extracted fact and requirement records full provenance metadata (`document_id`, `document_sha256`, `source_page`, `source_text`, `confidence`, `request_id`, `provider_model`).
+- Historical compliance runs remain completely reproducible: all rule and fact records referenced in prior `RuleEvaluation` entries are immutable and preserved.
 
 ---
 

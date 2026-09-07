@@ -254,6 +254,16 @@
               "type": "string",
               "title": "Id"
             }
+          },
+          {
+            "name": "approved_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Approved Only"
+            }
           }
         ],
         "responses": {
@@ -267,6 +277,121 @@
                     "$ref": "#/components/schemas/TenderRequirementRead"
                   },
                   "title": "Response Get Tender Requirements Api V1 Tenders  Id  Requirements Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tenders/{tender_id}/requirements": {
+      "post": {
+        "tags": [
+          "Tenders"
+        ],
+        "summary": "Create Manual Tender Requirement",
+        "description": "Manually create an approved tender requirement by an authorized procurement officer.",
+        "operationId": "create_manual_tender_requirement_api_v1_tenders__tender_id__requirements_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tender_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tender Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenderRequirementCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenderRequirementRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tenders/{tender_id}/requirements/{requirement_id}/approve": {
+      "post": {
+        "tags": [
+          "Tenders"
+        ],
+        "summary": "Approve Tender Requirement",
+        "description": "Approve a candidate tender requirement by an authorized procurement officer.",
+        "operationId": "approve_tender_requirement_api_v1_tenders__tender_id__requirements__requirement_id__approve_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tender_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tender Id"
+            }
+          },
+          {
+            "name": "requirement_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Requirement Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenderRequirementRead"
                 }
               }
             }
@@ -3089,6 +3214,115 @@
         ],
         "title": "TenderRead"
       },
+      "TenderRequirementCreate": {
+        "properties": {
+          "clause": {
+            "type": "string",
+            "title": "Clause",
+            "description": "Tender document clause reference, e.g. '4.2'"
+          },
+          "requirement_type": {
+            "$ref": "#/components/schemas/RequirementType"
+          },
+          "field": {
+            "type": "string",
+            "title": "Field",
+            "description": "Canonical fact field key, e.g. 'financial.average_annual_turnover'"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/OperatorEnum"
+          },
+          "expected_value": {
+            "title": "Expected Value",
+            "description": "Expected threshold or value"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "mandatory": {
+            "type": "boolean",
+            "title": "Mandatory",
+            "default": true
+          },
+          "source_page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Page"
+          },
+          "source_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Text"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence",
+            "default": 1.0
+          },
+          "requires_verification": {
+            "type": "boolean",
+            "title": "Requires Verification",
+            "default": false
+          },
+          "is_approved": {
+            "type": "boolean",
+            "title": "Is Approved",
+            "default": false
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "metadata_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "clause",
+          "requirement_type",
+          "field",
+          "operator",
+          "expected_value"
+        ],
+        "title": "TenderRequirementCreate"
+      },
       "TenderRequirementRead": {
         "properties": {
           "clause": {
@@ -3160,15 +3394,9 @@
             "default": false
           },
           "is_approved": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Approved"
+            "type": "boolean",
+            "title": "Is Approved",
+            "default": false
           },
           "document_id": {
             "anyOf": [
