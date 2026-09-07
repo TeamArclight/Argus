@@ -233,8 +233,6 @@ class ComplianceEngine:
         matching_facts = [f for f in facts if f.field == rule.field]
         matching_verifications = [v for v in verification_results if v.field == rule.field]
 
-        evidence_ids = [f.id for f in matching_facts] + [v.id for v in matching_verifications]
-
         # PRECEDENCE 1: External verification service error / unavailable / timeout
         unhealthy_verifications = [
             v
@@ -250,7 +248,7 @@ class ComplianceEngine:
                 reason_code=ReasonCode.VERIFICATION_UNAVAILABLE,
                 observed_value=None,
                 expected_value=rule.expected_value,
-                evidence_ids=evidence_ids,
+                evidence_ids=[v.id for v in unhealthy_verifications],
                 rule_version="1.0",
                 evaluated_at=now,
             )
@@ -280,7 +278,7 @@ class ComplianceEngine:
                 reason_code=ReasonCode.CONFLICTING_VERIFICATION_RESULTS,
                 observed_value=[v.verified_value for v in verified_with_val],
                 expected_value=rule.expected_value,
-                evidence_ids=evidence_ids,
+                evidence_ids=[v.id for v in verified_with_val],
                 rule_version="1.0",
                 evaluated_at=now,
             )
@@ -300,7 +298,7 @@ class ComplianceEngine:
                     "verified": first_mismatch.verified_value,
                 },
                 expected_value=rule.expected_value,
-                evidence_ids=evidence_ids,
+                evidence_ids=[v.id for v in mismatch_verifications],
                 rule_version="1.0",
                 evaluated_at=now,
             )
@@ -324,7 +322,7 @@ class ComplianceEngine:
                 reason_code=ReasonCode.CONFLICTING_FACTS,
                 observed_value=[f.value for f in facts_with_val],
                 expected_value=rule.expected_value,
-                evidence_ids=evidence_ids,
+                evidence_ids=[f.id for f in facts_with_val],
                 rule_version="1.0",
                 evaluated_at=now,
             )
@@ -344,7 +342,7 @@ class ComplianceEngine:
                     reason_code=ReasonCode.AMBIGUOUS_VERIFIED_VALUE,
                     observed_value={"claimed": claimed_val, "verified": raw_verified_val},
                     expected_value=rule.expected_value,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=[facts_with_val[0].id, verified_with_val[0].id],
                     rule_version="1.0",
                     evaluated_at=now,
                 )
@@ -358,10 +356,17 @@ class ComplianceEngine:
                     reason_code=ReasonCode.CLAIM_VERIFICATION_MISMATCH,
                     observed_value={"claimed": claimed_val, "verified": resolved_verified_val},
                     expected_value=rule.expected_value,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=[facts_with_val[0].id, verified_with_val[0].id],
                     rule_version="1.0",
                     evaluated_at=now,
                 )
+
+        # Determine single primary contributing input for standard evaluation
+        primary_input_ids = []
+        if verified_with_val:
+            primary_input_ids = [verified_with_val[0].id]
+        elif facts_with_val:
+            primary_input_ids = [facts_with_val[0].id]
 
         # PRECEDENCE 6: Handle EXISTS / NOT_EXISTS operators
         has_usable_evidence = bool(facts_with_val or verified_with_val)
@@ -378,7 +383,7 @@ class ComplianceEngine:
                     reason_code=ReasonCode.EVIDENCE_EXISTS,
                     observed_value=resolved_obs_val if resolved_obs_val is not None else True,
                     expected_value=True,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=primary_input_ids,
                     rule_version="1.0",
                     evaluated_at=now,
                 )
@@ -392,7 +397,7 @@ class ComplianceEngine:
                     reason_code=ReasonCode.MISSING_EVIDENCE,
                     observed_value=None,
                     expected_value=True,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=[],
                     rule_version="1.0",
                     evaluated_at=now,
                 )
@@ -408,7 +413,7 @@ class ComplianceEngine:
                     reason_code=ReasonCode.MISSING_EVIDENCE,
                     observed_value=None,
                     expected_value=False,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=[],
                     rule_version="1.0",
                     evaluated_at=now,
                 )
@@ -425,7 +430,7 @@ class ComplianceEngine:
                     reason_code=ReasonCode.AMBIGUOUS_VERIFIED_VALUE,
                     observed_value=raw_obs_val,
                     expected_value=False,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=primary_input_ids,
                     rule_version="1.0",
                     evaluated_at=now,
                 )
@@ -442,7 +447,7 @@ class ComplianceEngine:
                     reason_code=reason,
                     observed_value=resolved_obs_val,
                     expected_value=False,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=primary_input_ids,
                     rule_version="1.0",
                     evaluated_at=now,
                 )
@@ -458,7 +463,7 @@ class ComplianceEngine:
                     reason_code=reason,
                     observed_value=resolved_obs_val,
                     expected_value=False,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=primary_input_ids,
                     rule_version="1.0",
                     evaluated_at=now,
                 )
@@ -471,7 +476,7 @@ class ComplianceEngine:
                 reason_code=ReasonCode.TYPE_CONVERSION_ERROR,
                 observed_value=resolved_obs_val,
                 expected_value=False,
-                evidence_ids=evidence_ids,
+                evidence_ids=primary_input_ids,
                 rule_version="1.0",
                 evaluated_at=now,
             )
@@ -487,7 +492,7 @@ class ComplianceEngine:
                 reason_code=ReasonCode.MISSING_EVIDENCE,
                 observed_value=None,
                 expected_value=rule.expected_value,
-                evidence_ids=evidence_ids,
+                evidence_ids=[],
                 rule_version="1.0",
                 evaluated_at=now,
             )
@@ -505,7 +510,7 @@ class ComplianceEngine:
                 reason_code=ReasonCode.AMBIGUOUS_VERIFIED_VALUE,
                 observed_value=raw_obs_val,
                 expected_value=rule.expected_value,
-                evidence_ids=evidence_ids,
+                evidence_ids=primary_input_ids,
                 rule_version="1.0",
                 evaluated_at=now,
             )
@@ -520,7 +525,7 @@ class ComplianceEngine:
             reason_code=reason_code,
             observed_value=resolved_obs_val,
             expected_value=rule.expected_value,
-            evidence_ids=evidence_ids,
+            evidence_ids=primary_input_ids,
             rule_version="1.0",
             evaluated_at=now,
         )

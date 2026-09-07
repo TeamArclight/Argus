@@ -11,6 +11,7 @@ from app.models.domain import (
     Bidder,
     ComplianceRun,
     Document,
+    Evidence,
     ExtractedFact,
     HumanDecision,
     ProcessingJob,
@@ -24,6 +25,8 @@ from app.schemas.canonical import (
     AuthenticatedPrincipal,
     BidderCreate,
     BidderRead,
+    ComplianceMatrixRead,
+    ComplianceMatrixRow,
     ComplianceOverviewRead,
     ComplianceRunDetailRead,
     ComplianceRunRead,
@@ -40,7 +43,9 @@ from app.schemas.canonical import (
     JobRead,
     JobStage,
     JobStatus,
+    OperatorEnum,
     ReportRead,
+    RequirementType,
     RiskSignalRead,
     RuleEvaluationRead,
     UserRole,
@@ -408,6 +413,297 @@ def record_human_decision(
     return decision
 
 
+def _is_phase9_snapshot(snapshot_data: Any) -> bool:
+    return bool(
+        snapshot_data
+        and isinstance(snapshot_data, dict)
+        and (
+            snapshot_data.get("snapshot_version")
+            or "approved_requirements" in snapshot_data
+            or "exact_evaluation_linkage" in snapshot_data
+        )
+    )
+
+
+def build_compliance_matrix(
+    db: Session,
+    bidder: Bidder,
+    run: ComplianceRun,
+    evaluations_db: list[RuleEvaluation],
+    verifications_db: list[VerificationResult],
+) -> tuple[ComplianceMatrixRead, list[EvidenceRead], str | None]:
+    """Reconstruct compliance matrix, evidence list, and historical limitations notice from run input snapshot without fallback fabrication or defaults."""
+    snapshot_data = run.input_snapshot_json or {}
+    has_snapshot = _is_phase9_snapshot(snapshot_data)
+
+    limitations: list[str] = []
+    if has_snapshot:
+        required_sections = ["approved_requirements", "facts", "verifications", "evidence"]
+        missing_sections = [s for s in required_sections if s not in snapshot_data or not isinstance(snapshot_data[s], list)]
+        if missing_sections:
+            limitations.append(f"Phase 9 historical snapshot missing or malformed required sections: {', '.join(missing_sections)}.")
+    else:
+        limitations.append(
+            "Historical compliance run was completed before snapshot recording (Phase 9). Evidence citations and exact evaluation inputs cannot be reconstructed historically for this run."
+        )
+
+    evidence_schema: list[EvidenceRead] = []
+
+    if has_snapshot and "evidence" in snapshot_data and isinstance(snapshot_data["evidence"], list):
+        snapshot_ev = snapshot_data.get("evidence", [])
+        for item in snapshot_ev:
+            if isinstance(item, dict):
+                ev_id = item.get("id")
+                if not ev_id:
+                    # Skip invalid/missing ID items without fabricating random UUIDs
+                    continue
+
+                created_at_val = item.get("created_at")
+                if isinstance(created_at_val, str):
+                    try:
+                        created_at_val = datetime.fromisoformat(created_at_val.replace("Z", "+00:00"))
+                    except Exception:
+                        created_at_val = None
+                elif not isinstance(created_at_val, datetime):
+                    created_at_val = None
+
+                obs_at_val = item.get("observed_at")
+                if isinstance(obs_at_val, str):
+                    try:
+                        obs_at_val = datetime.fromisoformat(obs_at_val.replace("Z", "+00:00"))
+                    except Exception:
+                        obs_at_val = None
+                elif not isinstance(obs_at_val, datetime):
+                    obs_at_val = None
+
+                evidence_schema.append(
+                    EvidenceRead(
+                        id=ev_id,
+                        entity_type=item.get("entity_type", "BIDDER"),
+                        entity_id=item.get("entity_id", bidder.id),
+                        snippet=item.get("snippet"),
+                        source_uri=item.get("source_uri"),
+                        page_number=item.get("page_number"),
+                        location_metadata=item.get("location_metadata", {}),
+                        bidder_id=item.get("bidder_id", bidder.id),
+                        tender_id=item.get("tender_id", bidder.tender_id),
+                        document_id=item.get("document_id"),
+                        extracted_fact_id=item.get("extracted_fact_id"),
+                        verification_result_id=item.get("verification_result_id"),
+                        run_id=run.id,
+                        source_type=item.get("source_type"),
+                        source_reference=item.get("source_reference"),
+                        sha256=item.get("sha256"),
+                        verification_mode=item.get("verification_mode"),
+                        verification_status=item.get("verification_status"),
+                        provider_identifier=item.get("provider_identifier"),
+                        observed_at=obs_at_val,
+                        created_at=created_at_val,
+                    )
+                )
+    else:
+        evidence_db = db.query(Evidence).filter(Evidence.run_id == run.id).all()
+        evidence_schema = [EvidenceRead.model_validate(e) for e in evidence_db]
+
+    approved_reqs = snapshot_data.get("approved_requirements", []) if has_snapshot and isinstance(snapshot_data.get("approved_requirements"), list) else []
+    req_map: dict[str, dict[str, Any]] = {}
+    if isinstance(approved_reqs, list):
+        for r in approved_reqs:
+            if isinstance(r, dict) and "id" in r:
+                req_map[r["id"]] = r
+
+    if has_snapshot:
+        if "verifications" in snapshot_data and isinstance(snapshot_data["verifications"], list):
+            verifications_list = snapshot_data["verifications"]
+        else:
+            verifications_list = []
+    else:
+        verifications_list = [v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in verifications_db]
+    ver_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(verifications_list, list):
+        for v in verifications_list:
+            if isinstance(v, dict) and "id" in v:
+                ver_by_id[v["id"]] = v
+
+    facts_list = snapshot_data.get("facts", []) if has_snapshot and isinstance(snapshot_data.get("facts"), list) else []
+    facts_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(facts_list, list):
+        for f in facts_list:
+            if isinstance(f, dict) and "id" in f:
+                facts_by_id[f["id"]] = f
+
+    evidence_by_id = {e.id: e for e in evidence_schema}
+
+    eval_list = snapshot_data.get("exact_evaluation_linkage", []) if has_snapshot and "exact_evaluation_linkage" in snapshot_data and isinstance(snapshot_data["exact_evaluation_linkage"], list) else evaluations_db
+
+    rows: list[ComplianceMatrixRow] = []
+    for eval_item in eval_list:
+        is_dict = isinstance(eval_item, dict)
+        req_id = eval_item.get("requirement_id") if is_dict else eval_item.requirement_id
+        eval_status = eval_item.get("status") if is_dict else eval_item.status
+        reason_code = eval_item.get("reason_code") if is_dict else eval_item.reason_code
+        observed_value = eval_item.get("observed_value") if is_dict else eval_item.observed_value
+        ev_ids = eval_item.get("evidence_ids", []) if is_dict else (eval_item.evidence_ids or [])
+
+        req_info = req_map.get(req_id) if has_snapshot else None
+        if not req_info and not has_snapshot:
+            # Legacy run: load current DB requirement as an explicitly labeled current reference
+            db_req = db.query(TenderRequirement).filter(TenderRequirement.id == req_id).first()
+            if db_req:
+                req_info = {
+                    "clause": db_req.clause,
+                    "requirement_type": db_req.requirement_type,
+                    "field": db_req.field,
+                    "operator": db_req.operator,
+                    "expected_value": db_req.expected_value,
+                    "unit": db_req.unit,
+                    "mandatory": db_req.mandatory,
+                    "is_current_db_reference": True,
+                }
+        elif not req_info and has_snapshot:
+            limitations.append(f"Historical requirement definition for requirement_id '{req_id}' missing from run snapshot.")
+
+        clause = req_info.get("clause") if isinstance(req_info, dict) else None
+        req_type = req_info.get("requirement_type") if isinstance(req_info, dict) else None
+        field = req_info.get("field") if isinstance(req_info, dict) else None
+        operator = req_info.get("operator") if isinstance(req_info, dict) else None
+        expected_value = req_info.get("expected_value") if isinstance(req_info, dict) else None
+        unit = req_info.get("unit") if isinstance(req_info, dict) else None
+        mandatory = req_info.get("mandatory") if isinstance(req_info, dict) else None
+
+        evidence_refs: list[dict[str, Any]] = []
+        verification_refs: list[dict[str, Any]] = []
+        source_refs: list[dict[str, Any]] = []
+
+        for ev_id in ev_ids:
+            if ev_id in evidence_by_id:
+                ev_obj = evidence_by_id[ev_id]
+                evidence_refs.append(
+                    {
+                        "evidence_id": ev_obj.id,
+                        "document_id": ev_obj.document_id,
+                        "extracted_fact_id": ev_obj.extracted_fact_id,
+                        "verification_result_id": ev_obj.verification_result_id,
+                        "source_type": ev_obj.source_type,
+                        "source_reference": ev_obj.source_reference,
+                        "page_number": ev_obj.page_number,
+                        "snippet": ev_obj.snippet,
+                        "sha256": ev_obj.sha256,
+                        "verification_mode": ev_obj.verification_mode.value if hasattr(ev_obj.verification_mode, "value") else str(ev_obj.verification_mode) if ev_obj.verification_mode else None,
+                        "verification_status": ev_obj.verification_status.value if hasattr(ev_obj.verification_status, "value") else str(ev_obj.verification_status) if ev_obj.verification_status else None,
+                        "provider_identifier": ev_obj.provider_identifier,
+                        "observed_at": ev_obj.observed_at.isoformat() if hasattr(ev_obj.observed_at, "isoformat") and ev_obj.observed_at else str(ev_obj.observed_at) if ev_obj.observed_at else None,
+                    }
+                )
+                if ev_obj.verification_result_id and ev_obj.verification_result_id in ver_by_id:
+                    v_item = ver_by_id[ev_obj.verification_result_id]
+                    if v_item not in verification_refs:
+                        verification_refs.append(v_item)
+                if ev_obj.extracted_fact_id and ev_obj.extracted_fact_id in facts_by_id:
+                    f_item = facts_by_id[ev_obj.extracted_fact_id]
+                    if f_item not in source_refs:
+                        source_refs.append(
+                            {
+                                "document_id": f_item.get("document_id"),
+                                "source_page": f_item.get("source_page"),
+                                "source_text": f_item.get("source_text"),
+                                "confidence": f_item.get("confidence"),
+                            }
+                        )
+
+        # STRICTLY NO FIELD-BASED FALLBACK: Only attach references linked by exact evaluation linkage!
+
+        review_req = bool(
+            eval_status in (ComplianceStatus.REVIEW_REQUIRED, ComplianceStatus.UNKNOWN, ComplianceStatus.FAIL)
+            or (eval_status != ComplianceStatus.PASS and (mandatory is True or mandatory is None))
+        )
+
+        rows.append(
+            ComplianceMatrixRow(
+                requirement_id=req_id,
+                clause=clause,
+                requirement_type=req_type,
+                field=field,
+                operator=operator,
+                expected_value=expected_value,
+                unit=unit,
+                mandatory=mandatory,
+                status=eval_status,
+                reason_code=reason_code,
+                observed_value=observed_value,
+                evidence_ids=ev_ids,
+                evidence_refs=evidence_refs,
+                verification_refs=verification_refs,
+                source_refs=source_refs,
+                review_required=review_req,
+            )
+        )
+
+    notice = "; ".join(limitations) if limitations else None
+    matrix = ComplianceMatrixRead(
+        tender_id=bidder.tender_id,
+        bidder_id=bidder.id,
+        run_id=run.id,
+        overall_status=run.overall_status or ComplianceStatus.UNKNOWN,
+        rows=rows,
+        historical_limitations_notice=notice,
+    )
+    return matrix, evidence_schema, notice
+
+
+@router.get("/bidders/{id}/matrix", response_model=ComplianceMatrixRead)
+async def get_bidder_compliance_matrix(
+    id: str,
+    run_id: str | None = Query(None, description="Optional compliance run ID"),
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+    bidder = db.query(Bidder).filter(Bidder.id == id).first()
+    if not bidder:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bidder with ID {id} not found.",
+        )
+
+    if run_id:
+        target_run = db.query(ComplianceRun).filter(ComplianceRun.id == run_id).first()
+        if not target_run or target_run.bidder_id != id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Compliance run {run_id} not found for bidder {id}.",
+            )
+    else:
+        target_run = (
+            db.query(ComplianceRun)
+            .filter(
+                ComplianceRun.bidder_id == id,
+                ComplianceRun.execution_status == JobStatus.COMPLETED,
+            )
+            .order_by(
+                ComplianceRun.completed_at.desc(),
+                ComplianceRun.created_at.desc(),
+                ComplianceRun.id.desc(),
+            )
+            .first()
+        )
+
+    if not target_run:
+        return ComplianceMatrixRead(
+            tender_id=bidder.tender_id,
+            bidder_id=id,
+            run_id=None,
+            overall_status=ComplianceStatus.UNKNOWN,
+            rows=[],
+            historical_limitations_notice=None,
+        )
+
+    evaluations_db = db.query(RuleEvaluation).filter(RuleEvaluation.run_id == target_run.id).all()
+    verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == target_run.id).all()
+
+    matrix, _, _ = build_compliance_matrix(db, bidder, target_run, evaluations_db, verifications_db)
+    return matrix
+
+
 @router.get("/bidders/{id}/report", response_model=ReportRead)
 async def get_bidder_report(
     id: str,
@@ -466,13 +762,24 @@ async def get_bidder_report(
             risk_signals=[],
             latest_decision=latest_decision_schema,
         )
+        empty_matrix = ComplianceMatrixRead(
+            tender_id=bidder.tender_id,
+            bidder_id=id,
+            run_id=None,
+            overall_status=ComplianceStatus.UNKNOWN,
+            rows=[],
+            historical_limitations_notice=None,
+        )
         return ReportRead(
             generated_at=datetime.now(timezone.utc),
             tender=tender,
             bidder=bidder,
             compliance_overview=overview,
+            compliance_matrix=empty_matrix,
             verification_results=[],
             evidence=[],
+            human_decision=latest_decision_schema,
+            historical_limitations_notice=None,
             audit_trail_count=audit_count,
         )
 
@@ -480,7 +787,19 @@ async def get_bidder_report(
     evaluations_schema = [RuleEvaluationRead.model_validate(e) for e in evaluations_db]
     risk_db = db.query(RiskSignal).filter(RiskSignal.run_id == target_run.id).all()
     risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
-    verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == target_run.id).all()
+    has_snapshot = _is_phase9_snapshot(target_run.input_snapshot_json)
+    if has_snapshot:
+        snapshot_data = target_run.input_snapshot_json or {}
+        if "verifications" in snapshot_data and isinstance(snapshot_data["verifications"], list):
+            verifications_for_report = [
+                VerificationResultRead.model_validate(v) if isinstance(v, dict) else v
+                for v in snapshot_data["verifications"]
+            ]
+        else:
+            verifications_for_report = []
+    else:
+        verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == target_run.id).all()
+        verifications_for_report = [VerificationResultRead.model_validate(v) for v in verifications_db]
 
     overall_status = target_run.overall_status or service.compute_overall_status(evaluations_db)
 
@@ -494,13 +813,21 @@ async def get_bidder_report(
         latest_decision=latest_decision_schema,
     )
 
+    verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == target_run.id).all()
+    matrix, evidence_schema, notice = build_compliance_matrix(
+        db, bidder, target_run, evaluations_db, verifications_db
+    )
+
     return ReportRead(
         generated_at=datetime.now(timezone.utc),
         tender=tender,
         bidder=bidder,
         compliance_overview=overview,
-        verification_results=verifications_db,
-        evidence=[],
+        compliance_matrix=matrix,
+        verification_results=verifications_for_report,
+        evidence=evidence_schema,
+        human_decision=latest_decision_schema,
+        historical_limitations_notice=notice,
         audit_trail_count=audit_count,
     )
 

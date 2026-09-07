@@ -7,6 +7,7 @@ from app.compliance.engine import ComplianceEngine
 from app.models.domain import (
     Bidder,
     ComplianceRun,
+    Document,
     Evidence,
     ExtractedFact,
     HumanDecision,
@@ -41,6 +42,9 @@ from app.verification.adapters import (
     MCAVerificationAdapter,
     UdyamVerificationAdapter,
 )
+
+
+from app.services.evidence_service import EvidenceNormalizationService
 
 
 class BidVerificationService:
@@ -178,6 +182,7 @@ class BidVerificationService:
             created_at=datetime.now(timezone.utc),
             rule_version="1.0",
             summary_json={},
+            input_snapshot_json={},
         )
         self.db.add(run)
         self.db.commit()
@@ -205,9 +210,8 @@ class BidVerificationService:
             payload={"gstin": bidder.gstin, "udyam": bidder.udyam_number, "job_id": job_id, "run_id": run.id},
         )
 
-
         try:
-            # 2. Collect bidder facts
+            # 2. Collect bidder facts and normalize fact evidence
             facts_db = (
                 self.db.query(ExtractedFact)
                 .filter(ExtractedFact.bidder_id == bidder_id)
@@ -215,7 +219,15 @@ class BidVerificationService:
             )
             facts_schema = [FactRead.model_validate(f) for f in facts_db]
 
-            # 3. Invoke verification adapters
+            fact_evidence_map: dict[str, Evidence] = {}
+            for f in facts_db:
+                doc = self.db.query(Document).filter(Document.id == f.document_id).first()
+                ev = EvidenceNormalizationService.normalize_fact_evidence(
+                    self.db, bidder.id, tender.id, f, document=doc, run_id=run.id
+                )
+                fact_evidence_map[f.id] = ev
+
+            # 3. Invoke verification adapters and normalize verification evidence
             bidder_data = {
                 "id": bidder.id,
                 "bidder_name": bidder.bidder_name,
@@ -258,6 +270,7 @@ class BidVerificationService:
             verifications_schema.append(blk_res)
 
             # Save VerificationResult rows append-only, assigned to run.id
+            ver_evidence_map: dict[str, Evidence] = {}
             for v in verifications_schema:
                 v.run_id = run.id
                 db_v = VerificationResult(
@@ -275,12 +288,15 @@ class BidVerificationService:
                     error_message=v.error_message,
                 )
                 self.db.add(db_v)
-            self.db.commit()
+
+                ev_v = EvidenceNormalizationService.normalize_verification_evidence(
+                    self.db, bidder.id, tender.id, db_v, run_id=run.id
+                )
+                ver_evidence_map[db_v.id] = ev_v
 
             if job:
                 job.current_stage = JobStage.COMPLIANCE
                 job.progress = 60
-                self.db.commit()
 
             # 4. Load ONLY APPROVED tender requirements and evaluate compliance
             requirements_db = (
@@ -304,6 +320,17 @@ class BidVerificationService:
                     context={"bidder_id": bidder.id, "tender_id": tender.id, "run_id": run.id},
                 )
                 eval_res.run_id = run.id
+
+                # Map exact contributing input IDs from ComplianceEngine to staged Evidence IDs
+                mapped_evidence_ids = []
+                for input_id in eval_res.evidence_ids:
+                    if input_id in fact_evidence_map:
+                        mapped_evidence_ids.append(fact_evidence_map[input_id].id)
+                    elif input_id in ver_evidence_map:
+                        mapped_evidence_ids.append(ver_evidence_map[input_id].id)
+                    else:
+                        mapped_evidence_ids.append(input_id)
+                eval_res.evidence_ids = mapped_evidence_ids
                 evaluations_schema.append(eval_res)
 
                 # Save RuleEvaluation to DB assigned to run.id
@@ -367,11 +394,54 @@ class BidVerificationService:
                 )
                 self.db.add(db_r)
 
-            # 5. Compute overall compliance status
+            # 5. Build explicit run input snapshot
+            staged_evidence_list = list(fact_evidence_map.values()) + list(ver_evidence_map.values())
+            bidder_docs = self.db.query(Document).filter(Document.bidder_id == bidder.id).all()
+
+            input_snapshot = {
+                "snapshot_version": "1.0",
+                "evaluated_at": datetime.now(timezone.utc).isoformat(),
+                "approved_requirements": [r.model_dump(mode="json") for r in requirements_schema],
+                "facts": [f.model_dump(mode="json") for f in facts_schema],
+                "verifications": [v.model_dump(mode="json") for v in verifications_schema],
+                "evidence": [
+                    {
+                        "id": e.id,
+                        "entity_type": e.entity_type,
+                        "entity_id": e.entity_id,
+                        "snippet": e.snippet,
+                        "page_number": e.page_number,
+                        "document_id": e.document_id,
+                        "extracted_fact_id": e.extracted_fact_id,
+                        "verification_result_id": e.verification_result_id,
+                        "source_type": e.source_type,
+                        "source_reference": e.source_reference,
+                        "sha256": e.sha256,
+                        "verification_mode": e.verification_mode.value if hasattr(e.verification_mode, "value") else str(e.verification_mode) if e.verification_mode else None,
+                        "verification_status": e.verification_status.value if hasattr(e.verification_status, "value") else str(e.verification_status) if e.verification_status else None,
+                        "provider_identifier": e.provider_identifier,
+                        "observed_at": e.observed_at.isoformat() if hasattr(e.observed_at, "isoformat") and e.observed_at else str(e.observed_at) if e.observed_at else None,
+                        "location_metadata": e.location_metadata,
+                    }
+                    for e in staged_evidence_list
+                ],
+                "exact_evaluation_linkage": [e.model_dump(mode="json") for e in evaluations_schema],
+                "documents": [
+                    {
+                        "id": d.id,
+                        "filename": d.filename,
+                        "document_type": d.document_type.value if hasattr(d.document_type, "value") else str(d.document_type),
+                        "sha256": d.sha256,
+                    }
+                    for d in bidder_docs
+                ],
+            }
+
+            # Compute overall compliance status
             overall_status = self.compute_overall_status(evaluations_schema)
             reason_code = "NO_APPROVED_REQUIREMENTS" if not evaluations_schema else None
 
-            # Mark ComplianceRun execution_status = COMPLETED, set overall_status
+            # Mark ComplianceRun execution_status = COMPLETED, set overall_status & input_snapshot_json
             run.execution_status = JobStatus.COMPLETED
             run.overall_status = overall_status
             run.completed_at = datetime.now(timezone.utc)
@@ -383,6 +453,27 @@ class BidVerificationService:
             if reason_code:
                 summary_dict["reason_code"] = reason_code
             run.summary_json = summary_dict
+            run.input_snapshot_json = input_snapshot
+
+            # Update job completion status in session
+            if job:
+                job.status = JobStatus.COMPLETED if overall_status in (ComplianceStatus.PASS, ComplianceStatus.FAIL) else JobStatus.REVIEW_REQUIRED
+                job.current_stage = JobStage.REPORTING
+                job.progress = 100
+                job.completed_at = datetime.now(timezone.utc)
+
+            # Stage completion audit entry in session without intermediate commit
+            AuditLogger.create_entry(
+                self.db,
+                action="COMPLIANCE_EVALUATION_COMPLETED",
+                entity_type="BIDDER",
+                entity_id=bidder.id,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                payload={"overall_status": overall_status, "evaluations_count": len(evaluations_schema), "run_id": run.id},
+            )
+
+            # Single atomic commit for entire completion batch (run, evaluations, risks, evidence, job, audit)
             self.db.commit()
 
             # 6. Fetch latest human decision if present
@@ -393,22 +484,6 @@ class BidVerificationService:
                 .first()
             )
             latest_decision_schema = HumanDecisionRead.model_validate(latest_decision_db) if latest_decision_db else None
-
-            # Update job completion status
-            if job:
-                job.status = JobStatus.COMPLETED if overall_status in (ComplianceStatus.PASS, ComplianceStatus.FAIL) else JobStatus.REVIEW_REQUIRED
-                job.current_stage = JobStage.REPORTING
-                job.progress = 100
-                job.completed_at = datetime.now(timezone.utc)
-                self.db.commit()
-
-            AuditLogger.log(
-                self.db,
-                action="COMPLIANCE_EVALUATION_COMPLETED",
-                entity_type="BIDDER",
-                entity_id=bidder.id,
-                payload={"overall_status": overall_status, "evaluations_count": len(evaluations_schema), "run_id": run.id},
-            )
 
             return ComplianceOverviewRead(
                 bidder_id=bidder.id,
