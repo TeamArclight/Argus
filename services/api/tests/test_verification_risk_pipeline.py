@@ -928,3 +928,86 @@ def test_provider_capability_list_matches_actual_implementation():
     assert "Turnover Verification" in gst_p.capabilities
 
 
+def test_financial_parser_scale_correctness_regressions():
+    """27. Verifies numeric + metadata scale normalization, single scale application, unit alias equivalence, double scaling prevention, and non-finite rejection."""
+    eval_ts = datetime.now(timezone.utc)
+
+    # 1. Numeric 5 + metadata Crore INR equals text "5 Crore INR"
+    f_num_meta = FactRead(
+        id="f-num", document_id="d1", bidder_id="b1", field="financial.turnover", value=5, confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "unit": "Crore"}
+    )
+    f_text_explicit = FactRead(
+        id="f-text", document_id="d2", bidder_id="b1", field="financial.turnover", value="5 Crore INR", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+    )
+
+    c1 = RiskEngine.evaluate_risks(facts=[f_num_meta, f_text_explicit], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    conflicts_1 = [c for c in c1 if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+    assert len(conflicts_1) == 0  # 5 + metadata Crore INR (50M) == text "5 Crore INR" (50M) -> NO conflict!
+
+    # 2. Prevent double scaling when metadata unit matches text unit (e.g. text "5 Crore" + metadata unit "cr")
+    f_double_meta = FactRead(
+        id="f-dbl", document_id="d1", bidder_id="b1", field="financial.turnover", value="5 Crore INR", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR", "unit": "cr"}
+    )
+    c2 = RiskEngine.evaluate_risks(facts=[f_num_meta, f_double_meta], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    conflicts_2 = [c for c in c2 if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+    assert len(conflicts_2) == 0  # No double scaling! 50M == 50M
+
+    # 3. Equivalent unit aliases (e.g. "cr", "crore", "lacs", "lakh")
+    curr, unit, val_cr, exp = RiskEngine._parse_currency_and_scale(10, {"unit": "cr", "currency": "INR"})
+    assert unit == "Crore"
+    assert val_cr == 100_000_000.0
+
+    curr, unit, val_lac, exp = RiskEngine._parse_currency_and_scale(1000, {"unit": "lacs", "currency": "INR"})
+    assert unit == "Lakh"
+    assert val_lac == 100_000_000.0
+
+    # 4. Non-finite values rejected
+    curr, unit, val_nan, exp = RiskEngine._parse_currency_and_scale("nan", {"currency": "INR"})
+    assert val_nan is None
+    curr, unit, val_inf, exp = RiskEngine._parse_currency_and_scale("inf", {"currency": "INR"})
+    assert val_inf is None
+
+
+def test_persisted_typed_risk_input_references(db_session: Session):
+    """28. Verifies persisting RiskSignal to DB and reloading via RiskSignalRead retains exact typed input_refs without document/bidder evidence conversion."""
+    eval_ts = datetime.now(timezone.utc)
+    from app.schemas.canonical import RiskInputRef, RiskInputType
+
+    typed_refs = [
+        RiskInputRef(ref_type=RiskInputType.DOCUMENT, id="doc-ref-100", metadata={"filename": "audit.pdf"}),
+        RiskInputRef(ref_type=RiskInputType.BIDDER_RECORD, id="bidder-ref-200", metadata={}),
+        RiskInputRef(ref_type=RiskInputType.EVIDENCE, id="ev-ref-300", metadata={}),
+    ]
+
+    db_signal = RiskSignal(
+        id="sig-typed-persist-1",
+        bidder_id="b-persist",
+        run_id="run-persist",
+        severity=RiskSeverity.HIGH,
+        signal_type="TYPED_REFERENCE_PERSISTENCE_TEST",
+        title="Typed Ref Persistence Test",
+        description="Verifies persistence of typed input references",
+        reason_code="TYPED_PERSISTENCE",
+        evidence_ids=["ev-ref-300"],
+        verification_ids=[],
+        metadata_json={"input_refs": [ref.model_dump(mode="json") for ref in typed_refs]},
+        created_at=eval_ts,
+    )
+    db_session.add(db_signal)
+    db_session.commit()
+
+    # Reload from DB and validate RiskSignalRead ORM reconstruction
+    reloaded_db = db_session.query(RiskSignal).filter_by(id="sig-typed-persist-1").first()
+    reconstructed_read = RiskSignalRead.model_validate(reloaded_db)
+
+    assert len(reconstructed_read.input_refs) == 3
+    ref_types = [r.ref_type for r in reconstructed_read.input_refs]
+    assert RiskInputType.DOCUMENT in ref_types
+    assert RiskInputType.BIDDER_RECORD in ref_types
+    assert RiskInputType.EVIDENCE in ref_types
+
+    doc_ref = [r for r in reconstructed_read.input_refs if r.ref_type == RiskInputType.DOCUMENT][0]
+    assert doc_ref.id == "doc-ref-100"
+    assert doc_ref.metadata.get("filename") == "audit.pdf"
+
+

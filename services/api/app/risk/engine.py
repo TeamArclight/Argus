@@ -220,6 +220,22 @@ class RiskEngine:
                         )
                     )
 
+    UNIT_SCALE_MAP = {
+        "crore": (10_000_000.0, "Crore"),
+        "crores": (10_000_000.0, "Crore"),
+        "cr": (10_000_000.0, "Crore"),
+        "lakh": (100_000.0, "Lakh"),
+        "lakhs": (100_000.0, "Lakh"),
+        "lac": (100_000.0, "Lakh"),
+        "lacs": (100_000.0, "Lakh"),
+        "billion": (1_000_000_000.0, "Billion"),
+        "billions": (1_000_000_000.0, "Billion"),
+        "bn": (1_000_000_000.0, "Billion"),
+        "million": (1_000_000.0, "Million"),
+        "millions": (1_000_000.0, "Million"),
+        "mn": (1_000_000.0, "Million"),
+    }
+
     @classmethod
     def _parse_currency_and_scale(cls, val: Any, meta: dict[str, Any]) -> tuple[str | None, str | None, float | None, bool]:
         """
@@ -228,7 +244,6 @@ class RiskEngine:
         """
         currency = meta.get("currency")
         meta_unit = meta.get("unit")
-        is_explicit = bool(meta_unit)
 
         val_str = str(val) if val is not None else ""
         val_lower = val_str.lower().strip()
@@ -241,32 +256,39 @@ class RiskEngine:
             text_curr = "INR"
 
         if currency and text_curr and currency.upper() != text_curr.upper():
-            return None, meta_unit, None, is_explicit
+            return None, meta_unit, None, bool(meta_unit)
 
         currency = currency or text_curr
 
-        # Unit / Scale detection using bounded tokens only
-        scale = 1.0
-        text_unit = None
+        # Unit / Scale resolution from metadata
+        meta_scale = 1.0
+        canonical_meta_unit = None
+        if meta_unit and isinstance(meta_unit, str):
+            meta_unit_clean = meta_unit.lower().strip()
+            if meta_unit_clean in cls.UNIT_SCALE_MAP:
+                meta_scale, canonical_meta_unit = cls.UNIT_SCALE_MAP[meta_unit_clean]
+            else:
+                canonical_meta_unit = meta_unit.strip()
+
+        # Unit / Scale resolution from text
+        text_scale = 1.0
+        canonical_text_unit = None
         if re.search(r'\b(crores?|cr)\b', val_lower):
-            scale = 10_000_000.0
-            text_unit = "Crore"
+            text_scale, canonical_text_unit = cls.UNIT_SCALE_MAP["crore"]
         elif re.search(r'\b(lakhs?|lacs?)\b', val_lower):
-            scale = 100_000.0
-            text_unit = "Lakh"
+            text_scale, canonical_text_unit = cls.UNIT_SCALE_MAP["lakh"]
         elif re.search(r'\b(billions?|bn)\b', val_lower):
-            scale = 1_000_000_000.0
-            text_unit = "Billion"
+            text_scale, canonical_text_unit = cls.UNIT_SCALE_MAP["billion"]
         elif re.search(r'\b(millions?|mn)\b', val_lower):
-            scale = 1_000_000.0
-            text_unit = "Million"
+            text_scale, canonical_text_unit = cls.UNIT_SCALE_MAP["million"]
 
-        # Reject contradictory metadata unit vs text unit
-        if meta_unit and text_unit and meta_unit.lower() != text_unit.lower():
-            return currency, meta_unit, None, True
+        # Check unit contradiction between metadata and text
+        if canonical_meta_unit and canonical_text_unit and canonical_meta_unit.lower() != canonical_text_unit.lower():
+            return currency, canonical_meta_unit, None, True
 
-        unit = meta_unit or text_unit
-        is_explicit = bool(unit)
+        resolved_unit = canonical_meta_unit or canonical_text_unit
+        scale = meta_scale if canonical_meta_unit else (text_scale if canonical_text_unit else 1.0)
+        is_explicit = bool(resolved_unit)
 
         val_to_parse: Any = val
         if isinstance(val, str):
@@ -285,10 +307,10 @@ class RiskEngine:
 
         raw_num = ComplianceEngine._normalize_number(val_to_parse)
         if raw_num is None or math.isnan(raw_num) or math.isinf(raw_num):
-            return currency, unit, None, is_explicit
+            return currency, resolved_unit, None, is_explicit
 
         scaled_val = float(raw_num * scale)
-        return currency, unit, scaled_val, is_explicit
+        return currency, resolved_unit, scaled_val, is_explicit
 
     @classmethod
     def _check_cross_document_financials(

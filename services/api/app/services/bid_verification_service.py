@@ -521,6 +521,7 @@ class BidVerificationService:
                 meta_json = dict(cand.metadata_json)
                 if unmapped_ids:
                     meta_json["unmapped_input_ids"] = unmapped_ids
+                meta_json["input_refs"] = [ref.model_dump(mode="json") if hasattr(ref, "model_dump") else ref for ref in mapped_refs]
 
                 r_schema = RiskSignalRead(
                     id=str(uuid.uuid4()),

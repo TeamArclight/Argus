@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +454,35 @@ class RiskSignalRead(BaseModel):
     @classmethod
     def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
         return v if v is not None else {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_input_refs_from_metadata(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            meta = data.get("metadata_json") or {}
+            if not data.get("input_refs") and isinstance(meta, dict) and "input_refs" in meta:
+                data["input_refs"] = meta["input_refs"]
+        elif hasattr(data, "metadata_json"):
+            meta = getattr(data, "metadata_json", {}) or {}
+            input_refs = getattr(data, "input_refs", None)
+            if not input_refs and isinstance(meta, dict) and "input_refs" in meta:
+                return {
+                    "id": getattr(data, "id", None),
+                    "bidder_id": getattr(data, "bidder_id", None),
+                    "run_id": getattr(data, "run_id", None),
+                    "severity": getattr(data, "severity", None),
+                    "signal_type": getattr(data, "signal_type", None),
+                    "title": getattr(data, "title", None),
+                    "description": getattr(data, "description", None),
+                    "reason_code": getattr(data, "reason_code", None),
+                    "evidence_ids": getattr(data, "evidence_ids", []) or [],
+                    "verification_ids": getattr(data, "verification_ids", []) or [],
+                    "input_refs": meta.get("input_refs", []),
+                    "source_mode": getattr(data, "source_mode", None),
+                    "metadata_json": meta,
+                    "created_at": getattr(data, "created_at", None),
+                }
+        return data
 
 
 class RiskSummaryRead(BaseModel):
