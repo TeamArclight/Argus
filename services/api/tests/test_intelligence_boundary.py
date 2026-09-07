@@ -1,3 +1,4 @@
+import hashlib
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,10 @@ from app.services.rag_adapter import RAGServiceAdapter
 from tests.auth_helpers import get_auth_headers
 
 
+TEST_BYTES = b"%PDF-1.4 Standard Test Document Content"
+TEST_SHA256 = hashlib.sha256(TEST_BYTES).hexdigest()
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     Base.metadata.create_all(bind=engine)
@@ -26,7 +31,12 @@ async def test_base_url_alone_does_not_invent_extract_tender(monkeypatch):
     monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", None)
 
     adapter = AIServiceAdapter()
-    res = await adapter.extract_tender("T1", "s3://tenders/tender1.pdf")
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256=TEST_SHA256,
+        file_bytes=TEST_BYTES,
+    )
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
     assert res.data is None
@@ -38,7 +48,12 @@ async def test_base_url_alone_does_not_invent_extract_document(monkeypatch):
     monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL", None)
 
     adapter = AIServiceAdapter()
-    res = await adapter.extract_document("D1", "s3://bidders/doc1.pdf", "B1")
+    res = await adapter.extract_document(
+        document_id="D1",
+        document_sha256=TEST_SHA256,
+        bidder_id="B1",
+        file_bytes=TEST_BYTES,
+    )
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
     assert res.data is None
@@ -59,7 +74,12 @@ async def test_base_url_alone_does_not_invent_rag_query(monkeypatch):
 async def test_missing_explicit_tender_url_returns_unavailable(monkeypatch):
     monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", None)
     adapter = AIServiceAdapter()
-    res = await adapter.extract_tender("T1", "s3://tenders/t1.pdf")
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256=TEST_SHA256,
+        file_bytes=TEST_BYTES,
+    )
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
 
@@ -68,7 +88,12 @@ async def test_missing_explicit_tender_url_returns_unavailable(monkeypatch):
 async def test_missing_explicit_document_url_returns_unavailable(monkeypatch):
     monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL", None)
     adapter = AIServiceAdapter()
-    res = await adapter.extract_document("D1", "s3://docs/d1.pdf", "B1")
+    res = await adapter.extract_document(
+        document_id="D1",
+        document_sha256=TEST_SHA256,
+        bidder_id="B1",
+        file_bytes=TEST_BYTES,
+    )
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
 
@@ -110,7 +135,12 @@ async def test_http_status_code_classification(
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
 
     ai_adapter = AIServiceAdapter()
-    ai_res = await ai_adapter.extract_tender("T1", "s3://tenders/t1.pdf")
+    ai_res = await ai_adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256=TEST_SHA256,
+        file_bytes=TEST_BYTES,
+    )
     assert ai_res.success is False
     assert ai_res.error_code == expected_ai_code
     assert ai_res.retryable == expected_retryable
@@ -129,21 +159,55 @@ async def test_malformed_bidder_fact_payload_returns_schema_validation_failed(mo
     # Case 1: missing field
     async def mock_post_missing_field(self, url, headers=None, json=None):
         req = httpx.Request("POST", url)
-        return httpx.Response(200, json={"facts": [{"value": "123"}]}, request=req)
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1.0",
+                "request_id": json["request_id"],
+                "document_id": json["document_id"],
+                "document_sha256": json["document_sha256"],
+                "bidder_id": json["bidder_id"],
+                "status": "SUCCESS",
+                "facts": [{"value": "123"}],
+            },
+            request=req,
+        )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_missing_field)
     adapter = AIServiceAdapter()
-    res1 = await adapter.extract_document("D1", "s3://doc.pdf", "B1")
+    res1 = await adapter.extract_document(
+        document_id="D1",
+        document_sha256=TEST_SHA256,
+        bidder_id="B1",
+        file_bytes=TEST_BYTES,
+    )
     assert res1.success is False
     assert res1.error_code == "SCHEMA_VALIDATION_FAILED"
 
     # Case 2: confidence out of bounds (> 1.0)
     async def mock_post_bad_confidence(self, url, headers=None, json=None):
         req = httpx.Request("POST", url)
-        return httpx.Response(200, json={"facts": [{"field": "gstin", "value": "27A", "confidence": 1.5}]}, request=req)
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1.0",
+                "request_id": json["request_id"],
+                "document_id": json["document_id"],
+                "document_sha256": json["document_sha256"],
+                "bidder_id": json["bidder_id"],
+                "status": "SUCCESS",
+                "facts": [{"field": "gstin", "value": "27A", "confidence": 1.5}],
+            },
+            request=req,
+        )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_confidence)
-    res2 = await adapter.extract_document("D1", "s3://doc.pdf", "B1")
+    res2 = await adapter.extract_document(
+        document_id="D1",
+        document_sha256=TEST_SHA256,
+        bidder_id="B1",
+        file_bytes=TEST_BYTES,
+    )
     assert res2.success is False
     assert res2.error_code == "SCHEMA_VALIDATION_FAILED"
 
@@ -211,8 +275,7 @@ def test_tender_processing_without_raw_document_uri_fails():
         proc_resp = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers)
         assert proc_resp.status_code == 200
         job = proc_resp.json()
-        assert job["status"] == "FAILED"
-        assert "Missing tender raw_document_uri" in job["error_message"]
+        assert "Tender processing requires a persisted document record" in job["error_message"]
 
 
 def test_bidder_creation_creates_no_documents_or_extracted_facts():
@@ -243,7 +306,6 @@ def test_bidder_creation_creates_no_documents_or_extracted_facts():
         assert fact_count == 0
 
 
-
 @pytest.mark.asyncio
 async def test_ai_timeout_returns_structured_failure(monkeypatch):
     monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", "https://ai.argus.local/extract-tender")
@@ -254,7 +316,12 @@ async def test_ai_timeout_returns_structured_failure(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
 
     adapter = AIServiceAdapter()
-    res = await adapter.extract_tender("T1", "s3://tenders/doc.pdf")
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256=TEST_SHA256,
+        file_bytes=TEST_BYTES,
+    )
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
     assert "timed out" in res.message.lower()
@@ -270,7 +337,169 @@ async def test_ai_connection_error_returns_structured_failure(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
 
     adapter = AIServiceAdapter()
-    res = await adapter.extract_tender("T1", "s3://tenders/doc.pdf")
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256=TEST_SHA256,
+        file_bytes=TEST_BYTES,
+    )
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
     assert "transport failure" in res.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# ADAPTER INPUT VALIDATION & LEGACY SHAPE REJECTION TESTS
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_missing_document_id(monkeypatch):
+    monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", "https://ai.argus.local/extract-tender")
+    did_dispatch = {"called": False}
+
+    async def mock_post(self, url, headers=None, json=None):
+        did_dispatch["called"] = True
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    adapter = AIServiceAdapter()
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="",
+        document_sha256=TEST_SHA256,
+        file_bytes=TEST_BYTES,
+    )
+    assert res.success is False
+    assert res.error_code == "AI_SERVICE_REQUEST_REJECTED"
+    assert "Missing required document_id" in res.message
+    assert did_dispatch["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_invalid_document_sha256(monkeypatch):
+    monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", "https://ai.argus.local/extract-tender")
+    did_dispatch = {"called": False}
+
+    async def mock_post(self, url, headers=None, json=None):
+        did_dispatch["called"] = True
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    adapter = AIServiceAdapter()
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256="not_a_64_hex_sha256",
+        file_bytes=TEST_BYTES,
+    )
+    assert res.success is False
+    assert res.error_code == "AI_SERVICE_REQUEST_REJECTED"
+    assert "64-character hex" in res.message
+    assert did_dispatch["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_missing_or_empty_file_bytes(monkeypatch):
+    monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", "https://ai.argus.local/extract-tender")
+    did_dispatch = {"called": False}
+
+    async def mock_post(self, url, headers=None, json=None):
+        did_dispatch["called"] = True
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    adapter = AIServiceAdapter()
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256=TEST_SHA256,
+        file_bytes=b"",
+    )
+    assert res.success is False
+    assert res.error_code == "AI_SERVICE_REQUEST_REJECTED"
+    assert "Missing or empty file_bytes" in res.message
+    assert did_dispatch["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_mismatched_file_bytes_sha256(monkeypatch):
+    monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", "https://ai.argus.local/extract-tender")
+    did_dispatch = {"called": False}
+
+    async def mock_post(self, url, headers=None, json=None):
+        did_dispatch["called"] = True
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    mismatched_sha = "0" * 64
+    adapter = AIServiceAdapter()
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256=mismatched_sha,
+        file_bytes=TEST_BYTES,
+    )
+    assert res.success is False
+    assert res.error_code == "DOCUMENT_SHA256_MISMATCH"
+    assert res.message == "Document content integrity verification failed."
+    assert did_dispatch["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_missing_bidder_id_for_document_extraction(monkeypatch):
+    monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL", "https://ai.argus.local/extract-doc")
+    did_dispatch = {"called": False}
+
+    async def mock_post(self, url, headers=None, json=None):
+        did_dispatch["called"] = True
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    adapter = AIServiceAdapter()
+    res = await adapter.extract_document(
+        document_id="doc1",
+        document_sha256=TEST_SHA256,
+        bidder_id="",
+        file_bytes=TEST_BYTES,
+    )
+    assert res.success is False
+    assert res.error_code == "AI_SERVICE_REQUEST_REJECTED"
+    assert "Missing required bidder_id" in res.message
+    assert did_dispatch["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_legacy_data_field_in_v1_envelope(monkeypatch):
+    monkeypatch.setattr(settings, "ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL", "https://ai.argus.local/extract-tender")
+
+    async def mock_post_legacy(self, url, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1.0",
+                "request_id": json["request_id"],
+                "document_id": json["document_id"],
+                "document_sha256": json["document_sha256"],
+                "status": "COMPLETED",
+                "data": [{"clause": "1.1", "field": "general.gstin"}],  # Legacy fallback field
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_legacy)
+
+    adapter = AIServiceAdapter()
+    res = await adapter.extract_tender(
+        tender_id="T1",
+        document_id="doc1",
+        document_sha256=TEST_SHA256,
+        file_bytes=TEST_BYTES,
+    )
+    assert res.success is False
+    assert res.error_code == "SCHEMA_VALIDATION_FAILED"
+    assert "missing required 'requirements' list" in res.message
+

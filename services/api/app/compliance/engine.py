@@ -222,6 +222,9 @@ class ComplianceEngine:
         context: dict[str, Any] | None = None,
     ) -> RuleEvaluationRead:
         context = context or {}
+        if hasattr(rule, "is_approved") and rule.is_approved is False:
+            raise ValueError(f"ComplianceEngine cannot evaluate unapproved requirement candidate '{getattr(rule, 'id', 'UNKNOWN')}'.")
+
         now = datetime.now(timezone.utc)
         eval_id = str(uuid.uuid4())
 

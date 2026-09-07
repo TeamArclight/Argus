@@ -48,7 +48,7 @@ def test_empty_evaluations_produce_unknown():
         assert len(c_resp["rule_evaluations"]) == 0
 
 
-def test_end_to_end_p0_workflow():
+def test_end_to_end_p0_workflow(monkeypatch):
     headers = get_auth_headers(role=UserRole.ADMIN, user_id="OFFICER-4021", name="Rajesh Kumar")
     with TestClient(app) as client:
         # 1. Create Tender
@@ -67,11 +67,21 @@ def test_end_to_end_p0_workflow():
         tender_id = tender["id"]
         assert tender["tender_number"] == "GEM/2026/B/882190"
 
+        # 1.5 Upload Tender Document
+        pdf_bytes = b"%PDF-1.4 HPC Cluster Procurement Specifications"
+        doc_resp = client.post(
+            f"/api/v1/tenders/{tender_id}/documents",
+            headers=headers,
+            files={"file": ("tender_notice.pdf", pdf_bytes, "application/pdf")},
+            data={"document_type": "TENDER"},
+        )
+        assert doc_resp.status_code == 201
+
         # 2. Extract Requirements (mock intelligence service response for e2e workflow)
         from app.schemas.canonical import AIServiceResult, RequirementType, OperatorEnum
         from app.api.v1.tenders import ai_adapter as tender_ai_adapter
 
-        async def mock_extract_tender(tender_id, document_uri):
+        async def mock_extract_tender(*args, **kwargs):
             return AIServiceResult(
                 success=True,
                 data=[
@@ -104,7 +114,6 @@ def test_end_to_end_p0_workflow():
                 message="Extracted requirements",
             )
 
-        monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(tender_ai_adapter, "extract_tender", mock_extract_tender)
 
         resp = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers)
@@ -116,6 +125,12 @@ def test_end_to_end_p0_workflow():
         assert resp.status_code == 200
         requirements = resp.json()
         assert len(requirements) >= 3
+
+        # 2b. Procurement Officer approves extracted candidate requirements
+        for r in requirements:
+            appr_res = client.post(f"/api/v1/tenders/{tender_id}/requirements/{r['id']}/approve", headers=headers)
+            assert appr_res.status_code == 200
+            assert appr_res.json()["is_approved"] is True
 
         # 3. Create Bidder
         bidder_payload = {

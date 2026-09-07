@@ -67,6 +67,7 @@ def test_setup(db: Session):
         operator=OperatorEnum.EXISTS,
         expected_value=True,
         mandatory=True,
+        is_approved=True,
     )
     db.add(req)
 
@@ -405,6 +406,7 @@ async def test_risk_signal_run_id_scoping_and_history(db: Session, test_setup):
         operator=OperatorEnum.GTE,
         expected_value=999999999999,
         mandatory=True,
+        is_approved=True,
     )
     db.add(req_fail)
     db.commit()

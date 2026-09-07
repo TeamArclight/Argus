@@ -198,6 +198,14 @@ class TenderRequirementCreate(BaseModel):
     source_text: str | None = None
     confidence: float = 1.0
     requires_verification: bool = False
+    is_approved: bool = False
+    document_id: str | None = None
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
 
 
 class TenderRequirementRead(TenderRequirementCreate):
@@ -242,6 +250,12 @@ class ExtractedFactCreate(BaseModel):
     source_page: int | None = None
     source_text: str | None = None
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
 
 
 class FactRead(BaseModel):
@@ -254,6 +268,7 @@ class FactRead(BaseModel):
     source_page: int | None = None
     source_text: str | None = None
     confidence: float = 1.0
+    metadata_json: dict[str, Any] | None = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -538,6 +553,24 @@ class AIServiceResult(BaseModel):
     error_code: str | None = None
     retryable: bool = False
     message: str | None = None
+
+
+class AIResponseEnvelope(BaseModel):
+    """Strict schema envelope for intelligence service HTTP responses."""
+    model_config = ConfigDict(extra="ignore")
+
+    contract_version: str
+    request_id: str
+    document_id: str
+    document_sha256: str
+    status: str
+    bidder_id: str | None = None
+    requirements: list[dict[str, Any]] | None = None
+    facts: list[dict[str, Any]] | None = None
+    provider_model: str | None = None
+    error: str | None = None
+    message: str | None = None
+
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
@@ -32,6 +33,7 @@ from app.schemas.canonical import (
     DocumentRead,
     DocumentType,
     EvidenceRead,
+    ExtractedFactCreate,
     HumanDecisionCreate,
     HumanDecisionRead,
     HumanDecisionStatus,
@@ -47,6 +49,7 @@ from app.schemas.canonical import (
 from app.services.ai_adapter import AIServiceAdapter
 from app.services.bid_verification_service import BidVerificationService
 from app.services.document_service import DocumentService
+from app.storage.factory import get_storage_provider
 
 router = APIRouter(tags=["Bidders"])
 ai_adapter = AIServiceAdapter()
@@ -534,5 +537,234 @@ def list_bidder_documents(
 
     documents = db.query(Document).filter(Document.bidder_id == bidder_id).all()
     return documents
+
+
+@router.post("/bidders/{bidder_id}/process-documents", response_model=JobRead)
+async def process_bidder_documents(
+    bidder_id: str,
+    principal: AuthenticatedPrincipal = Depends(
+        require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)
+    ),
+    db: Session = Depends(get_db),
+):
+    """Trigger AI fact extraction across all uploaded bidder documents."""
+    bidder = db.query(Bidder).filter(Bidder.id == bidder_id).first()
+    if not bidder:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bidder with ID {bidder_id} not found.",
+        )
+
+    # Check for existing active processing job
+    existing_job = (
+        db.query(ProcessingJob)
+        .filter(
+            ProcessingJob.target_id == bidder_id,
+            ProcessingJob.job_type == "EXTRACT_FACTS",
+            ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+        )
+        .first()
+    )
+    if existing_job:
+        return existing_job
+
+    job = ProcessingJob(
+        target_type="BIDDER",
+        target_id=bidder_id,
+        job_type="EXTRACT_FACTS",
+        status=JobStatus.RUNNING,
+        current_stage=JobStage.EXTRACTION,
+        progress=10,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    req_id = str(uuid.uuid4())
+    AuditLogger.log(
+        db,
+        action="DOCUMENT_EXTRACTION_REQUESTED",
+        entity_type="BIDDER",
+        entity_id=bidder_id,
+        actor_id=principal.user_id,
+        actor_role=principal.role.value,
+        payload={"job_id": job.id, "request_id": req_id},
+    )
+
+    documents = db.query(Document).filter(Document.bidder_id == bidder_id).all()
+    if not documents:
+        job.status = JobStatus.FAILED
+        job.error_message = "No documents found for bidder: upload bidder documents before extraction."
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+        db.commit()
+
+        AuditLogger.log(
+            db,
+            action="DOCUMENT_EXTRACTION_FAILED",
+            entity_type="BIDDER",
+            entity_id=bidder_id,
+            actor_id=principal.user_id,
+            actor_role=principal.role.value,
+            payload={"job_id": job.id, "request_id": req_id, "error_code": "MISSING_BIDDER_DOCUMENT"},
+        )
+        return job
+
+    storage = get_storage_provider()
+    total_docs = len(documents)
+    successful_docs = 0
+    failed_docs = 0
+
+    for doc in documents:
+        if not doc.sha256 or not doc.sha256.strip():
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "MISSING_BIDDER_DOCUMENT"},
+            )
+            continue
+
+        if not doc.storage_uri or not storage.file_exists(doc.storage_uri):
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "DOCUMENT_FILE_NOT_FOUND"},
+            )
+            continue
+
+        file_bytes = None
+        try:
+            file_bytes = storage.read_file(doc.storage_uri)
+        except Exception:
+            file_bytes = None
+
+        if not file_bytes:
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "STORAGE_READ_ERROR"},
+            )
+            continue
+
+        computed_sha256 = hashlib.sha256(file_bytes).hexdigest()
+        if computed_sha256 != doc.sha256:
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "DOCUMENT_INTEGRITY_MISMATCH"},
+            )
+            continue
+
+        doc_type_val = doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type)
+
+        ai_res = await ai_adapter.extract_document(
+            document_id=doc.id,
+            document_sha256=doc.sha256,
+            bidder_id=bidder_id,
+            file_bytes=file_bytes,
+            document_uri=doc.storage_uri,
+            document_type=doc_type_val,
+            filename=doc.filename,
+            content_type=doc.content_type,
+            request_id=req_id,
+        )
+
+        if not ai_res.success or not ai_res.data:
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": ai_res.error_code, "message": ai_res.message},
+            )
+            continue
+
+        successful_docs += 1
+        
+        # Non-destructive reprocessing: preserve ALL existing facts, non-destructive deduplication for new facts
+        def _norm_fact_val(v: Any) -> str:
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return str(float(v))
+            return str(v)
+
+        existing_facts = db.query(ExtractedFact).filter(ExtractedFact.document_id == doc.id).all()
+        existing_fact_keys = {
+            (f.field, _norm_fact_val(f.value), f.source_page, f.source_text or "")
+            for f in existing_facts
+        }
+
+        for item in ai_res.data:
+            fact_obj = ExtractedFactCreate.model_validate(item)
+            item_key = (fact_obj.field, _norm_fact_val(fact_obj.value), fact_obj.source_page, fact_obj.source_text or "")
+            if item_key in existing_fact_keys:
+                continue
+
+            meta = fact_obj.metadata_json or {}
+
+            db_fact = ExtractedFact(
+                document_id=doc.id,
+                bidder_id=bidder_id,
+                field=fact_obj.field,
+                value=fact_obj.value,
+                source_page=fact_obj.source_page,
+                source_text=fact_obj.source_text,
+                confidence=fact_obj.confidence,
+                metadata_json=meta,
+            )
+            db.add(db_fact)
+            existing_fact_keys.add(item_key)
+
+        AuditLogger.log(
+            db,
+            action="DOCUMENT_EXTRACTION_COMPLETED",
+            entity_type="DOCUMENT",
+            entity_id=doc.id,
+            actor_id=principal.user_id,
+            actor_role=principal.role.value,
+            payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "facts_count": len(ai_res.data)},
+        )
+
+    if successful_docs == total_docs:
+        job.status = JobStatus.COMPLETED
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+        job.error_message = None
+    elif successful_docs > 0:
+        job.status = JobStatus.REVIEW_REQUIRED
+        job.error_message = f"Partial extraction completion: {successful_docs}/{total_docs} documents processed successfully ({failed_docs} failed). Officer review required."
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+    else:
+        job.status = JobStatus.FAILED
+        job.error_message = f"Extraction failed for all {total_docs} documents."
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+
+    db.commit()
+    return job
+
 
 

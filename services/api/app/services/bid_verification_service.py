@@ -282,10 +282,13 @@ class BidVerificationService:
                 job.progress = 60
                 self.db.commit()
 
-            # 4. Load tender requirements and evaluate compliance
+            # 4. Load ONLY APPROVED tender requirements and evaluate compliance
             requirements_db = (
                 self.db.query(TenderRequirement)
-                .filter(TenderRequirement.tender_id == tender.id)
+                .filter(
+                    TenderRequirement.tender_id == tender.id,
+                    TenderRequirement.is_approved == True,
+                )
                 .all()
             )
             requirements_schema = [TenderRequirementRead.model_validate(r) for r in requirements_db]
@@ -366,16 +369,20 @@ class BidVerificationService:
 
             # 5. Compute overall compliance status
             overall_status = self.compute_overall_status(evaluations_schema)
+            reason_code = "NO_APPROVED_REQUIREMENTS" if not evaluations_schema else None
 
             # Mark ComplianceRun execution_status = COMPLETED, set overall_status
             run.execution_status = JobStatus.COMPLETED
             run.overall_status = overall_status
             run.completed_at = datetime.now(timezone.utc)
-            run.summary_json = {
+            summary_dict = {
                 "overall_status": overall_status.value if isinstance(overall_status, ComplianceStatus) else str(overall_status),
                 "evaluation_count": len(evaluations_schema),
                 "risk_count": len(risk_signals_schema),
             }
+            if reason_code:
+                summary_dict["reason_code"] = reason_code
+            run.summary_json = summary_dict
             self.db.commit()
 
             # 6. Fetch latest human decision if present
