@@ -10,16 +10,54 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  intelligence:
+    build:
+      context: ..
+      dockerfile: infra/docker/intelligence.Dockerfile
+    environment:
+      ARGUS_RAG_DATABASE_URL: postgresql://argus:argus@postgres:5432/argus
+      ARGUS_S3_ALLOWED_BUCKETS: ${ARGUS_S3_ALLOWED_BUCKETS:-}
+      ARGUS_INTELLIGENCE_API_KEY: ${ARGUS_INTELLIGENCE_API_KEY:-}
+      ARGUS_MODEL_PROVIDER: ${ARGUS_MODEL_PROVIDER:-disabled}
+      ARGUS_EMBEDDING_PROVIDER: ${ARGUS_EMBEDDING_PROVIDER:-hash}
+      ARGUS_GEMINI_API_KEY: ${ARGUS_GEMINI_API_KEY:-}
+    ports:
+      - "8100:8100"
+    depends_on:
+      - postgres
+
   api:
     build:
       context: ..
       dockerfile: infra/docker/api.Dockerfile
     environment:
       DATABASE_URL: postgresql://argus:argus@postgres:5432/argus
+      ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL: http://intelligence:8100/extract-tender
+      ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL: http://intelligence:8100/extract-document
+      ARGUS_INTELLIGENCE_RAG_URL: http://intelligence:8100/rag-query
+      ARGUS_INTELLIGENCE_API_KEY: ${ARGUS_INTELLIGENCE_API_KEY:-}
+      ARGUS_JOB_WORKER_ENABLED: ${ARGUS_JOB_WORKER_ENABLED:-false}
+      ARGUS_JOB_POLL_SECONDS: ${ARGUS_JOB_POLL_SECONDS:-2}
     ports:
       - "8000:8000"
     depends_on:
       - postgres
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://argus:argus@postgres:5432/argus
+      ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL: http://intelligence:8100/extract-tender
+      ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL: http://intelligence:8100/extract-document
+      ARGUS_INTELLIGENCE_RAG_URL: http://intelligence:8100/rag-query
+      ARGUS_INTELLIGENCE_API_KEY: ${ARGUS_INTELLIGENCE_API_KEY:-}
+      ARGUS_JOB_WORKER_ENABLED: "true"
+      ARGUS_JOB_POLL_SECONDS: ${ARGUS_JOB_POLL_SECONDS:-2}
+    depends_on:
+      - postgres
+      - intelligence
 
   web:
     build:
