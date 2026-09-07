@@ -28,6 +28,8 @@ from app.schemas.canonical import (
     HumanDecisionStatus,
     JobStage,
     JobStatus,
+    RiskInputRef,
+    RiskInputType,
     RiskSeverity,
     RiskSignalRead,
     RiskSummaryRead,
@@ -373,10 +375,11 @@ class BidVerificationService:
                 )
                 .all()
             )
+            eval_ts = datetime.now(timezone.utc)
+
             comparison_metadata = [
                 {
                     "id": d.id,
-                    "bidder_id": d.bidder_id,
                     "sha256": d.sha256,
                     "document_type": d.document_type.value if hasattr(d.document_type, "value") else str(d.document_type),
                 }
@@ -390,6 +393,9 @@ class BidVerificationService:
                 documents=bidder_docs_dict,
                 bidder_data=bidder_data,
                 comparison_metadata=comparison_metadata,
+                comparison_authorized=True,
+                freshness_policy=RiskEngine.DEFAULT_FRESHNESS_DAYS,
+                evaluation_timestamp=eval_ts,
             )
 
             # Generate Rule Evaluation failure / review risk signals
@@ -405,7 +411,7 @@ class BidVerificationService:
                                 title=f"Mandatory Requirement Failed: {req.clause}",
                                 description=f"Field '{req.field}' observed value {eval_res.observed_value} does not meet expected threshold {eval_res.expected_value}.",
                                 reason_code="MANDATORY_REQUIREMENT_FAILED",
-                                input_ids=eval_res.evidence_ids,
+                                input_refs=[RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=eid) for eid in eval_res.evidence_ids],
                             )
                         )
                     elif eval_res.status == ComplianceStatus.REVIEW_REQUIRED:
@@ -416,11 +422,11 @@ class BidVerificationService:
                                 title=f"Discrepancy Requiring Officer Review: {req.clause}",
                                 description=f"Reason: {eval_res.reason_code}. Observed: {eval_res.observed_value}.",
                                 reason_code="DISCREPANCY_REVIEW_REQUIRED",
-                                input_ids=eval_res.evidence_ids,
+                                input_refs=[RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=eid) for eid in eval_res.evidence_ids],
                             )
                         )
 
-            # Map Risk Engine Candidate input_ids to Evidence IDs & Verification IDs
+            # Map Risk Engine Candidate input_refs to Evidence IDs & Verification IDs
             risk_signals_schema: list[RiskSignalRead] = []
             now_risk = datetime.now(timezone.utc)
             staged_evidence_list = list(fact_evidence_map.values()) + list(ver_evidence_map.values())
@@ -428,19 +434,38 @@ class BidVerificationService:
             for cand in risk_candidates:
                 mapped_ev_ids: list[str] = []
                 mapped_ver_ids: list[str] = []
+                mapped_refs: list[RiskInputRef] = []
                 unmapped_ids: list[str] = []
 
-                for input_id in cand.input_ids:
-                    if input_id in fact_evidence_map:
-                        mapped_ev_ids.append(fact_evidence_map[input_id].id)
-                    elif input_id in ver_evidence_map:
-                        mapped_ev_ids.append(ver_evidence_map[input_id].id)
-                        if input_id not in mapped_ver_ids:
-                            mapped_ver_ids.append(input_id)
-                    elif any(e.id == input_id for e in staged_evidence_list):
-                        mapped_ev_ids.append(input_id)
+                for ref in cand.input_refs:
+                    if ref.ref_type == RiskInputType.EXTRACTED_FACT:
+                        if ref.id in fact_evidence_map:
+                            ev_id = fact_evidence_map[ref.id].id
+                            if ev_id not in mapped_ev_ids:
+                                mapped_ev_ids.append(ev_id)
+                            mapped_refs.append(RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=ev_id, metadata={"fact_id": ref.id}))
+                        else:
+                            mapped_refs.append(ref)
+                            unmapped_ids.append(ref.id)
+                    elif ref.ref_type == RiskInputType.VERIFICATION_RESULT:
+                        if ref.id not in mapped_ver_ids:
+                            mapped_ver_ids.append(ref.id)
+                        if ref.id in ver_evidence_map:
+                            ev_id = ver_evidence_map[ref.id].id
+                            if ev_id not in mapped_ev_ids:
+                                mapped_ev_ids.append(ev_id)
+                            mapped_refs.append(RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=ev_id, metadata={"verification_result_id": ref.id}))
+                        else:
+                            mapped_refs.append(ref)
+                    elif ref.ref_type == RiskInputType.DOCUMENT:
+                        # Document reference: preserve typed reference without pretending it is an Evidence ID
+                        mapped_refs.append(ref)
+                    elif ref.ref_type == RiskInputType.EVIDENCE:
+                        if ref.id not in mapped_ev_ids:
+                            mapped_ev_ids.append(ref.id)
+                        mapped_refs.append(ref)
                     else:
-                        unmapped_ids.append(input_id)
+                        mapped_refs.append(ref)
 
                 meta_json = dict(cand.metadata_json)
                 if unmapped_ids:
@@ -457,6 +482,7 @@ class BidVerificationService:
                     reason_code=cand.reason_code,
                     evidence_ids=mapped_ev_ids,
                     verification_ids=mapped_ver_ids,
+                    input_refs=mapped_refs,
                     source_mode=cand.source_mode,
                     metadata_json=meta_json,
                     created_at=now_risk,
@@ -506,8 +532,9 @@ class BidVerificationService:
                 "snapshot_version": "1.0",
                 "risk_engine_version": "1.0",
                 "risk_policy_version": "1.0",
-                "risk_evaluation_timestamp": datetime.now(timezone.utc).isoformat(),
-                "evaluated_at": datetime.now(timezone.utc).isoformat(),
+                "risk_evaluation_timestamp": eval_ts.isoformat(),
+                "evaluated_at": eval_ts.isoformat(),
+                "freshness_policy": RiskEngine.DEFAULT_FRESHNESS_DAYS,
                 "approved_requirements": [r.model_dump(mode="json") for r in requirements_schema],
                 "facts": [f.model_dump(mode="json") for f in facts_schema],
                 "verifications": [v.model_dump(mode="json") for v in verifications_schema],

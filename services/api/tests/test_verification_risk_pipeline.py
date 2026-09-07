@@ -477,3 +477,191 @@ def test_risk_signals_do_not_alter_statutory_qualification_authority(db_session,
 
     db_session.refresh(sample_bidder)
     assert sample_bidder.status == HumanDecisionStatus.QUALIFIED
+
+
+# ---------------------------------------------------------------------------
+# 6. REVIEW FIX FOCUSED REGRESSION TESTS
+# ---------------------------------------------------------------------------
+
+def test_provider_registry_truthfulness_and_capabilities(monkeypatch):
+    """14. Verifies last_checked_at is None without operational checks, UNKNOWN for unverified LIVE/PORTAL/DOCUMENT, and AVAILABLE for DEMO."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "GST_VERIFICATION_MODE", "LIVE")
+    monkeypatch.setattr(settings, "GST_API_URL", "https://api.gst.gov.in")
+    monkeypatch.setattr(settings, "GST_API_KEY", "key123")
+    monkeypatch.setattr(settings, "UDYAM_VERIFICATION_MODE", "DEMO")
+
+    providers = ProviderRegistry.get_provider_health_list()
+    gst_p = [p for p in providers if p.provider_identifier == "gst"][0]
+    udyam_p = [p for p in providers if p.provider_identifier == "udyam"][0]
+
+    assert gst_p.last_checked_at is None
+    assert gst_p.operational_health == ProviderOperationalHealth.UNKNOWN
+
+    assert udyam_p.last_checked_at is None
+    assert udyam_p.operational_health == ProviderOperationalHealth.AVAILABLE
+    assert "DEMO mode" in udyam_p.notes
+
+
+def test_typed_risk_input_references_and_no_document_masquerading():
+    """15. Verifies typed input references and ensures Document IDs are NOT masqueraded as Evidence IDs."""
+    eval_ts = datetime.now(timezone.utc)
+    bidder_data = {"id": "b-100", "gstin": "27AAACA1234F1ZV", "pan": "BBBCB9999Z"}
+
+    candidates = RiskEngine.evaluate_risks(
+        facts=[],
+        verifications=[],
+        documents=[{"id": "doc-99", "filename": "tax.pdf", "sha256": "sha-99"}],
+        bidder_data=bidder_data,
+        evaluation_timestamp=eval_ts,
+    )
+
+    mismatch = [c for c in candidates if c.signal_type == "GSTIN_PAN_MISMATCH"][0]
+    assert len(mismatch.input_refs) > 0
+    ref_types = [r.ref_type for r in mismatch.input_refs]
+    assert "BIDDER_RECORD" in ref_types or "EXTRACTED_FACT" in ref_types
+
+
+def test_financial_comparison_safety_edge_cases():
+    """16. Verifies metric isolation, currency safety, crore/lakh scaling, missing unit handling, and non-finite value protection."""
+    eval_ts = datetime.now(timezone.utc)
+
+    # 1. Average vs Single-Year turnover
+    f_avg = FactRead(
+        id="f-avg", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5000000", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25"}
+    )
+    f_single = FactRead(
+        id="f-single", document_id="d2", bidder_id="b1", field="financial.annual_turnover", value="9000000", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25"}
+    )
+
+    c1 = RiskEngine.evaluate_risks(facts=[f_avg, f_single], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    metric_sig = [c for c in c1 if c.signal_type == "AMBIGUOUS_FINANCIAL_METRIC"]
+    conflicts_1 = [c for c in c1 if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+    assert len(metric_sig) == 1
+    assert len(conflicts_1) == 0  # Differing metrics MUST NOT produce a conflict claim!
+
+    # 2. Incompatible Currencies (USD vs INR)
+    f_usd = FactRead(
+        id="f-usd", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5000000 USD", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "USD"}
+    )
+    f_inr = FactRead(
+        id="f-inr", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="5000000 INR", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+    )
+
+    c2 = RiskEngine.evaluate_risks(facts=[f_usd, f_inr], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    curr_sig = [c for c in c2 if c.signal_type == "AMBIGUOUS_FINANCIAL_CURRENCY"]
+    conflicts_2 = [c for c in c2 if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+    assert len(curr_sig) == 1
+    assert len(conflicts_2) == 0  # Incompatible currencies MUST NOT be converted or compared as conflict!
+
+    # 3. Compatible Scale Conversion (5 Crore vs 500 Lakh -> Equal; 5 Crore vs 90 Lakh -> Conflict)
+    f_cr = FactRead(
+        id="f-cr", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+    )
+    f_lakh_eq = FactRead(
+        id="f-lakh-eq", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="500 Lakh", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+    )
+
+    c3_eq = RiskEngine.evaluate_risks(facts=[f_cr, f_lakh_eq], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    conflicts_3_eq = [c for c in c3_eq if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+    assert len(conflicts_3_eq) == 0  # 5 Crore == 500 Lakh -> NO conflict!
+
+    f_lakh_diff = FactRead(
+        id="f-lakh-diff", document_id="d3", bidder_id="b1", field="financial.average_annual_turnover", value="90 Lakh", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+    )
+
+    c3_diff = RiskEngine.evaluate_risks(facts=[f_cr, f_lakh_diff], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    conflicts_3_diff = [c for c in c3_diff if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+    assert len(conflicts_3_diff) == 1
+    assert conflicts_3_diff[0].metadata_json["normalized_value_1"] == 50000000.0
+    assert conflicts_3_diff[0].metadata_json["normalized_value_2"] == 9000000.0
+
+    # 4. Bare Number vs Explicit Unit
+    f_bare = FactRead(
+        id="f-bare", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25"}
+    )
+    c4 = RiskEngine.evaluate_risks(facts=[f_cr, f_bare], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    unit_sig = [c for c in c4 if c.signal_type == "AMBIGUOUS_FINANCIAL_UNIT"]
+    assert len(unit_sig) == 1
+
+
+def test_reproducible_freshness_and_oem_expiry():
+    """17. Verifies freshness calculations against evaluation_timestamp, unknown policy isolation, future timestamp handling, and date-only OEM expiry."""
+    eval_ts = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Future source observation timestamp
+    v_future = VerificationResultRead(
+        id="v-fut",
+        bidder_id="b1",
+        field="general.gstin",
+        claimed_value="27AAACA1234F1ZV",
+        status=VerificationStatus.VERIFIED,
+        source=VerificationSource.GST_PORTAL_VERIFIED_CACHE,
+        mode=VerificationMode.PORTAL_CACHED,
+        checked_at=eval_ts,
+        location_metadata={"source_observed_at": "2026-06-15T00:00:00+00:00"},  # Future relative to June 1
+    )
+
+    c1 = RiskEngine.evaluate_risks(facts=[], verifications=[v_future], documents=[], bidder_data={}, freshness_policy={"general.gstin": 30}, evaluation_timestamp=eval_ts)
+    fut_sig = [c for c in c1 if c.signal_type == "FUTURE_FRESHNESS_TIMESTAMP"]
+    assert len(fut_sig) == 1
+
+    # Unknown policy domain isolation (must NOT fall back to GST threshold!)
+    v_unknown_domain = VerificationResultRead(
+        id="v-unk",
+        bidder_id="b1",
+        field="custom.unknown_domain",
+        claimed_value="VAL",
+        status=VerificationStatus.VERIFIED,
+        source=VerificationSource.GST_PORTAL_VERIFIED_CACHE,
+        mode=VerificationMode.PORTAL_CACHED,
+        checked_at=eval_ts,
+        location_metadata={"source_observed_at": "2026-05-01T00:00:00+00:00"},
+    )
+
+    c2 = RiskEngine.evaluate_risks(facts=[], verifications=[v_unknown_domain], documents=[], bidder_data={}, freshness_policy={}, evaluation_timestamp=eval_ts)
+    missing_pol_sig = [c for c in c2 if c.signal_type == "MISSING_FRESHNESS_POLICY"]
+    assert len(missing_pol_sig) == 1
+
+    # OEM Date-Only Expiry
+    f_oem = FactRead(
+        id="f-oem",
+        document_id="d1",
+        bidder_id="b1",
+        field="oem.expiry_date",
+        value="2025-12-31",  # Expired relative to June 2026
+        confidence=1.0,
+        created_at=eval_ts,
+    )
+
+    c3 = RiskEngine.evaluate_risks(facts=[f_oem], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    oem_sig = [c for c in c3 if c.signal_type == "OEM_AUTHORIZATION_EXPIRED"]
+    assert len(oem_sig) == 1
+    assert "2026-06-01" in oem_sig[0].description
+
+
+def test_authorized_duplicate_scope_privacy():
+    """18. Verifies duplicate document hash detection output strips private metadata of other bidders."""
+    eval_ts = datetime.now(timezone.utc)
+    local_docs = [{"id": "d-local", "filename": "form.pdf", "sha256": "sha-duplicate-123"}]
+    comparison_meta = [{"id": "d-other-private", "bidder_id": "secret-bidder-99", "sha256": "sha-duplicate-123", "filename": "secret.pdf"}]
+
+    candidates = RiskEngine.evaluate_risks(
+        facts=[],
+        verifications=[],
+        documents=local_docs,
+        bidder_data={},
+        comparison_metadata=comparison_meta,
+        comparison_authorized=True,
+        evaluation_timestamp=eval_ts,
+    )
+
+    dups = [c for c in candidates if c.signal_type == "DUPLICATE_DOCUMENT_HASH_CROSS_BIDDER"]
+    assert len(dups) == 1
+    meta = dups[0].metadata_json
+    # Private bidder ID or filename of other bidder MUST NOT be exposed in metadata_json!
+    assert "secret-bidder-99" not in str(meta)
+    assert "secret.pdf" not in str(meta)
+    assert meta["comparison_scope"] == "AUTHORIZED_TENDER_METADATA"
+

@@ -419,6 +419,20 @@ class ProviderHealthRead(BaseModel):
     notes: str | None = None
 
 
+class RiskInputType(str, Enum):
+    EXTRACTED_FACT = "EXTRACTED_FACT"
+    VERIFICATION_RESULT = "VERIFICATION_RESULT"
+    DOCUMENT = "DOCUMENT"
+    EVIDENCE = "EVIDENCE"
+    BIDDER_RECORD = "BIDDER_RECORD"
+
+
+class RiskInputRef(BaseModel):
+    ref_type: RiskInputType
+    id: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class RiskSignalRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -431,6 +445,7 @@ class RiskSignalRead(BaseModel):
     reason_code: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     verification_ids: list[str] = Field(default_factory=list)
+    input_refs: list[RiskInputRef] = Field(default_factory=list)
     source_mode: str | None = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime

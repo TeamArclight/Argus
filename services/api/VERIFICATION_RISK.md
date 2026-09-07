@@ -94,11 +94,12 @@ Phase 10 provides transparent, explainable risk summaries (`RiskSummaryRead`):
 
 ---
 
-## 5. Exact Risk Evidence Linkage
+## 5. Exact Risk Evidence Linkage & Typed Input References
 
-- `RiskEngine` output candidates reference exact contributing input IDs (`extracted_fact_id` or `verification_result_id`).
-- `BidVerificationService` maps these input IDs to Phase 9 `Evidence` IDs staged during the run.
-- If mapping is missing, unresolved input IDs are recorded in `metadata_json["unmapped_input_ids"]` without inventing fake evidence citations.
+- `RiskEngine` candidates specify typed input references (`RiskInputRef`) identifying the entity type (`EXTRACTED_FACT`, `VERIFICATION_RESULT`, `DOCUMENT`, `EVIDENCE`, `BIDDER_RECORD`) and exact ID.
+- `BidVerificationService` maps fact and verification input references to Phase 9 `Evidence` records staged during the run.
+- For `DOCUMENT` references, non-evidence document IDs are preserved directly in `input_refs` without masquerading as Evidence IDs.
+- If evidence mapping is missing or malformed, unresolved input references are recorded explicitly without inventing fake evidence citations.
 - Cross-bidder, cross-tender, and cross-run evidence links are strictly rejected.
 
 ---

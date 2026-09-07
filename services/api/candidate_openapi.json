@@ -3444,6 +3444,39 @@
         "title": "RequirementType",
         "description": "Types of tender eligibility requirements."
       },
+      "RiskInputRef": {
+        "properties": {
+          "ref_type": {
+            "$ref": "#/components/schemas/RiskInputType"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ref_type",
+          "id"
+        ],
+        "title": "RiskInputRef"
+      },
+      "RiskInputType": {
+        "type": "string",
+        "enum": [
+          "EXTRACTED_FACT",
+          "VERIFICATION_RESULT",
+          "DOCUMENT",
+          "EVIDENCE",
+          "BIDDER_RECORD"
+        ],
+        "title": "RiskInputType"
+      },
       "RiskSeverity": {
         "type": "string",
         "enum": [
@@ -3515,6 +3548,13 @@
             },
             "type": "array",
             "title": "Verification Ids"
+          },
+          "input_refs": {
+            "items": {
+              "$ref": "#/components/schemas/RiskInputRef"
+            },
+            "type": "array",
+            "title": "Input Refs"
           },
           "source_mode": {
             "anyOf": [
