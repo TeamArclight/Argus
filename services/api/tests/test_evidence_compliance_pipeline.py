@@ -1024,3 +1024,179 @@ async def test_report_verification_results_snapshot_authority(db_session, sample
     assert snapshot_v.verified_value == "27AAACA12341ZV"
 
 
+@pytest.mark.asyncio
+async def test_valid_empty_verification_snapshot_remains_empty(db_session, sample_tender, sample_bidder):
+    """22. Verifies a valid empty verification snapshot list [] remains [] and never loads live DB rows."""
+    from app.api.v1.bidders import get_bidder_report
+    from app.auth.dependencies import AuthenticatedPrincipal
+    from app.schemas.canonical import UserRole
+
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_tender.id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [],
+            "facts": [],
+            "verifications": [],  # Valid empty list
+            "evidence": [],
+            "exact_evaluation_linkage": [],
+        },
+    )
+    db_session.add(run)
+
+    # Add a live DB row that should NEVER be loaded
+    ver_db = VerificationResult(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        run_id=run.id,
+        field="general.gstin",
+        status=VerificationStatus.VERIFIED,
+        source="LIVE_DB",
+        mode=VerificationMode.LIVE,
+        checked_at=datetime.now(timezone.utc),
+    )
+    db_session.add(ver_db)
+    db_session.commit()
+
+    principal = AuthenticatedPrincipal(user_id="test-user", role=UserRole.ADMIN)
+    report = await get_bidder_report(id=sample_bidder.id, run_id=run.id, principal=principal, db=db_session)
+
+    # Must remain empty [], NOT load ver_db from live DB
+    assert report.verification_results == []
+    assert report.historical_limitations_notice is None
+
+
+@pytest.mark.asyncio
+async def test_missing_or_malformed_phase9_verifications_never_loads_current_db(db_session, sample_tender, sample_bidder):
+    """23. Verifies a Phase 9 snapshot with missing or malformed verifications produces historical limitation notice and never loads current DB rows."""
+    from app.api.v1.bidders import get_bidder_report
+    from app.auth.dependencies import AuthenticatedPrincipal
+    from app.schemas.canonical import UserRole
+
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_tender.id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [],
+            "facts": [],
+            "verifications": "MALFORMED_STRING_NOT_A_LIST",  # Malformed
+            "evidence": [],
+            "exact_evaluation_linkage": [],
+        },
+    )
+    db_session.add(run)
+
+    ver_db = VerificationResult(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        run_id=run.id,
+        field="general.gstin",
+        status=VerificationStatus.VERIFIED,
+        source="LIVE_DB",
+        mode=VerificationMode.LIVE,
+        checked_at=datetime.now(timezone.utc),
+    )
+    db_session.add(ver_db)
+    db_session.commit()
+
+    principal = AuthenticatedPrincipal(user_id="test-user", role=UserRole.ADMIN)
+    report = await get_bidder_report(id=sample_bidder.id, run_id=run.id, principal=principal, db=db_session)
+
+    # Must NOT load ver_db from live DB
+    assert report.verification_results == []
+    assert report.historical_limitations_notice is not None
+    assert "verifications" in report.historical_limitations_notice
+
+
+def test_existing_exact_evidence_linkage_remains_intact(db_session, sample_bidder):
+    """24. Verifies build_compliance_matrix correctly attaches exact evidence citations when linked by evidence_ids."""
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_bidder.tender_id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [
+                {
+                    "id": "req-1",
+                    "clause": "3.1",
+                    "requirement_type": "TURNOVER",
+                    "field": "financial.average_annual_turnover",
+                    "operator": "GTE",
+                    "expected_value": "5000000",
+                    "mandatory": True,
+                }
+            ],
+            "facts": [
+                {
+                    "id": "fact-1",
+                    "document_id": "doc-1",
+                    "field": "financial.average_annual_turnover",
+                    "value": "6000000",
+                    "source_page": 2,
+                    "source_text": "Turnover is 60 Lakhs INR",
+                    "confidence": 0.99,
+                }
+            ],
+            "verifications": [
+                {
+                    "id": "ver-1",
+                    "field": "financial.average_annual_turnover",
+                    "status": "VERIFIED",
+                    "verified_value": "6000000",
+                }
+            ],
+            "evidence": [
+                {
+                    "id": "ev-1",
+                    "extracted_fact_id": "fact-1",
+                    "verification_result_id": "ver-1",
+                    "snippet": "Turnover is 60 Lakhs INR",
+                    "source_type": "DOCUMENT",
+                    "page_number": 2,
+                }
+            ],
+            "exact_evaluation_linkage": [
+                {
+                    "requirement_id": "req-1",
+                    "status": ComplianceStatus.PASS,
+                    "reason_code": "THRESHOLD_MET",
+                    "observed_value": "6000000",
+                    "evidence_ids": ["ev-1"],
+                }
+            ],
+        },
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    matrix, ev_schema, notice = build_compliance_matrix(db_session, sample_bidder, run, [], [])
+    row = matrix.rows[0]
+    assert len(row.evidence_refs) == 1
+    assert row.evidence_refs[0]["evidence_id"] == "ev-1"
+    assert len(row.verification_refs) == 1
+    assert row.verification_refs[0]["id"] == "ver-1"
+    assert len(row.source_refs) == 1
+    assert row.source_refs[0]["source_text"] == "Turnover is 60 Lakhs INR"
+
+
+

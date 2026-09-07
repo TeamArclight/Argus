@@ -413,6 +413,18 @@ def record_human_decision(
     return decision
 
 
+def _is_phase9_snapshot(snapshot_data: Any) -> bool:
+    return bool(
+        snapshot_data
+        and isinstance(snapshot_data, dict)
+        and (
+            snapshot_data.get("snapshot_version")
+            or "approved_requirements" in snapshot_data
+            or "exact_evaluation_linkage" in snapshot_data
+        )
+    )
+
+
 def build_compliance_matrix(
     db: Session,
     bidder: Bidder,
@@ -422,7 +434,7 @@ def build_compliance_matrix(
 ) -> tuple[ComplianceMatrixRead, list[EvidenceRead], str | None]:
     """Reconstruct compliance matrix, evidence list, and historical limitations notice from run input snapshot without fallback fabrication or defaults."""
     snapshot_data = run.input_snapshot_json or {}
-    has_snapshot = bool(snapshot_data and isinstance(snapshot_data, dict) and (snapshot_data.get("snapshot_version") or snapshot_data.get("approved_requirements")))
+    has_snapshot = _is_phase9_snapshot(snapshot_data)
 
     limitations: list[str] = []
     if has_snapshot:
@@ -493,14 +505,20 @@ def build_compliance_matrix(
         evidence_db = db.query(Evidence).filter(Evidence.run_id == run.id).all()
         evidence_schema = [EvidenceRead.model_validate(e) for e in evidence_db]
 
-    approved_reqs = snapshot_data.get("approved_requirements", []) if has_snapshot else []
+    approved_reqs = snapshot_data.get("approved_requirements", []) if has_snapshot and isinstance(snapshot_data.get("approved_requirements"), list) else []
     req_map: dict[str, dict[str, Any]] = {}
     if isinstance(approved_reqs, list):
         for r in approved_reqs:
             if isinstance(r, dict) and "id" in r:
                 req_map[r["id"]] = r
 
-    verifications_list = snapshot_data.get("verifications", []) if has_snapshot and isinstance(snapshot_data.get("verifications"), list) else [v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in verifications_db]
+    if has_snapshot:
+        if "verifications" in snapshot_data and isinstance(snapshot_data["verifications"], list):
+            verifications_list = snapshot_data["verifications"]
+        else:
+            verifications_list = []
+    else:
+        verifications_list = [v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in verifications_db]
     ver_by_id: dict[str, dict[str, Any]] = {}
     if isinstance(verifications_list, list):
         for v in verifications_list:
@@ -769,9 +787,16 @@ async def get_bidder_report(
     evaluations_schema = [RuleEvaluationRead.model_validate(e) for e in evaluations_db]
     risk_db = db.query(RiskSignal).filter(RiskSignal.run_id == target_run.id).all()
     risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
-    snapshot_vers = target_run.input_snapshot_json.get("verifications") if target_run.input_snapshot_json and isinstance(target_run.input_snapshot_json, dict) else None
-    if snapshot_vers and isinstance(snapshot_vers, list):
-        verifications_for_report = [VerificationResultRead.model_validate(v) if isinstance(v, dict) else v for v in snapshot_vers]
+    has_snapshot = _is_phase9_snapshot(target_run.input_snapshot_json)
+    if has_snapshot:
+        snapshot_data = target_run.input_snapshot_json or {}
+        if "verifications" in snapshot_data and isinstance(snapshot_data["verifications"], list):
+            verifications_for_report = [
+                VerificationResultRead.model_validate(v) if isinstance(v, dict) else v
+                for v in snapshot_data["verifications"]
+            ]
+        else:
+            verifications_for_report = []
     else:
         verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == target_run.id).all()
         verifications_for_report = [VerificationResultRead.model_validate(v) for v in verifications_db]
