@@ -160,6 +160,7 @@ def test_gstin_pan_mismatch_detection():
         verifications=[],
         documents=[],
         bidder_data=bidder_data,
+        evaluation_timestamp=datetime.now(timezone.utc),
     )
 
     mismatches = [c for c in candidates if c.signal_type == "GSTIN_PAN_MISMATCH"]
@@ -201,6 +202,7 @@ def test_missing_and_stale_cached_freshness():
         documents=[],
         bidder_data={},
         freshness_policy={"general.udyam": 90},
+        evaluation_timestamp=now,
     )
 
     missing_sig = [c for c in candidates if c.signal_type == "MISSING_FRESHNESS_TIMESTAMP"]
@@ -246,6 +248,7 @@ def test_cross_fy_financial_isolation():
         verifications=[],
         documents=[],
         bidder_data={},
+        evaluation_timestamp=datetime.now(timezone.utc),
     )
 
     conflicts = [c for c in candidates if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
@@ -281,6 +284,7 @@ def test_same_fy_conflicting_turnover_detection():
         verifications=[],
         documents=[],
         bidder_data={},
+        evaluation_timestamp=datetime.now(timezone.utc),
     )
 
     conflicts = [c for c in candidates if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
@@ -300,6 +304,7 @@ def test_duplicate_document_hash_non_fraud_interpretation():
         documents=local_docs,
         bidder_data={},
         comparison_metadata=comparison_meta,
+        evaluation_timestamp=datetime.now(timezone.utc),
     )
 
     dups = [c for c in candidates if c.signal_type == "DUPLICATE_DOCUMENT_HASH_CROSS_BIDDER"]
@@ -664,4 +669,42 @@ def test_authorized_duplicate_scope_privacy():
     assert "secret-bidder-99" not in str(meta)
     assert "secret.pdf" not in str(meta)
     assert meta["comparison_scope"] == "AUTHORIZED_TENDER_METADATA"
+
+
+def test_financial_parser_safety_and_fail_closed_validation():
+    """19. Verifies ordinary words with m/b are not scaled, contradictory units/currencies are rejected, missing/mismatched averaging period defers comparison, and fail-closed typed reference validation."""
+    eval_ts = datetime.now(timezone.utc)
+
+    # 1. Ordinary words containing m/b (e.g. "Member", "September", "Mobile") must NOT trigger Million/Billion scale
+    f_member = FactRead(
+        id="f-mem", document_id="d1", bidder_id="b1", field="financial.turnover", value="5000000 Member", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25"}
+    )
+    f_valid = FactRead(
+        id="f-val", document_id="d2", bidder_id="b1", field="financial.turnover", value="5000000", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25"}
+    )
+    c_mem = RiskEngine.evaluate_risks(facts=[f_member, f_valid], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    malformed_sig = [c for c in c_mem if c.signal_type == "MALFORMED_FINANCIAL_VALUE"]
+    assert len(malformed_sig) == 1
+
+    # 2. Contradictory units (metadata unit="Lakh" vs text "5 Crore")
+    f_contra = FactRead(
+        id="f-contra", document_id="d1", bidder_id="b1", field="financial.turnover", value="5 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "unit": "Lakh"}
+    )
+    c_contra = RiskEngine.evaluate_risks(facts=[f_contra, f_valid], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    malformed_contra = [c for c in c_contra if c.signal_type == "MALFORMED_FINANCIAL_VALUE"]
+    assert len(malformed_contra) == 1
+
+    # 3. Missing or mismatched averaging period for average_annual_turnover
+    f_avg1 = FactRead(
+        id="f-a1", document_id="d1", bidder_id="b1", field="financial.average_annual_turnover", value="5 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "averaging_period": "3_years", "currency": "INR"}
+    )
+    f_avg2_no_period = FactRead(
+        id="f-a2", document_id="d2", bidder_id="b1", field="financial.average_annual_turnover", value="9 Crore", confidence=1.0, created_at=eval_ts, metadata_json={"financial_year": "2024-25", "currency": "INR"}
+    )
+    c_period = RiskEngine.evaluate_risks(facts=[f_avg1, f_avg2_no_period], verifications=[], documents=[], bidder_data={}, evaluation_timestamp=eval_ts)
+    period_sig = [c for c in c_period if c.signal_type == "AVERAGING_PERIOD_MISMATCH"]
+    conflict_sig = [c for c in c_period if c.signal_type == "CONFLICTING_TURNOVER_SAME_FY"]
+    assert len(period_sig) == 1
+    assert len(conflict_sig) == 0  # Numerical comparison MUST be deferred on period mismatch!
+
 

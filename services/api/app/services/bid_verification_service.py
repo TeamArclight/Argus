@@ -426,10 +426,15 @@ class BidVerificationService:
                             )
                         )
 
-            # Map Risk Engine Candidate input_refs to Evidence IDs & Verification IDs
+            # Map Risk Engine Candidate input_refs to Evidence IDs & Verification IDs with fail-closed validation
             risk_signals_schema: list[RiskSignalRead] = []
             now_risk = datetime.now(timezone.utc)
             staged_evidence_list = list(fact_evidence_map.values()) + list(ver_evidence_map.values())
+
+            fact_by_id = {f.id: f for f in facts_db}
+            doc_by_id = {d.id: d for d in bidder_docs}
+            ver_by_id = {v.id: v for v in verifications_schema}
+            staged_ev_by_id = {e.id: e for e in staged_evidence_list}
 
             for cand in risk_candidates:
                 mapped_ev_ids: list[str] = []
@@ -439,6 +444,16 @@ class BidVerificationService:
 
                 for ref in cand.input_refs:
                     if ref.ref_type == RiskInputType.EXTRACTED_FACT:
+                        f_obj = fact_by_id.get(ref.id)
+                        if not f_obj or f_obj.bidder_id != bidder.id:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        if f_obj.document_id:
+                            d_obj = doc_by_id.get(f_obj.document_id)
+                            if not d_obj or d_obj.bidder_id != bidder.id:
+                                unmapped_ids.append(ref.id)
+                                continue
+
                         if ref.id in fact_evidence_map:
                             ev_id = fact_evidence_map[ref.id].id
                             if ev_id not in mapped_ev_ids:
@@ -447,9 +462,16 @@ class BidVerificationService:
                         else:
                             mapped_refs.append(ref)
                             unmapped_ids.append(ref.id)
+
                     elif ref.ref_type == RiskInputType.VERIFICATION_RESULT:
+                        v_obj = ver_by_id.get(ref.id)
+                        if not v_obj or v_obj.bidder_id != bidder.id or v_obj.run_id != run.id:
+                            unmapped_ids.append(ref.id)
+                            continue
+
                         if ref.id not in mapped_ver_ids:
                             mapped_ver_ids.append(ref.id)
+
                         if ref.id in ver_evidence_map:
                             ev_id = ver_evidence_map[ref.id].id
                             if ev_id not in mapped_ev_ids:
@@ -457,13 +479,29 @@ class BidVerificationService:
                             mapped_refs.append(RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=ev_id, metadata={"verification_result_id": ref.id}))
                         else:
                             mapped_refs.append(ref)
+
                     elif ref.ref_type == RiskInputType.DOCUMENT:
-                        # Document reference: preserve typed reference without pretending it is an Evidence ID
-                        mapped_refs.append(ref)
+                        d_obj = doc_by_id.get(ref.id)
+                        if not d_obj or d_obj.bidder_id != bidder.id or d_obj.tender_id != tender.id:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        mapped_refs.append(RiskInputRef(ref_type=RiskInputType.DOCUMENT, id=ref.id))
+
                     elif ref.ref_type == RiskInputType.EVIDENCE:
+                        ev_obj = staged_ev_by_id.get(ref.id)
+                        if not ev_obj or ev_obj.bidder_id != bidder.id or ev_obj.tender_id != tender.id or ev_obj.run_id != run.id:
+                            unmapped_ids.append(ref.id)
+                            continue
                         if ref.id not in mapped_ev_ids:
                             mapped_ev_ids.append(ref.id)
                         mapped_refs.append(ref)
+
+                    elif ref.ref_type == RiskInputType.BIDDER_RECORD:
+                        if ref.id != bidder.id:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        mapped_refs.append(ref)
+
                     else:
                         mapped_refs.append(ref)
 

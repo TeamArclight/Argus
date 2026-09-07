@@ -61,16 +61,16 @@ class RiskEngine:
         verifications: list[VerificationResultRead],
         documents: list[dict[str, Any]],
         bidder_data: dict[str, Any],
+        evaluation_timestamp: datetime,
         comparison_metadata: list[dict[str, Any]] | None = None,
         comparison_authorized: bool = True,
         freshness_policy: dict[str, int] | None = None,
-        evaluation_timestamp: datetime | None = None,
     ) -> list[RiskSignalCandidate]:
         """
         Pure deterministic risk detection.
         No DB queries, no HTTP requests, no AI/ML calls, zero side effects.
         """
-        eval_ts = evaluation_timestamp or datetime.now(timezone.utc)
+        eval_ts = evaluation_timestamp
         candidates: list[RiskSignalCandidate] = []
         policy = {**cls.DEFAULT_FRESHNESS_DAYS, **(freshness_policy or {})}
 
@@ -104,7 +104,7 @@ class RiskEngine:
                     severity=RiskSeverity.MEDIUM,
                     signal_type="INVALID_PAN_FORMAT",
                     title="Invalid PAN Format",
-                    description=f"Claimed PAN '{pan}' does not conform to standard 10-character PAN structure (e.g. ABCDE1234F).",
+                    description=f"Claimed PAN '{pan}' does not conform to standard 10-character PAN structure.",
                     reason_code="INVALID_PAN_FORMAT",
                     input_refs=[RiskInputRef(ref_type=RiskInputType.BIDDER_RECORD, id=bidder_id)],
                     metadata_json={"claimed_pan": pan},
@@ -158,23 +158,22 @@ class RiskEngine:
 
         if gstin and isinstance(gstin, str) and len(gstin) == 15 and cls.GSTIN_REGEX.match(gstin.upper()):
             embedded_pan = gstin[2:12].upper()
-            if pan and isinstance(pan, str) and cls.PAN_REGEX.match(pan.upper()):
-                if pan.upper() != embedded_pan:
-                    refs = [RiskInputRef(ref_type=RiskInputType.BIDDER_RECORD, id=bidder_id)]
-                    for fid in contributing_fact_ids:
-                        refs.append(RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=fid))
+            if pan and isinstance(pan, str) and pan.upper() != embedded_pan:
+                refs = [RiskInputRef(ref_type=RiskInputType.BIDDER_RECORD, id=bidder_id)]
+                for fid in contributing_fact_ids:
+                    refs.append(RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=fid))
 
-                    candidates.append(
-                        RiskSignalCandidate(
-                            severity=RiskSeverity.HIGH,
-                            signal_type="GSTIN_PAN_MISMATCH",
-                            title="GSTIN and PAN Identifier Mismatch",
-                            description=f"Embedded PAN '{embedded_pan}' in GSTIN '{gstin}' does not match claimed PAN '{pan}'.",
-                            reason_code="GSTIN_PAN_MISMATCH",
-                            input_refs=refs,
-                            metadata_json={"gstin": gstin, "embedded_pan": embedded_pan, "claimed_pan": pan},
-                        )
+                candidates.append(
+                    RiskSignalCandidate(
+                        severity=RiskSeverity.HIGH,
+                        signal_type="GSTIN_PAN_MISMATCH",
+                        title="Embedded GSTIN PAN Mismatch",
+                        description=f"PAN embedded in GSTIN ({embedded_pan}) does not match primary PAN ({pan}).",
+                        reason_code="GSTIN_PAN_MISMATCH",
+                        input_refs=refs,
+                        metadata_json={"gstin": gstin, "claimed_pan": pan, "embedded_pan": embedded_pan},
                     )
+                )
 
     @classmethod
     def _normalize_name(cls, name: str | None) -> str:
@@ -196,6 +195,9 @@ class RiskEngine:
     ) -> None:
         bidder_id = bidder_data.get("id") or "BIDDER_RECORD"
         primary_name = bidder_data.get("bidder_name")
+        if not primary_name or not isinstance(primary_name, str):
+            return
+
         norm_primary = cls._normalize_name(primary_name)
         if not norm_primary:
             return
@@ -226,44 +228,53 @@ class RiskEngine:
         Returns: (currency, unit, scaled_value, is_explicit_unit)
         """
         currency = meta.get("currency")
-        unit = meta.get("unit")
-        is_explicit = bool(unit)
+        meta_unit = meta.get("unit")
+        is_explicit = bool(meta_unit)
 
         val_str = str(val) if val is not None else ""
         val_lower = val_str.lower().strip()
 
         # Currency detection
-        if not currency:
-            if "$" in val_str or "usd" in val_lower:
-                currency = "USD"
-            elif "₹" in val_str or "inr" in val_lower or "rs" in val_lower:
-                currency = "INR"
+        text_curr = None
+        if "$" in val_str or re.search(r'\b(usd)\b', val_lower):
+            text_curr = "USD"
+        elif "₹" in val_str or re.search(r'\b(inr|rs\.?|rupees?)\b', val_lower):
+            text_curr = "INR"
 
-        # Unit / Scale detection
+        if currency and text_curr and currency.upper() != text_curr.upper():
+            return None, meta_unit, None, is_explicit
+
+        currency = currency or text_curr
+
+        # Unit / Scale detection using bounded tokens only
         scale = 1.0
-        if "crore" in val_lower or "cr" in val_lower:
+        text_unit = None
+        if re.search(r'\b(crores?|cr)\b', val_lower):
             scale = 10_000_000.0
-            unit = unit or "Crore"
-            is_explicit = True
-        elif "lakh" in val_lower or "lac" in val_lower:
+            text_unit = "Crore"
+        elif re.search(r'\b(lakhs?|lacs?)\b', val_lower):
             scale = 100_000.0
-            unit = unit or "Lakh"
-            is_explicit = True
-        elif "billion" in val_lower or "b" in val_lower:
+            text_unit = "Lakh"
+        elif re.search(r'\b(billions?|bn)\b', val_lower):
             scale = 1_000_000_000.0
-            unit = unit or "Billion"
-            is_explicit = True
-        elif "million" in val_lower or "m" in val_lower:
+            text_unit = "Billion"
+        elif re.search(r'\b(millions?|mn)\b', val_lower):
             scale = 1_000_000.0
-            unit = unit or "Million"
-            is_explicit = True
+            text_unit = "Million"
+
+        # Reject contradictory metadata unit vs text unit
+        if meta_unit and text_unit and meta_unit.lower() != text_unit.lower():
+            return currency, meta_unit, None, True
+
+        unit = meta_unit or text_unit
+        is_explicit = bool(unit)
 
         val_to_parse: Any = val
         if isinstance(val, str):
             clean_s = val
             tokens_to_remove = [
                 "USD", "usd", "$", "INR", "inr", "₹", "Rs.", "rs.", "Rs", "rs", "EUR", "eur", "GBP", "gbp", "Rupees", "rupees",
-                "crore", "crores", "cr", "lakh", "lakhs", "lac", "lacs", "billion", "million"
+                "crore", "crores", "cr", "lakh", "lakhs", "lac", "lacs", "billion", "billions", "bn", "million", "millions", "mn"
             ]
             for token in tokens_to_remove:
                 if token in ("$", "₹"):
@@ -285,7 +296,7 @@ class RiskEngine:
         cls, facts: list[FactRead], candidates: list[RiskSignalCandidate]
     ) -> None:
         """
-        Cross-document financial checks with strict metric, FY, currency, and unit safety.
+        Cross-document financial checks with strict metric, FY, averaging period, currency, and unit safety.
         """
         # Separate facts by metric
         fact_groups: dict[tuple[str, str], list[FactRead]] = {}
@@ -314,14 +325,18 @@ class RiskEngine:
             )
 
         # 2. Detect averaging period mismatch within average_annual_turnover facts
+        avg_period_mismatch = False
         if len(avg_facts) > 1:
             periods = {}
             for f in avg_facts:
                 meta = f.metadata_json if isinstance(f.metadata_json, dict) else {}
-                period = meta.get("averaging_period") or "UNSPECIFIED_PERIOD"
+                period = meta.get("averaging_period")
+                if not period or str(period).strip().upper() in ("UNSPECIFIED_PERIOD", "NONE", ""):
+                    period = "UNSPECIFIED_PERIOD"
                 periods.setdefault(period, []).append(f)
 
-            if len(periods) > 1 and "UNSPECIFIED_PERIOD" not in periods:
+            if len(periods) > 1:
+                avg_period_mismatch = True
                 candidates.append(
                     RiskSignalCandidate(
                         severity=RiskSeverity.MEDIUM,
@@ -339,6 +354,9 @@ class RiskEngine:
             if fy == "UNSPECIFIED_FY" or len(fact_list) < 2:
                 continue
 
+            if field_name == "financial.average_annual_turnover" and avg_period_mismatch:
+                continue
+
             base_fact = fact_list[0]
             base_meta = base_fact.metadata_json if isinstance(base_fact.metadata_json, dict) else {}
             curr_1, unit_1, val_1, exp_1 = cls._parse_currency_and_scale(base_fact.value, base_meta)
@@ -354,7 +372,7 @@ class RiskEngine:
                             severity=RiskSeverity.LOW,
                             signal_type="MALFORMED_FINANCIAL_VALUE",
                             title="Unparseable Financial Value",
-                            description=f"Turnover claim value '{base_fact.value}' or '{other_fact.value}' is non-numeric or malformed.",
+                            description=f"Turnover claim value '{base_fact.value}' or '{other_fact.value}' is non-numeric, malformed, or has contradictory units.",
                             reason_code="MALFORMED_FINANCIAL_VALUE",
                             input_refs=[
                                 RiskInputRef(ref_type=RiskInputType.EXTRACTED_FACT, id=base_fact.id),
