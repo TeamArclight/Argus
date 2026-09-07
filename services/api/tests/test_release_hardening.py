@@ -134,3 +134,156 @@ def test_idempotency_key_deduplication():
     res_conflict = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers_conflict)
     assert res_conflict.status_code == 409
     assert res_conflict.json()["error"]["code"] == "IDEMPOTENCY_KEY_COLLISION"
+
+
+def test_idempotency_invalid_key_format_422():
+    headers = get_auth_headers()
+    headers["X-Idempotency-Key"] = "invalid key with spaces!@#"
+    res = client.post("/api/v1/bidders/some-bidder-id/verify", headers=headers)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "INVALID_IDEMPOTENCY_KEY"
+
+
+def test_idempotency_crash_retry_recovery():
+    from app.db.session import SessionLocal
+    from app.models.domain import IdempotencyRecord, ProcessingJob
+    from datetime import datetime, timedelta, timezone
+
+    db = SessionLocal()
+    try:
+        # Create a crashed job in status FAILED
+        crashed_job = ProcessingJob(
+            target_type="BIDDER",
+            target_id="bidder-crashed-123",
+            job_type="VERIFY_BIDDER",
+            status=JobStatus.FAILED,
+            error_message="Worker crashed unexpectedly",
+        )
+        db.add(crashed_job)
+        db.commit()
+
+        # Create an idempotency record referencing the crashed job
+        idem_rec = IdempotencyRecord(
+            key="idem-key-crashed-run",
+            principal_id="test-user-id-12345",
+            resource_type="BIDDER",
+            resource_id="bidder-crashed-123",
+            operation="VERIFY_BIDDER",
+            request_hash="dummy-hash",
+            status="PROCESSING",
+            job_id=crashed_job.id,
+        )
+        db.add(idem_rec)
+        db.commit()
+    finally:
+        db.close()
+
+    # Retry request with same key should recover crashed state rather than 409 conflict
+    # First create bidder to allow endpoint to process
+    create_tender = client.post(
+        "/api/v1/tenders",
+        json={"tender_number": "TENDER-CRASH-001", "title": "Crash Recovery Test Tender"},
+        headers=get_auth_headers(),
+    )
+    tender_id = create_tender.json()["id"]
+
+    # Re-use exact bidder ID
+    db = SessionLocal()
+    try:
+        bidder = Bidder(id="bidder-crashed-123", tender_id=tender_id, bidder_name="Crashed Bidder LLC")
+        db.add(bidder)
+        db.commit()
+    finally:
+        db.close()
+
+    headers = get_auth_headers()
+    headers["X-Idempotency-Key"] = "idem-key-crashed-run"
+    res = client.post("/api/v1/bidders/bidder-crashed-123/verify", headers=headers)
+    # Should proceed cleanly without 409 Conflict
+    assert res.status_code in (200, 201)
+
+
+def test_sse_monotonic_integer_cursor_and_reconnect():
+    from app.db.session import SessionLocal
+    from app.models.domain import JobEvent, ProcessingJob
+
+    db = SessionLocal()
+    try:
+        job = ProcessingJob(
+            id="job-sse-test-100",
+            target_type="BIDDER",
+            target_id="bidder-sse-100",
+            job_type="VERIFY_BIDDER",
+            status=JobStatus.RUNNING,
+        )
+        db.add(job)
+        db.commit()
+
+        ev1 = JobEvent(job_id=job.id, seq=1, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=10, message="Stage 1 started")
+        ev2 = JobEvent(job_id=job.id, seq=2, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=50, message="Stage 2 running")
+        ev3 = JobEvent(job_id=job.id, seq=3, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=90, message="Stage 3 finishing")
+        db.add_all([ev1, ev2, ev3])
+        db.commit()
+    finally:
+        db.close()
+
+    # Reconnect with Last-Event-ID: 2 -> should receive only event 3
+    headers = get_auth_headers()
+    headers["Last-Event-ID"] = "2"
+    res = client.get(f"/api/v1/jobs/{job.id}/events", headers=headers)
+    assert res.status_code == 200
+    content = res.text
+    assert "id: 3" in content
+    assert "id: 1" not in content
+    assert "id: 2" not in content
+
+
+def test_sse_payload_sanitization():
+    from app.db.session import SessionLocal
+    from app.models.domain import JobEvent, ProcessingJob
+
+    db = SessionLocal()
+    try:
+        job = ProcessingJob(
+            id="job-sse-sanitization-200",
+            target_type="BIDDER",
+            target_id="bidder-sse-200",
+            job_type="VERIFY_BIDDER",
+            status=JobStatus.FAILED,
+        )
+        db.add(job)
+        db.commit()
+
+        ev = JobEvent(
+            job_id=job.id,
+            seq=1,
+            stage=JobStage.VERIFICATION,
+            status=JobStatus.FAILED,
+            progress=50,
+            message="Traceback (most recent call last):\nFile 'app/service.py', line 99, in run\n    raise ValueError('Secret DB credentials leak')",
+            payload={"details": "File 'secret.py', line 12"},
+        )
+        db.add(ev)
+        db.commit()
+    finally:
+        db.close()
+
+    headers = get_auth_headers()
+    res = client.get(f"/api/v1/jobs/{job.id}/events", headers=headers)
+    assert res.status_code == 200
+    content = res.text
+    assert "Secret DB credentials leak" not in content
+    assert "An error occurred during background job processing." in content
+
+
+def test_sse_authorization_and_404():
+    # 404 Not Found for non-existent job
+    res_404 = client.get("/api/v1/jobs/non-existent-job-uuid-9999/events", headers=get_auth_headers())
+    assert res_404.status_code == 404
+    assert res_404.json()["error"]["code"] == "NOT_FOUND"
+
+    # 401 Unauthenticated
+    res_401 = client.get("/api/v1/jobs/some-job-id/events")
+    assert res_401.status_code == 401
+    assert res_401.json()["error"]["code"] == "UNAUTHENTICATED"
+

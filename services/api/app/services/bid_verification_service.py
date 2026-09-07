@@ -70,7 +70,11 @@ class BidVerificationService:
 
     @staticmethod
     def close_orphaned_run(db: Session, run: ComplianceRun, bidder_id: str) -> None:
-        """Marks a stale RUNNING ComplianceRun as FAILED and emits a safe audit event."""
+        """Marks a stale RUNNING ComplianceRun as FAILED only if started > 5 minutes ago."""
+        if run.started_at and (datetime.now(timezone.utc) - run.started_at.replace(tzinfo=timezone.utc)).total_seconds() < 300:
+            # Active run created recently (likely currently being linked by concurrent request) - do not orphan
+            return
+
         run.execution_status = JobStatus.FAILED
         run.completed_at = datetime.now(timezone.utc)
         run.summary_json = {"error_code": "ORPHANED_ACTIVE_RUN"}
@@ -86,6 +90,7 @@ class BidVerificationService:
                 "error_code": "ORPHANED_ACTIVE_RUN",
             },
         )
+
 
     def __init__(self, db: Session):
         self.db = db

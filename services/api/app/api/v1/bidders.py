@@ -144,7 +144,7 @@ async def verify_bidder(
     principal: AuthenticatedPrincipal = Depends(require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)),
     db: Session = Depends(get_db),
 ):
-    bidder = db.query(Bidder).filter(Bidder.id == id).first()
+    bidder = db.query(Bidder).filter(Bidder.id == id).with_for_update().first()
     if not bidder:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -178,6 +178,7 @@ async def verify_bidder(
                     .first()
                 )
                 if active_job:
+                    IdempotencyService.link_job(db, record, active_job.id)
                     res_payload = JobRead.model_validate(active_job).model_dump(mode="json")
                     IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
                     return active_job
@@ -196,6 +197,7 @@ async def verify_bidder(
             .first()
         )
         if existing_job:
+            IdempotencyService.link_job(db, record, existing_job.id)
             res_payload = JobRead.model_validate(existing_job).model_dump(mode="json")
             IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
             return existing_job
@@ -211,6 +213,8 @@ async def verify_bidder(
         db.add(job)
         db.commit()
         db.refresh(job)
+
+        IdempotencyService.link_job(db, record, job.id)
 
         service = BidVerificationService(db)
         await service.run_verification_workflow(

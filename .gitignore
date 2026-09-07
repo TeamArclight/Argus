@@ -28,6 +28,7 @@ dist/
 build/
 *.log
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
 services/api/data/
