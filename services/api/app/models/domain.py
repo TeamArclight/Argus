@@ -290,9 +290,12 @@ class ProcessingJob(Base):
 
 class JobEvent(Base):
     __tablename__ = "job_events"
+    __table_args__ = (
+        UniqueConstraint("job_id", "seq", name="uq_job_events_job_seq"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
-    seq: Mapped[int] = mapped_column(Integer, default=1, nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     job_id: Mapped[str] = mapped_column(String, ForeignKey("processing_jobs.id"), nullable=False, index=True)
     stage: Mapped[JobStage] = mapped_column(String, nullable=False)
     status: Mapped[JobStatus] = mapped_column(String, nullable=False)
@@ -359,5 +362,27 @@ class IdempotencyRecord(Base):
     run_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ActiveOperationLock(Base):
+    __tablename__ = "active_operation_locks"
+    __table_args__ = (
+        UniqueConstraint(
+            "resource_type",
+            "resource_id",
+            "operation",
+            name="uq_active_operation_locks_resource",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String, nullable=False)
+    job_id: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    owner_principal_id: Mapped[str] = mapped_column(String, nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+
 
 

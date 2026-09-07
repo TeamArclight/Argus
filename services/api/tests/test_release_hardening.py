@@ -274,11 +274,195 @@ def test_idempotency_in_progress_and_recovery():
         failed_job.error_message = "Simulated worker crash"
         db.commit()
 
-    # Retry with SAME idempotency key -> initiates recovery and creates new job successfully
-    res_recovered = client.post(f"/api/v1/bidders/{bidder_id}/verify", headers=headers)
+    # Retry with SAME idempotency key on a definitively failed operation -> rejected as 409 OPERATION_FAILED
+    res_failed = client.post(f"/api/v1/bidders/{bidder_id}/verify", headers=headers)
+    assert res_failed.status_code == 409
+    assert res_failed.json()["error"]["code"] == "OPERATION_FAILED"
+
+    # Explicit new attempt with NEW idempotency key -> creates new job successfully
+    headers_new = get_auth_headers()
+    headers_new["X-Idempotency-Key"] = "fresh-recovery-attempt-key-888"
+    res_recovered = client.post(f"/api/v1/bidders/{bidder_id}/verify", headers=headers_new)
     assert res_recovered.status_code == 200
     new_job_id = res_recovered.json()["id"]
     assert new_job_id != job_id
+
+
+def test_active_operation_resource_locking_concurrent_keys():
+    create_res = client.post(
+        "/api/v1/tenders",
+        json={"tender_number": "TENDER-LOCK-001", "title": "Resource Lock Tender"},
+        headers=get_auth_headers(),
+    )
+    tender_id = create_res.json()["id"]
+    bidder_res = client.post(
+        f"/api/v1/tenders/{tender_id}/bidders",
+        json={"bidder_name": "Resource Lock Bidder"},
+        headers=get_auth_headers(),
+    )
+    bidder_id = bidder_res.json()["id"]
+
+    # Simulate an active operation lock held on the bidder by key A
+    with SessionLocal() as db:
+        from app.models.domain import ActiveOperationLock
+        running_job = ProcessingJob(
+            target_type="BIDDER",
+            target_id=bidder_id,
+            job_type="VERIFY_BIDDER",
+            status=JobStatus.RUNNING,
+            current_stage=JobStage.VERIFICATION,
+            progress=30,
+        )
+        db.add(running_job)
+        db.commit()
+        db.refresh(running_job)
+
+        active_lock = ActiveOperationLock(
+            resource_type="BIDDER",
+            resource_id=bidder_id,
+            operation="VERIFY_BIDDER",
+            job_id=running_job.id,
+            owner_principal_id="test-user-001",
+        )
+        db.add(active_lock)
+        db.commit()
+        job_id = running_job.id
+
+    # Second request with a completely DIFFERENT key B for the SAME bidder -> rejected by resource lock as 409
+    h_b = get_auth_headers()
+    h_b["X-Idempotency-Key"] = "completely-different-key-B"
+    res_blocked = client.post(f"/api/v1/bidders/{bidder_id}/verify", headers=h_b)
+    assert res_blocked.status_code == 409
+    assert res_blocked.json()["error"]["code"] == "OPERATION_IN_PROGRESS"
+
+    # Once the first job and lock finish, subsequent request succeeds
+    with SessionLocal() as db:
+        from app.models.domain import ActiveOperationLock
+        db.query(ActiveOperationLock).filter(ActiveOperationLock.resource_id == bidder_id).delete()
+        fin_job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+        fin_job.status = JobStatus.COMPLETED
+        db.commit()
+
+    res_next = client.post(f"/api/v1/bidders/{bidder_id}/verify", headers=h_b)
+    assert res_next.status_code == 200
+
+
+def test_job_event_service_monotonic_allocation_and_uniqueness():
+    from app.services.job_event_service import JobEventService
+    from app.models.domain import JobEvent
+    from sqlalchemy.exc import IntegrityError
+
+    with SessionLocal() as db:
+        job = ProcessingJob(
+            target_type="BIDDER",
+            target_id="test-seq-bidder",
+            job_type="VERIFICATION",
+            status=JobStatus.RUNNING,
+            current_stage=JobStage.VERIFICATION,
+            progress=10,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        job_id = job.id
+
+        ev1 = JobEventService.emit_event(db, job_id, JobStage.EXTRACTION, JobStatus.RUNNING, 20, "Extract 1")
+        ev2 = JobEventService.emit_event(db, job_id, JobStage.VERIFICATION, JobStatus.RUNNING, 50, "Verify 1")
+        ev3 = JobEventService.emit_event(db, job_id, JobStage.REPORTING, JobStatus.COMPLETED, 100, "Done")
+        db.commit()
+
+        assert ev1.seq == 1
+        assert ev2.seq == 2
+        assert ev3.seq == 3
+
+        # Direct duplicate seq insert must fail uniqueness constraint
+        duplicate_ev = JobEvent(
+            seq=1,
+            job_id=job_id,
+            stage=JobStage.EXTRACTION.value,
+            status=JobStatus.RUNNING.value,
+            progress=20,
+            message="Duplicate seq test",
+            payload={},
+        )
+        db.add(duplicate_ev)
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+
+def test_sse_authorization_enforcement():
+    with SessionLocal() as db:
+        tender = Tender(tender_number="TENDER-AUTH-SSE-01", title="SSE Auth Tender")
+        db.add(tender)
+        db.commit()
+        db.refresh(tender)
+
+        bidder1 = Bidder(tender_id=tender.id, bidder_name="Bidder One")
+        db.add(bidder1)
+        db.commit()
+        db.refresh(bidder1)
+
+        job_bidder = ProcessingJob(
+            target_type="BIDDER",
+            target_id=bidder1.id,
+            job_type="VERIFY_BIDDER",
+            status=JobStatus.COMPLETED,
+            current_stage=JobStage.REPORTING,
+            progress=100,
+        )
+        job_tender = ProcessingJob(
+            target_type="TENDER",
+            target_id=tender.id,
+            job_type="EXTRACT_REQUIREMENTS",
+            status=JobStatus.COMPLETED,
+            current_stage=JobStage.EXTRACTION,
+            progress=100,
+        )
+        db.add_all([job_bidder, job_tender])
+        db.commit()
+        db.refresh(job_bidder)
+        db.refresh(job_tender)
+
+    # 1. Unauthenticated request -> 401
+    res_anon = client.get(f"/api/v1/jobs/{job_bidder.id}/events")
+    assert res_anon.status_code == 401
+
+    # 2. Invalid bearer token -> 401
+    res_invalid = client.get(f"/api/v1/jobs/{job_bidder.id}/events", headers={"Authorization": "Bearer invalid.jwt.token"})
+    assert res_invalid.status_code == 401
+
+    # 3. Procurement officer streaming job -> 200 OK
+    res_officer = client.get(f"/api/v1/jobs/{job_bidder.id}/events", headers=get_auth_headers(role=UserRole.PROCUREMENT_OFFICER))
+    assert res_officer.status_code == 200
+
+    # 4. Admin streaming job -> 200 OK
+    res_admin = client.get(f"/api/v1/jobs/{job_bidder.id}/events", headers=get_auth_headers(role=UserRole.ADMIN))
+    assert res_admin.status_code == 200
+
+
+def test_sse_cursor_validation():
+    with SessionLocal() as db:
+        job = ProcessingJob(
+            target_type="BIDDER",
+            target_id="test-cursor-bidder",
+            job_type="VERIFICATION",
+            status=JobStatus.COMPLETED,
+            current_stage=JobStage.REPORTING,
+            progress=100,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        job_id = job.id
+
+    # Invalid cursor format (non-integer string) -> 422
+    res_invalid = client.get(
+        f"/api/v1/jobs/{job_id}/events",
+        headers={**get_auth_headers(), "Last-Event-ID": "invalid-cursor"},
+    )
+    assert res_invalid.status_code == 422
+    assert res_invalid.json()["error"]["code"] == "INVALID_EVENT_CURSOR"
 
 
 def test_sse_streaming_monotonic_seq_and_resume():
@@ -387,4 +571,5 @@ def test_sse_event_sanitization():
     assert "supersecret" not in content
     assert "AIzaSy" not in content
     assert "[REDACTED]" in content
+
 

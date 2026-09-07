@@ -8,6 +8,7 @@ from app.audit.logger import AuditLogger
 from app.auth.dependencies import get_current_principal, require_roles
 from app.db.session import get_db
 from app.services.idempotency_service import IdempotencyService
+from app.services.operation_lock_service import OperationLockService
 
 from app.models.domain import (
     AuditEvent,
@@ -158,7 +159,7 @@ async def verify_bidder(
         return JSONResponse(status_code=cached_code, content=cached_json)
 
     try:
-        # 1. Check for an existing RUNNING ComplianceRun for bidder_id
+        # Check for stale/orphaned active run without an active job -> mark FAILED and log audit event
         existing_run = (
             db.query(ComplianceRun)
             .filter(
@@ -168,6 +169,7 @@ async def verify_bidder(
             .first()
         )
         if existing_run:
+            active_job = None
             if existing_run.job_id:
                 active_job = (
                     db.query(ProcessingJob)
@@ -177,30 +179,8 @@ async def verify_bidder(
                     )
                     .first()
                 )
-                if active_job:
-                    IdempotencyService.attach_job(db, record, active_job.id, existing_run.id)
-                    res_payload = JobRead.model_validate(active_job).model_dump(mode="json")
-                    IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
-                    return active_job
-
-            # Stale/orphaned active run without an active job -> mark FAILED and log audit event
-            BidVerificationService.close_orphaned_run(db, existing_run, id)
-
-        # 2. Check for existing active verification job
-        existing_job = (
-            db.query(ProcessingJob)
-            .filter(
-                ProcessingJob.target_id == id,
-                ProcessingJob.job_type == "VERIFY_BIDDER",
-                ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
-            )
-            .first()
-        )
-        if existing_job:
-            IdempotencyService.attach_job(db, record, existing_job.id)
-            res_payload = JobRead.model_validate(existing_job).model_dump(mode="json")
-            IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
-            return existing_job
+            if not active_job:
+                BidVerificationService.close_orphaned_run(db, existing_run, id)
 
         job = ProcessingJob(
             target_type="BIDDER",
@@ -215,19 +195,41 @@ async def verify_bidder(
         db.refresh(job)
         IdempotencyService.attach_job(db, record, job.id)
 
-        service = BidVerificationService(db)
-        await service.run_verification_workflow(
-            bidder_id=id,
-            job_id=job.id,
-            triggered_by=principal.user_id,
-            actor_id=principal.user_id,
-            actor_role=principal.role.value,
-        )
+        # Acquire resource-level active operation lock
+        try:
+            OperationLockService.acquire_lock(
+                db=db,
+                resource_type="BIDDER",
+                resource_id=id,
+                operation="VERIFY_BIDDER",
+                job_id=job.id,
+                principal_id=principal.user_id,
+            )
+        except HTTPException:
+            db.delete(job)
+            if record:
+                db.delete(record)
+            db.commit()
+            raise
 
-        db.refresh(job)
-        res_payload = JobRead.model_validate(job).model_dump(mode="json")
-        IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
-        return job
+        try:
+            service = BidVerificationService(db)
+            await service.run_verification_workflow(
+                bidder_id=id,
+                job_id=job.id,
+                triggered_by=principal.user_id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+            )
+
+            db.refresh(job)
+            res_payload = JobRead.model_validate(job).model_dump(mode="json")
+            IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
+            return job
+        finally:
+            OperationLockService.release_lock(db, "BIDDER", id, "VERIFY_BIDDER", job.id)
+    except HTTPException:
+        raise
     except Exception:
         IdempotencyService.fail(db, record)
         raise

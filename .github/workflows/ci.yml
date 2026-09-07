@@ -29,6 +29,20 @@ jobs:
     defaults:
       run:
         working-directory: services/api
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: argus_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,17 +50,22 @@ jobs:
           python-version: "3.11"
       - name: Install Dependencies
         run: pip install -r requirements.txt
-      - name: Run Backend Pytest Suite
+      - name: Verify PostgreSQL Alembic Upgrade and Drift Check
         env:
           ARGUS_JWT_SECRET: "12345678901234567890123456789012"
-        run: pytest
-      - name: Verify Alembic Migration Smoke Test
-        env:
-          ARGUS_JWT_SECRET: "12345678901234567890123456789012"
-          DATABASE_URL: "sqlite:///./ci_test_disposable.db"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/argus_test"
         run: |
           python -m alembic upgrade head
           python -m alembic check
+      - name: Run Backend Pytest Suite (PostgreSQL)
+        env:
+          ARGUS_JWT_SECRET: "12345678901234567890123456789012"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/argus_test"
+        run: pytest
+      - name: Run Backend Pytest Suite (SQLite Fallback)
+        env:
+          ARGUS_JWT_SECRET: "12345678901234567890123456789012"
+        run: pytest
       - name: Verify OpenAPI Schema Drift
         env:
           ARGUS_JWT_SECRET: "12345678901234567890123456789012"

@@ -9,6 +9,7 @@ from app.audit.logger import AuditLogger
 from app.auth.dependencies import get_current_principal, require_roles
 from app.db.session import get_db
 from app.services.idempotency_service import IdempotencyService
+from app.services.operation_lock_service import OperationLockService
 from app.models.domain import Document, ProcessingJob, Tender, TenderRequirement
 from app.schemas.canonical import (
     AuthenticatedPrincipal,
@@ -119,22 +120,6 @@ async def process_tender(
         return JSONResponse(status_code=cached_code, content=cached_json)
 
     try:
-        # Check for existing active processing job
-        existing_job = (
-            db.query(ProcessingJob)
-            .filter(
-                ProcessingJob.target_id == id,
-                ProcessingJob.job_type == "EXTRACT_REQUIREMENTS",
-                ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
-            )
-            .first()
-        )
-        if existing_job:
-            IdempotencyService.attach_job(db, record, existing_job.id)
-            res_payload = JobRead.model_validate(existing_job).model_dump(mode="json")
-            IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
-            return existing_job
-
         job = ProcessingJob(
             target_type="TENDER",
             target_id=id,
@@ -147,6 +132,23 @@ async def process_tender(
         db.commit()
         db.refresh(job)
         IdempotencyService.attach_job(db, record, job.id)
+
+        # Acquire resource-level active operation lock
+        try:
+            OperationLockService.acquire_lock(
+                db=db,
+                resource_type="TENDER",
+                resource_id=id,
+                operation="PROCESS_TENDER",
+                job_id=job.id,
+                principal_id=principal.user_id,
+            )
+        except HTTPException:
+            db.delete(job)
+            if record:
+                db.delete(record)
+            db.commit()
+            raise
 
         AuditLogger.log(
             db,
@@ -382,9 +384,13 @@ async def process_tender(
         res_payload = JobRead.model_validate(job).model_dump(mode="json")
         IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
         return job
+    except HTTPException:
+        raise
     except Exception:
         IdempotencyService.fail(db, record)
         raise
+    finally:
+        OperationLockService.release_lock(db, "TENDER", id, "PROCESS_TENDER", job.id)
 
 
 

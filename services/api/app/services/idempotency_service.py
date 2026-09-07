@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
@@ -132,6 +133,16 @@ class IdempotencyService:
             if existing.status == "COMPLETED":
                 return existing.response_json, existing.response_code or 200, existing
 
+            if existing.status == "FAILED":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "OPERATION_FAILED",
+                        "message": "The operation linked to this idempotency key previously failed. An explicit new attempt with a new idempotency key is required.",
+                        "details": {"key": key, "job_id": existing.job_id},
+                    },
+                )
+
             if existing.status == "PROCESSING":
                 if existing.job_id:
                     job = db.query(ProcessingJob).filter(ProcessingJob.id == existing.job_id).first()
@@ -147,14 +158,19 @@ class IdempotencyService:
                     elif job and job.status == JobStatus.COMPLETED and existing.response_json:
                         return existing.response_json, existing.response_code or 200, existing
                     elif job and job.status == JobStatus.FAILED:
-                        # Crashed / failed job recovery: allow retry to reset and proceed
-                        existing.status = "PROCESSING"
-                        existing.response_code = None
-                        existing.response_json = None
-                        existing.job_id = None
+                        existing.status = "FAILED"
                         db.commit()
-                        db.refresh(existing)
-                        return None, None, existing
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail={
+                                "code": "OPERATION_FAILED",
+                                "message": "The operation linked to this idempotency key previously failed. An explicit new attempt with a new idempotency key is required.",
+                                "details": {"key": key, "job_id": job.id, "error_message": job.error_message},
+                            },
+                        )
+                else:
+                    # Stale reservation where no background job or business operation started
+                    return None, None, existing
 
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
