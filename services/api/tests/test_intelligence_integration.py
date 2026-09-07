@@ -79,6 +79,10 @@ async def test_ai_adapter_tender_extraction_success(monkeypatch):
         return httpx.Response(
             200,
             json={
+                "contract_version": "1.0",
+                "request_id": (json or {}).get("request_id", "req123"),
+                "document_id": (json or {}).get("document_id", "doc1"),
+                "document_sha256": (json or {}).get("document_sha256", "abc123sha"),
                 "status": "COMPLETED",
                 "provider_model": "gemini-2.5-pro",
                 "requirements": [
@@ -123,7 +127,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(400, json={"error": "Bad payload"})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_400)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
     assert res.success is False
     assert res.error_code == "AI_SERVICE_REQUEST_REJECTED"
 
@@ -132,7 +136,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(401, json={"error": "Unauthorized"})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_401)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
     assert res.success is False
     assert res.error_code == "AI_SERVICE_AUTH_ERROR"
 
@@ -141,7 +145,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(404)
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_404)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
     assert res.success is False
     assert res.error_code == "AI_SERVICE_ENDPOINT_NOT_FOUND"
 
@@ -150,7 +154,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(500)
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_500)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
 
@@ -159,7 +163,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(200, text="NOT_JSON_PAYLOAD")
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_invalid)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
     assert res.success is False
     assert res.error_code == "SCHEMA_VALIDATION_FAILED"
 
@@ -197,6 +201,10 @@ def test_process_tender_requirements_extraction_flow(monkeypatch):
         return httpx.Response(
             200,
             json={
+                "contract_version": "1.0",
+                "request_id": (json or {}).get("request_id", "req123"),
+                "document_id": (json or {}).get("document_id", "doc1"),
+                "document_sha256": (json or {}).get("document_sha256", "abc"),
                 "status": "COMPLETED",
                 "provider_model": "gemini-2.5-pro",
                 "requirements": [
@@ -262,6 +270,10 @@ def test_ai_extraction_scrubs_model_supplied_authority(monkeypatch):
         return httpx.Response(
             200,
             json={
+                "contract_version": "1.0",
+                "request_id": (json or {}).get("request_id", "req123"),
+                "document_id": (json or {}).get("document_id", "doc1"),
+                "document_sha256": (json or {}).get("document_sha256", "abc"),
                 "status": "COMPLETED",
                 "provider_model": "rogue-llm-1.0",
                 "requirements": [
@@ -315,6 +327,10 @@ def test_officer_approval_workflow_and_idempotency(monkeypatch):
         return httpx.Response(
             200,
             json={
+                "contract_version": "1.0",
+                "request_id": (json or {}).get("request_id", "req123"),
+                "document_id": (json or {}).get("document_id", "doc1"),
+                "document_sha256": (json or {}).get("document_sha256", "abc"),
                 "status": "COMPLETED",
                 "provider_model": "gemini-2.5-pro",
                 "requirements": [
@@ -425,6 +441,10 @@ def test_compliance_execution_zero_approved_rules_fallback(monkeypatch):
         return httpx.Response(
             200,
             json={
+                "contract_version": "1.0",
+                "request_id": (json or {}).get("request_id", "req123"),
+                "document_id": (json or {}).get("document_id", "doc1"),
+                "document_sha256": (json or {}).get("document_sha256", "abc"),
                 "status": "COMPLETED",
                 "provider_model": "gemini-2.5-pro",
                 "requirements": [
@@ -532,6 +552,10 @@ def test_reprocessing_preserves_approved_requirements(monkeypatch):
         return httpx.Response(
             200,
             json={
+                "contract_version": "1.0",
+                "request_id": (json or {}).get("request_id", "req123"),
+                "document_id": (json or {}).get("document_id", "doc1"),
+                "document_sha256": (json or {}).get("document_sha256", "abc"),
                 "status": "COMPLETED",
                 "provider_model": "gemini-2.5-pro",
                 "requirements": [
@@ -608,6 +632,11 @@ def test_process_bidder_documents_extraction_and_partial_failure(monkeypatch):
             return httpx.Response(
                 200,
                 json={
+                    "contract_version": "1.0",
+                    "request_id": (json or {}).get("request_id", "req123"),
+                    "document_id": (json or {}).get("document_id", doc1_id),
+                    "document_sha256": (json or {}).get("document_sha256", "abc"),
+                    "bidder_id": (json or {}).get("bidder_id", bidder_id),
                     "status": "COMPLETED",
                     "provider_model": "gemini-2.5-pro",
                     "facts": [
@@ -630,7 +659,7 @@ def test_process_bidder_documents_extraction_and_partial_failure(monkeypatch):
     assert proc_res.status_code == 200
     job = proc_res.json()
 
-    assert job["status"] == JobStatus.COMPLETED.value
+    assert job["status"] == JobStatus.REVIEW_REQUIRED.value
     assert "Partial extraction completion" in job["error_message"]
 
 
@@ -733,13 +762,14 @@ async def test_ai_adapter_envelope_mismatches(monkeypatch):
                 "contract_version": "2.0",
                 "request_id": json["request_id"],
                 "document_id": json["document_id"],
+                "document_sha256": json["document_sha256"],
                 "status": "SUCCESS",
                 "requirements": [],
             },
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_contract)
-    res1 = await adapter.extract_tender(tender_id="t1", document_id="doc1", request_id="req123")
+    res1 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes", request_id="req123")
     assert res1.success is False
     assert res1.error_code == "CONTRACT_MISMATCH"
 
@@ -751,13 +781,14 @@ async def test_ai_adapter_envelope_mismatches(monkeypatch):
                 "contract_version": "1.0",
                 "request_id": "WRONG_REQ_ID",
                 "document_id": json["document_id"],
+                "document_sha256": json["document_sha256"],
                 "status": "SUCCESS",
                 "requirements": [],
             },
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_req_id)
-    res2 = await adapter.extract_tender(tender_id="t1", document_id="doc1", request_id="req123")
+    res2 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes", request_id="req123")
     assert res2.success is False
     assert res2.error_code == "REQUEST_ID_MISMATCH"
 
@@ -769,13 +800,14 @@ async def test_ai_adapter_envelope_mismatches(monkeypatch):
                 "contract_version": "1.0",
                 "request_id": json["request_id"],
                 "document_id": "WRONG_DOC_ID",
+                "document_sha256": json["document_sha256"],
                 "status": "SUCCESS",
                 "requirements": [],
             },
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_doc_id)
-    res3 = await adapter.extract_tender(tender_id="t1", document_id="doc1", request_id="req123")
+    res3 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes", request_id="req123")
     assert res3.success is False
     assert res3.error_code == "DOCUMENT_ID_MISMATCH"
 
@@ -790,7 +822,7 @@ async def test_ai_adapter_read_timeout_not_retried(monkeypatch):
         raise httpx.ReadTimeout("Read timed out after 15s")
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_read_timeout)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
     assert res.retryable is False
@@ -807,8 +839,7 @@ def test_process_tender_missing_document_fails():
     proc_res = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers)
     assert proc_res.status_code == 200
     job = proc_res.json()
-    assert job["status"] == JobStatus.FAILED.value
-    assert "Missing tender raw_document_uri" in job["error_message"]
+    assert "Tender processing requires a persisted document record" in job["error_message"]
 
 
 def test_process_tender_document_sha256_mismatch_fails(monkeypatch):
@@ -878,4 +909,161 @@ def test_create_manual_requirement_cross_tender_document_rejected():
     res_json = req_res.json()
     err_text = str(res_json.get("detail") or res_json.get("error", {}).get("message", ""))
     assert "document does not belong to tender" in err_text
+
+
+def test_process_bidder_reprocessing_preserves_unreferenced_facts(monkeypatch):
+    """Test that reprocessing bidder documents preserves old unreferenced ExtractedFact rows."""
+    headers = get_auth_headers(UserRole.PROCUREMENT_OFFICER)
+    client = TestClient(app)
+
+    t_res = client.post("/api/v1/tenders", json={"tender_number": "GEM/2026/FACT_PRESERV", "title": "Fact Preservation Tender"}, headers=headers)
+    tender_id = t_res.json()["id"]
+
+    b_res = client.post(f"/api/v1/tenders/{tender_id}/bidders", json={"bidder_name": "Fact Preservation Corp", "gstin": "27AAACA12341ZV"}, headers=headers)
+    bidder_id = b_res.json()["id"]
+
+    doc_res = client.post(
+        f"/api/v1/bidders/{bidder_id}/documents",
+        headers=headers,
+        files={"file": ("cert.pdf", b"%PDF-1.4 Fact Preserv Cert Bytes", "application/pdf")},
+        data={"document_type": DocumentType.GST_CERT.value},
+    )
+    doc_id = doc_res.json()["id"]
+
+    # Manually insert an old ExtractedFact not referenced by any RuleEvaluation evidence_ids
+    db: Session = next(get_db())
+    old_fact = ExtractedFact(
+        bidder_id=bidder_id,
+        document_id=doc_id,
+        field="historical.unreferenced_field",
+        value="OLD_UNREFERENCED_VALUE",
+        source_page=1,
+        source_text="Old unreferenced text",
+        confidence=0.88,
+    )
+    db.add(old_fact)
+    db.commit()
+    old_fact_id = old_fact.id
+    db.close()
+
+    # Mock AI response with a different new fact
+    async def mock_post_bidder(self, url, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1.0",
+                "request_id": (json or {}).get("request_id", "req123"),
+                "document_id": (json or {}).get("document_id", doc_id),
+                "document_sha256": (json or {}).get("document_sha256", "abc"),
+                "bidder_id": (json or {}).get("bidder_id", bidder_id),
+                "status": "COMPLETED",
+                "provider_model": "gemini-2.5-pro",
+                "facts": [
+                    {
+                        "field": "gstin",
+                        "value": "27AAACA12341ZV",
+                        "source_page": 1,
+                        "source_text": "GSTIN: 27AAACA12341ZV",
+                        "confidence": 0.99,
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bidder)
+
+    proc_res = client.post(f"/api/v1/bidders/{bidder_id}/process-documents", headers=headers)
+    assert proc_res.status_code == 200
+
+    # Verify old_fact is still intact in DB
+    db2: Session = next(get_db())
+    retrieved_fact = db2.query(ExtractedFact).filter(ExtractedFact.id == old_fact_id).first()
+    assert retrieved_fact is not None
+    assert retrieved_fact.value == "OLD_UNREFERENCED_VALUE"
+    db2.close()
+
+
+def test_process_bidder_missing_or_corrupt_doc_sha256_fails_closed(monkeypatch):
+    """Test that bidder processing fails closed when doc.sha256 is missing or corrupt."""
+    headers = get_auth_headers(UserRole.PROCUREMENT_OFFICER)
+    client = TestClient(app)
+
+    t_res = client.post("/api/v1/tenders", json={"tender_number": "GEM/2026/BIDDER_CORRUPT", "title": "Corrupt Doc Tender"}, headers=headers)
+    tender_id = t_res.json()["id"]
+
+    b_res = client.post(f"/api/v1/tenders/{tender_id}/bidders", json={"bidder_name": "Corrupt Doc Corp", "gstin": "27AAACA12341ZV"}, headers=headers)
+    bidder_id = b_res.json()["id"]
+
+    doc_res = client.post(
+        f"/api/v1/bidders/{bidder_id}/documents",
+        headers=headers,
+        files={"file": ("doc.pdf", b"%PDF-1.4 Bidder Doc Bytes", "application/pdf")},
+        data={"document_type": DocumentType.GST_CERT.value},
+    )
+    doc_id = doc_res.json()["id"]
+
+    # Clear recorded sha256 in DB
+    db: Session = next(get_db())
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    doc.sha256 = ""
+    db.commit()
+    db.close()
+
+    proc_res = client.post(f"/api/v1/bidders/{bidder_id}/process-documents", headers=headers)
+    assert proc_res.status_code == 200
+    job = proc_res.json()
+    assert job["status"] == JobStatus.FAILED.value
+    assert "extraction failed for all 1 documents" in job["error_message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_ai_adapter_bidder_envelope_mismatches(monkeypatch):
+    adapter = AIServiceAdapter()
+
+    # Case: Bidder ID mismatch
+    async def mock_post_bad_bidder_id(self, url, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1.0",
+                "request_id": json["request_id"],
+                "document_id": json["document_id"],
+                "document_sha256": json["document_sha256"],
+                "bidder_id": "WRONG_BIDDER_999",
+                "status": "SUCCESS",
+                "facts": [],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_bidder_id)
+    res = await adapter.extract_document(
+        bidder_id="real_bidder_123",
+        document_id="doc1",
+        document_type="GST_CERT",
+        document_sha256="abc",
+        file_bytes=b"bytes",
+        filename="f.pdf",
+        content_type="application/pdf",
+        request_id="req123",
+    )
+    assert res.success is False
+    assert res.error_code == "BIDDER_ID_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_ai_adapter_error_message_scrubbing(monkeypatch):
+    adapter = AIServiceAdapter()
+
+    async def mock_post_leaky_exception(self, url, headers=None, json=None):
+        raise httpx.ConnectError("Failed to connect to http://secret-internal-service.local/key=sk-1234567890secret")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_leaky_exception)
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
+    assert res.success is False
+    assert res.error_code == "AI_SERVICE_UNAVAILABLE"
+    # Ensure sensitive string is scrubbed from res.message
+    assert "sk-1234567890" not in res.message
+    assert "secret-internal-service" not in res.message
+    assert res.message == "Intelligence service connection failed."
+
 

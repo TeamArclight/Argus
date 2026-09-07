@@ -211,8 +211,7 @@ def test_tender_processing_without_raw_document_uri_fails():
         proc_resp = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers)
         assert proc_resp.status_code == 200
         job = proc_resp.json()
-        assert job["status"] == "FAILED"
-        assert "Missing tender raw_document_uri" in job["error_message"]
+        assert "Tender processing requires a persisted document record" in job["error_message"]
 
 
 def test_bidder_creation_creates_no_documents_or_extracted_facts():

@@ -67,11 +67,21 @@ def test_end_to_end_p0_workflow(monkeypatch):
         tender_id = tender["id"]
         assert tender["tender_number"] == "GEM/2026/B/882190"
 
+        # 1.5 Upload Tender Document
+        pdf_bytes = b"%PDF-1.4 HPC Cluster Procurement Specifications"
+        doc_resp = client.post(
+            f"/api/v1/tenders/{tender_id}/documents",
+            headers=headers,
+            files={"file": ("tender_notice.pdf", pdf_bytes, "application/pdf")},
+            data={"document_type": "TENDER"},
+        )
+        assert doc_resp.status_code == 201
+
         # 2. Extract Requirements (mock intelligence service response for e2e workflow)
         from app.schemas.canonical import AIServiceResult, RequirementType, OperatorEnum
         from app.api.v1.tenders import ai_adapter as tender_ai_adapter
 
-        async def mock_extract_tender(tender_id, document_uri="", **kwargs):
+        async def mock_extract_tender(*args, **kwargs):
             return AIServiceResult(
                 success=True,
                 data=[

@@ -559,12 +559,12 @@ class AIResponseEnvelope(BaseModel):
     """Strict schema envelope for intelligence service HTTP responses."""
     model_config = ConfigDict(extra="ignore")
 
-    contract_version: str = "1.0"
-    request_id: str | None = None
-    document_id: str | None = None
-    document_sha256: str | None = None
+    contract_version: str
+    request_id: str
+    document_id: str
+    document_sha256: str
+    status: str
     bidder_id: str | None = None
-    status: str = "SUCCESS"
     requirements: list[dict[str, Any]] | None = None
     facts: list[dict[str, Any]] | None = None
     provider_model: str | None = None

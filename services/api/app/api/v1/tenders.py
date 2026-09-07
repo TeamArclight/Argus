@@ -144,12 +144,12 @@ async def process_tender(
         payload={"job_id": job.id},
     )
 
-    # Select tender document from DB or raw_document_uri
+    # Require real persisted Document row with valid SHA-256 digest
     doc = db.query(Document).filter(Document.tender_id == id).order_by(Document.created_at.desc()).first()
 
-    if not doc and not tender.raw_document_uri:
+    if not doc or not doc.sha256 or not doc.sha256.strip():
         job.status = JobStatus.FAILED
-        job.error_message = "Missing tender raw_document_uri: cannot process tender without document."
+        job.error_message = "Tender processing requires a persisted document record with a valid recorded SHA-256 digest."
         job.progress = 100
         job.completed_at = datetime.now(timezone.utc)
         tender.status = JobStatus.FAILED
@@ -166,74 +166,69 @@ async def process_tender(
         )
         return job
 
-    document_id = doc.id if doc else f"doc_tender_{id}"
-    document_uri = doc.storage_uri if doc else (tender.raw_document_uri or "")
-    document_sha256 = doc.sha256 if doc else None
-    filename = doc.filename if doc else None
-    content_type = doc.content_type if doc else None
-    file_bytes = None
-
     storage = get_storage_provider()
-    if doc and doc.storage_uri:
-        if not storage.file_exists(doc.storage_uri):
-            job.status = JobStatus.FAILED
-            job.error_message = "Tender document file not found in storage."
-            job.progress = 100
-            job.completed_at = datetime.now(timezone.utc)
-            tender.status = JobStatus.FAILED
-            db.commit()
+    if not doc.storage_uri or not storage.file_exists(doc.storage_uri):
+        job.status = JobStatus.FAILED
+        job.error_message = "Tender document file not found in storage."
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+        tender.status = JobStatus.FAILED
+        db.commit()
 
-            AuditLogger.log(
-                db,
-                action="TENDER_EXTRACTION_FAILED",
-                entity_type="TENDER",
-                entity_id=id,
-                actor_id=principal.user_id,
-                actor_role=principal.role.value,
-                payload={"job_id": job.id, "error_code": "DOCUMENT_FILE_NOT_FOUND"},
-            )
-            return job
+        AuditLogger.log(
+            db,
+            action="TENDER_EXTRACTION_FAILED",
+            entity_type="TENDER",
+            entity_id=id,
+            actor_id=principal.user_id,
+            actor_role=principal.role.value,
+            payload={"job_id": job.id, "error_code": "DOCUMENT_FILE_NOT_FOUND"},
+        )
+        return job
 
-        try:
-            file_bytes = storage.read_file(doc.storage_uri)
-        except Exception as e:
-            job.status = JobStatus.FAILED
-            job.error_message = f"Failed to read tender document from storage: {e}"
-            job.progress = 100
-            job.completed_at = datetime.now(timezone.utc)
-            tender.status = JobStatus.FAILED
-            db.commit()
+    try:
+        file_bytes = storage.read_file(doc.storage_uri)
+    except Exception:
+        file_bytes = None
 
-            AuditLogger.log(
-                db,
-                action="TENDER_EXTRACTION_FAILED",
-                entity_type="TENDER",
-                entity_id=id,
-                actor_id=principal.user_id,
-                actor_role=principal.role.value,
-                payload={"job_id": job.id, "error_code": "STORAGE_READ_ERROR"},
-            )
-            return job
+    if not file_bytes:
+        job.status = JobStatus.FAILED
+        job.error_message = "Unreadable or empty tender document file in storage."
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+        tender.status = JobStatus.FAILED
+        db.commit()
 
-        computed_sha256 = hashlib.sha256(file_bytes).hexdigest()
-        if doc.sha256 and computed_sha256 != doc.sha256:
-            job.status = JobStatus.FAILED
-            job.error_message = f"Document SHA-256 hash mismatch: expected {doc.sha256}, got {computed_sha256}."
-            job.progress = 100
-            job.completed_at = datetime.now(timezone.utc)
-            tender.status = JobStatus.FAILED
-            db.commit()
+        AuditLogger.log(
+            db,
+            action="TENDER_EXTRACTION_FAILED",
+            entity_type="TENDER",
+            entity_id=id,
+            actor_id=principal.user_id,
+            actor_role=principal.role.value,
+            payload={"job_id": job.id, "error_code": "STORAGE_READ_ERROR"},
+        )
+        return job
 
-            AuditLogger.log(
-                db,
-                action="TENDER_EXTRACTION_FAILED",
-                entity_type="TENDER",
-                entity_id=id,
-                actor_id=principal.user_id,
-                actor_role=principal.role.value,
-                payload={"job_id": job.id, "error_code": "DOCUMENT_INTEGRITY_MISMATCH"},
-            )
-            return job
+    computed_sha256 = hashlib.sha256(file_bytes).hexdigest()
+    if computed_sha256 != doc.sha256:
+        job.status = JobStatus.FAILED
+        job.error_message = "Document SHA-256 hash mismatch."
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+        tender.status = JobStatus.FAILED
+        db.commit()
+
+        AuditLogger.log(
+            db,
+            action="TENDER_EXTRACTION_FAILED",
+            entity_type="TENDER",
+            entity_id=id,
+            actor_id=principal.user_id,
+            actor_role=principal.role.value,
+            payload={"job_id": job.id, "error_code": "DOCUMENT_INTEGRITY_MISMATCH"},
+        )
+        return job
 
     req_id = str(uuid.uuid4())
     AuditLogger.log(
@@ -243,17 +238,17 @@ async def process_tender(
         entity_id=id,
         actor_id=principal.user_id,
         actor_role=principal.role.value,
-        payload={"job_id": job.id, "request_id": req_id, "document_id": document_id},
+        payload={"job_id": job.id, "request_id": req_id, "document_id": doc.id},
     )
 
     ai_result = await ai_adapter.extract_tender(
         tender_id=id,
-        document_uri=document_uri,
-        document_id=document_id,
-        document_sha256=document_sha256,
+        document_id=doc.id,
+        document_sha256=doc.sha256,
         file_bytes=file_bytes,
-        filename=filename,
-        content_type=content_type,
+        document_uri=doc.storage_uri,
+        filename=doc.filename,
+        content_type=doc.content_type,
         request_id=req_id,
     )
 
@@ -303,8 +298,6 @@ async def process_tender(
         for r in existing_reqs
     }
 
-    doc_id_val = doc.id if doc else None
-
     new_count = 0
     for item in ai_result.data:
         req_obj = TenderRequirementCreate.model_validate(item)
@@ -319,7 +312,7 @@ async def process_tender(
             _norm_val(req_obj.expected_value),
             req_obj.unit or "",
             bool(req_obj.mandatory),
-            doc_id_val,
+            doc.id,
         )
 
         if item_key in existing_keys:
@@ -327,7 +320,7 @@ async def process_tender(
 
         db_req = TenderRequirement(
             tender_id=id,
-            document_id=doc_id_val,
+            document_id=doc.id,
             clause=req_obj.clause,
             requirement_type=req_obj.requirement_type,
             field=req_obj.field,

@@ -615,44 +615,75 @@ async def process_bidder_documents(
     successful_docs = 0
     failed_docs = 0
 
-    # Collect referenced fact IDs to preserve historical compliance evidence
-    referenced_evals = db.query(RuleEvaluation.evidence_ids).filter(RuleEvaluation.bidder_id == bidder_id).all()
-    referenced_fact_ids = set()
-    for row in referenced_evals:
-        if row[0] and isinstance(row[0], list):
-            referenced_fact_ids.update(row[0])
-
     for doc in documents:
-        file_bytes = None
-        if doc.storage_uri and storage.file_exists(doc.storage_uri):
-            try:
-                file_bytes = storage.read_file(doc.storage_uri)
-            except Exception:
-                file_bytes = None
+        if not doc.sha256 or not doc.sha256.strip():
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "MISSING_BIDDER_DOCUMENT"},
+            )
+            continue
 
-        if file_bytes is not None:
-            computed_sha256 = hashlib.sha256(file_bytes).hexdigest()
-            if doc.sha256 and computed_sha256 != doc.sha256:
-                failed_docs += 1
-                AuditLogger.log(
-                    db,
-                    action="DOCUMENT_EXTRACTION_FAILED",
-                    entity_type="DOCUMENT",
-                    entity_id=doc.id,
-                    actor_id=principal.user_id,
-                    actor_role=principal.role.value,
-                    payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "DOCUMENT_INTEGRITY_MISMATCH"},
-                )
-                continue
+        if not doc.storage_uri or not storage.file_exists(doc.storage_uri):
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "DOCUMENT_FILE_NOT_FOUND"},
+            )
+            continue
+
+        file_bytes = None
+        try:
+            file_bytes = storage.read_file(doc.storage_uri)
+        except Exception:
+            file_bytes = None
+
+        if not file_bytes:
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "STORAGE_READ_ERROR"},
+            )
+            continue
+
+        computed_sha256 = hashlib.sha256(file_bytes).hexdigest()
+        if computed_sha256 != doc.sha256:
+            failed_docs += 1
+            AuditLogger.log(
+                db,
+                action="DOCUMENT_EXTRACTION_FAILED",
+                entity_type="DOCUMENT",
+                entity_id=doc.id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "DOCUMENT_INTEGRITY_MISMATCH"},
+            )
+            continue
 
         doc_type_val = doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type)
 
         ai_res = await ai_adapter.extract_document(
             document_id=doc.id,
-            bidder_id=bidder_id,
-            document_type=doc_type_val,
             document_sha256=doc.sha256,
+            bidder_id=bidder_id,
             file_bytes=file_bytes,
+            document_uri=doc.storage_uri,
+            document_type=doc_type_val,
             filename=doc.filename,
             content_type=doc.content_type,
             request_id=req_id,
@@ -673,21 +704,25 @@ async def process_bidder_documents(
 
         successful_docs += 1
         
-        # Non-destructive reprocessing: delete only unreferenced existing facts for this document
+        # Non-destructive reprocessing: preserve ALL existing facts, non-destructive deduplication for new facts
+        def _norm_fact_val(v: Any) -> str:
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return str(float(v))
+            return str(v)
+
         existing_facts = db.query(ExtractedFact).filter(ExtractedFact.document_id == doc.id).all()
-        for f in existing_facts:
-            if f.id not in referenced_fact_ids:
-                db.delete(f)
+        existing_fact_keys = {
+            (f.field, _norm_fact_val(f.value), f.source_page, f.source_text or "")
+            for f in existing_facts
+        }
 
         for item in ai_res.data:
             fact_obj = ExtractedFactCreate.model_validate(item)
-            
-            # Truthful provenance metadata
+            item_key = (fact_obj.field, _norm_fact_val(fact_obj.value), fact_obj.source_page, fact_obj.source_text or "")
+            if item_key in existing_fact_keys:
+                continue
+
             meta = fact_obj.metadata_json or {}
-            meta.setdefault("request_id", req_id)
-            meta.setdefault("document_id", doc.id)
-            if doc.sha256:
-                meta.setdefault("document_sha256", doc.sha256)
 
             db_fact = ExtractedFact(
                 document_id=doc.id,
@@ -700,6 +735,7 @@ async def process_bidder_documents(
                 metadata_json=meta,
             )
             db.add(db_fact)
+            existing_fact_keys.add(item_key)
 
         AuditLogger.log(
             db,
@@ -715,9 +751,10 @@ async def process_bidder_documents(
         job.status = JobStatus.COMPLETED
         job.progress = 100
         job.completed_at = datetime.now(timezone.utc)
+        job.error_message = None
     elif successful_docs > 0:
-        job.status = JobStatus.COMPLETED
-        job.error_message = f"Partial extraction completion: {successful_docs}/{total_docs} documents processed successfully."
+        job.status = JobStatus.REVIEW_REQUIRED
+        job.error_message = f"Partial extraction completion: {successful_docs}/{total_docs} documents processed successfully ({failed_docs} failed). Officer review required."
         job.progress = 100
         job.completed_at = datetime.now(timezone.utc)
     else:

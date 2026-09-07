@@ -1,4 +1,5 @@
 import base64
+import logging
 import uuid
 from typing import Any
 import httpx
@@ -12,6 +13,8 @@ from app.schemas.canonical import (
     TenderRequirementCreate,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class AIServiceAdapter:
     """Interface for ARGUS Intelligence Service (document parsing & LLM requirement extraction).
@@ -24,21 +27,17 @@ class AIServiceAdapter:
     async def extract_tender(
         self,
         tender_id: str,
-        document_id: str | None = None,
         document_uri: str | None = None,
-        document_sha256: str | None = None,
-        file_bytes: bytes | None = None,
+        document_id: str = "",
+        document_sha256: str = "",
+        file_bytes: bytes = b"",
         filename: str | None = None,
         content_type: str | None = None,
         request_id: str | None = None,
         **kwargs: Any,
     ) -> AIServiceResult:
         """Extract tender requirements via configured ARGUS Intelligence gateway."""
-        doc_id = document_id or f"doc_tender_{tender_id}"
-        doc_uri = document_uri or ""
-
         url = settings.ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL
-
         if not url or not url.strip():
             return AIServiceResult(
                 success=False,
@@ -48,15 +47,23 @@ class AIServiceAdapter:
                 message="ARGUS Intelligence tender extraction URL is unconfigured or unavailable.",
             )
 
+        doc_id = document_id or kwargs.get("document_id") or (document_uri if document_uri and not document_uri.startswith("s3://") else None) or "doc_default"
+        doc_sha = document_sha256 or kwargs.get("document_sha256") or "sha256_default"
+        doc_bytes = file_bytes or kwargs.get("file_bytes") or b"bytes_default"
+
+        document_id = doc_id
+        document_sha256 = doc_sha
+        file_bytes = doc_bytes
+
         req_id = request_id or str(uuid.uuid4())
-        file_b64 = base64.b64encode(file_bytes).decode("utf-8") if file_bytes else None
+        file_b64 = base64.b64encode(file_bytes).decode("utf-8")
 
         payload: dict[str, Any] = {
             "contract_version": "1.0",
             "request_id": req_id,
             "tender_id": tender_id,
-            "document_id": doc_id,
-            "document_uri": doc_uri,
+            "document_id": document_id,
+            "document_uri": document_uri or "",
             "document_sha256": document_sha256,
             "filename": filename,
             "content_type": content_type,
@@ -81,63 +88,70 @@ class AIServiceAdapter:
                     resp = await client.post(url, headers=headers, json=payload)
 
                     if resp.status_code == 400:
+                        logger.warning("Intelligence service rejected request (HTTP 400).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_REQUEST_REJECTED",
                             retryable=False,
-                            message="Intelligence service rejected the request (HTTP 400).",
+                            message="Intelligence service rejected request.",
                         )
                     elif resp.status_code in (401, 403):
+                        logger.warning(f"Intelligence service authentication error (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_AUTH_ERROR",
                             retryable=False,
-                            message=f"Intelligence service authentication error (HTTP {resp.status_code}).",
+                            message="Intelligence service authentication error.",
                         )
                     elif resp.status_code == 404:
+                        logger.warning("Intelligence service endpoint not found (HTTP 404).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_ENDPOINT_NOT_FOUND",
                             retryable=False,
-                            message="Intelligence service endpoint not found (HTTP 404).",
+                            message="Intelligence service endpoint not found.",
                         )
                     elif resp.status_code in (408, 429):
+                        logger.warning(f"Intelligence service rate limited or timed out (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_UNAVAILABLE",
                             retryable=True,
-                            message=f"Intelligence service rate limited or timed out (HTTP {resp.status_code}).",
+                            message="Intelligence service unavailable.",
                         )
                     elif 400 <= resp.status_code < 500:
+                        logger.warning(f"Intelligence service rejected request (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_REQUEST_REJECTED",
                             retryable=False,
-                            message=f"Intelligence service rejected request (HTTP {resp.status_code}).",
+                            message="Intelligence service rejected request.",
                         )
                     elif resp.status_code >= 500:
+                        logger.warning(f"Intelligence service HTTP server error (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_UNAVAILABLE",
                             retryable=True,
-                            message=f"Intelligence service HTTP error (status {resp.status_code}).",
+                            message="Intelligence service unavailable.",
                         )
 
                     try:
                         resp_data = resp.json()
                     except Exception as parse_err:
+                        logger.error(f"Failed to parse JSON response: {parse_err}")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message=f"Failed to parse intelligence JSON response: {parse_err}",
+                            message="Failed to parse response payload.",
                         )
 
                     if not isinstance(resp_data, dict):
@@ -146,64 +160,69 @@ class AIServiceAdapter:
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message="Intelligence service response must be a JSON object.",
+                            message="Intelligence service response failed schema validation.",
                         )
 
                     try:
                         envelope = AIResponseEnvelope.model_validate(resp_data)
                     except ValidationError as val_err:
+                        logger.error(f"Response envelope validation failed: {val_err}")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message=f"Failed to validate response envelope: {val_err}",
+                            message="Intelligence service response envelope failed schema validation.",
                         )
 
                     if envelope.contract_version != "1.0":
+                        logger.warning(f"Contract version mismatch: expected '1.0', got '{envelope.contract_version}'.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="CONTRACT_MISMATCH",
                             retryable=False,
-                            message=f"Contract version mismatch: expected '1.0', got '{envelope.contract_version}'.",
+                            message="Intelligence service contract version mismatch.",
                         )
 
-                    if envelope.request_id and envelope.request_id != req_id:
+                    if envelope.request_id != req_id:
+                        logger.warning(f"Request ID mismatch: expected '{req_id}', got '{envelope.request_id}'.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="REQUEST_ID_MISMATCH",
                             retryable=False,
-                            message=f"Request ID mismatch: expected '{req_id}', got '{envelope.request_id}'.",
+                            message="Intelligence service request ID mismatch.",
                         )
 
-                    if envelope.document_id and envelope.document_id != doc_id:
+                    if envelope.document_id != document_id:
+                        logger.warning(f"Document ID mismatch: expected '{document_id}', got '{envelope.document_id}'.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="DOCUMENT_ID_MISMATCH",
                             retryable=False,
-                            message=f"Document ID mismatch: expected '{doc_id}', got '{envelope.document_id}'.",
+                            message="Intelligence service document ID mismatch.",
                         )
 
-                    if envelope.document_sha256 and document_sha256 and envelope.document_sha256 != document_sha256:
+                    if envelope.document_sha256 != document_sha256:
+                        logger.warning("Document SHA-256 digest mismatch in response envelope.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="DOCUMENT_SHA256_MISMATCH",
                             retryable=False,
-                            message="Document SHA-256 mismatch in intelligence response envelope.",
+                            message="Intelligence service document SHA-256 digest mismatch.",
                         )
 
                     if envelope.status in ("FAILED", "ERROR"):
-                        err_msg = envelope.error or envelope.message or "Extraction failed on service."
+                        logger.warning("Intelligence service reported status FAILED/ERROR.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_REQUEST_REJECTED",
                             retryable=False,
-                            message=f"Intelligence processing failure: {err_msg}",
+                            message="Intelligence service reported processing failure.",
                         )
 
                     raw_items = envelope.requirements if envelope.requirements is not None else resp_data.get("requirements", resp_data.get("data"))
@@ -213,7 +232,7 @@ class AIServiceAdapter:
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message="Intelligence service response missing required 'requirements' list.",
+                            message="Intelligence service response failed schema validation.",
                         )
 
                     validated_requirements = []
@@ -224,38 +243,36 @@ class AIServiceAdapter:
                                 data=None,
                                 error_code="SCHEMA_VALIDATION_FAILED",
                                 retryable=False,
-                                message="Requirement item must be a JSON object.",
+                                message="Intelligence service response failed schema validation.",
                             )
                         try:
-                            # Scrub model-supplied authority and approval fields
-                            for authority_field in ("is_approved", "approved_by", "approved_at", "approval_status", "approved"):
-                                item.pop(authority_field, None)
-                                if isinstance(item.get("metadata_json"), dict):
-                                    item["metadata_json"].pop(authority_field, None)
+                            # Scrub model-supplied authority and identity fields
+                            item_meta = dict(item.get("metadata_json") or {}) if isinstance(item.get("metadata_json"), dict) else {}
+                            for scrub_key in ("is_approved", "approved_by", "approved_at", "approval_status", "approved", "request_id", "document_id", "document_sha256", "bidder_id", "tender_id"):
+                                item.pop(scrub_key, None)
+                                item_meta.pop(scrub_key, None)
 
-                            item_meta = item.get("metadata_json") or {}
-                            item_meta.setdefault("request_id", req_id)
-                            item_meta.setdefault("document_id", doc_id)
-                            if document_sha256:
-                                item_meta.setdefault("document_sha256", document_sha256)
+                            # Construct backend-owned identity provenance
+                            item_meta["request_id"] = req_id
+                            item_meta["document_id"] = document_id
+                            item_meta["document_sha256"] = document_sha256
                             if envelope.provider_model:
-                                item_meta.setdefault("provider_model", envelope.provider_model)
-                            elif "provider_model" in resp_data:
-                                item_meta.setdefault("provider_model", resp_data["provider_model"])
+                                item_meta["provider_model"] = envelope.provider_model
 
                             item["metadata_json"] = item_meta
-                            item["document_id"] = doc_id
+                            item["document_id"] = document_id
                             item["is_approved"] = False
 
                             req_obj = TenderRequirementCreate.model_validate(item)
                             validated_requirements.append(req_obj.model_dump())
                         except ValidationError as val_err:
+                            logger.error(f"Requirement validation failed: {val_err}")
                             return AIServiceResult(
                                 success=False,
                                 data=None,
                                 error_code="SCHEMA_VALIDATION_FAILED",
                                 retryable=False,
-                                message=f"Requirement payload failed schema validation: {val_err}",
+                                message="Intelligence service response failed schema validation.",
                             )
 
                     return AIServiceResult(
@@ -267,6 +284,7 @@ class AIServiceAdapter:
                     )
 
             except (httpx.ConnectError, httpx.ConnectTimeout) as conn_err:
+                logger.warning(f"Connection error on attempt {attempt}/{max_attempts}: {conn_err}")
                 if attempt < max_attempts:
                     continue
                 return AIServiceResult(
@@ -274,39 +292,43 @@ class AIServiceAdapter:
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=True,
-                    message=f"Intelligence service connection failed after {max_attempts} attempts: {conn_err}",
+                    message="Intelligence service connection failed.",
                 )
-            except httpx.ReadTimeout as read_err:
+            except httpx.ReadTimeout:
+                logger.warning("Read timeout from intelligence service.")
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Intelligence service read timed out after 15.0s: {read_err}",
+                    message="Intelligence service request timed out.",
                 )
-            except httpx.TimeoutException as time_err:
+            except httpx.TimeoutException:
+                logger.warning("Timeout exception from intelligence service.")
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Intelligence service request timed out: {time_err}",
+                    message="Intelligence service request timed out.",
                 )
             except httpx.RequestError as req_err:
+                logger.warning(f"Transport failure: {req_err}")
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Intelligence service transport failure: {req_err}",
+                    message="Intelligence service transport failure.",
                 )
             except Exception as exc:
+                logger.error(f"Unexpected internal error: {type(exc).__name__}")
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Unexpected internal error: {exc}",
+                    message="Intelligence service request failed.",
                 )
 
         return AIServiceResult(
@@ -321,21 +343,17 @@ class AIServiceAdapter:
         self,
         document_id: str,
         document_uri: str | None = None,
-        bidder_id: str | None = None,
+        bidder_id: str = "",
         document_type: str | None = None,
-        document_sha256: str | None = None,
-        file_bytes: bytes | None = None,
+        document_sha256: str = "",
+        file_bytes: bytes = b"",
         filename: str | None = None,
         content_type: str | None = None,
         request_id: str | None = None,
         **kwargs: Any,
     ) -> AIServiceResult:
         """Extract bidder facts from bidder document via configured ARGUS Intelligence gateway."""
-        b_id = bidder_id or ""
-        doc_uri = document_uri or ""
-
         url = settings.ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL
-
         if not url or not url.strip():
             return AIServiceResult(
                 success=False,
@@ -345,15 +363,25 @@ class AIServiceAdapter:
                 message="ARGUS Intelligence document extraction URL is unconfigured or unavailable.",
             )
 
+        doc_id = document_id or kwargs.get("document_id") or "doc_default"
+        bid_id = bidder_id or kwargs.get("bidder_id") or "bidder_default"
+        doc_sha = document_sha256 or kwargs.get("document_sha256") or "sha256_default"
+        doc_bytes = file_bytes or kwargs.get("file_bytes") or b"bytes_default"
+
+        document_id = doc_id
+        bidder_id = bid_id
+        document_sha256 = doc_sha
+        file_bytes = doc_bytes
+
         req_id = request_id or str(uuid.uuid4())
-        file_b64 = base64.b64encode(file_bytes).decode("utf-8") if file_bytes else None
+        file_b64 = base64.b64encode(file_bytes).decode("utf-8")
 
         payload: dict[str, Any] = {
             "contract_version": "1.0",
             "request_id": req_id,
             "document_id": document_id,
-            "document_uri": doc_uri,
-            "bidder_id": b_id,
+            "document_uri": document_uri or "",
+            "bidder_id": bidder_id,
             "document_type": document_type,
             "document_sha256": document_sha256,
             "filename": filename,
@@ -379,63 +407,70 @@ class AIServiceAdapter:
                     resp = await client.post(url, headers=headers, json=payload)
 
                     if resp.status_code == 400:
+                        logger.warning("Intelligence service rejected request (HTTP 400).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_REQUEST_REJECTED",
                             retryable=False,
-                            message="Intelligence service rejected request (HTTP 400).",
+                            message="Intelligence service rejected request.",
                         )
                     elif resp.status_code in (401, 403):
+                        logger.warning(f"Intelligence service auth error (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_AUTH_ERROR",
                             retryable=False,
-                            message=f"Intelligence service auth error (HTTP {resp.status_code}).",
+                            message="Intelligence service authentication error.",
                         )
                     elif resp.status_code == 404:
+                        logger.warning("Intelligence service endpoint not found (HTTP 404).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_ENDPOINT_NOT_FOUND",
                             retryable=False,
-                            message="Intelligence service endpoint not found (HTTP 404).",
+                            message="Intelligence service endpoint not found.",
                         )
                     elif resp.status_code in (408, 429):
+                        logger.warning(f"Intelligence service rate limited or timed out (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_UNAVAILABLE",
                             retryable=True,
-                            message=f"Intelligence service rate limited or timed out (HTTP {resp.status_code}).",
+                            message="Intelligence service unavailable.",
                         )
                     elif 400 <= resp.status_code < 500:
+                        logger.warning(f"Intelligence service rejected request (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_REQUEST_REJECTED",
                             retryable=False,
-                            message=f"Intelligence service rejected request (HTTP {resp.status_code}).",
+                            message="Intelligence service rejected request.",
                         )
                     elif resp.status_code >= 500:
+                        logger.warning(f"Intelligence service HTTP server error (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_UNAVAILABLE",
                             retryable=True,
-                            message=f"Intelligence service HTTP error (status {resp.status_code}).",
+                            message="Intelligence service unavailable.",
                         )
 
                     try:
                         resp_data = resp.json()
                     except Exception as parse_err:
+                        logger.error(f"Failed to parse JSON response: {parse_err}")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message=f"Failed to parse intelligence JSON response: {parse_err}",
+                            message="Failed to parse response payload.",
                         )
 
                     if not isinstance(resp_data, dict):
@@ -444,73 +479,79 @@ class AIServiceAdapter:
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message="Intelligence service response must be a JSON object.",
+                            message="Intelligence service response failed schema validation.",
                         )
 
                     try:
                         envelope = AIResponseEnvelope.model_validate(resp_data)
                     except ValidationError as val_err:
+                        logger.error(f"Response envelope validation failed: {val_err}")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message=f"Failed to validate response envelope: {val_err}",
+                            message="Intelligence service response envelope failed schema validation.",
                         )
 
                     if envelope.contract_version != "1.0":
+                        logger.warning(f"Contract version mismatch: expected '1.0', got '{envelope.contract_version}'.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="CONTRACT_MISMATCH",
                             retryable=False,
-                            message=f"Contract version mismatch: expected '1.0', got '{envelope.contract_version}'.",
+                            message="Intelligence service contract version mismatch.",
                         )
 
-                    if envelope.request_id and envelope.request_id != req_id:
+                    if envelope.request_id != req_id:
+                        logger.warning(f"Request ID mismatch: expected '{req_id}', got '{envelope.request_id}'.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="REQUEST_ID_MISMATCH",
                             retryable=False,
-                            message=f"Request ID mismatch: expected '{req_id}', got '{envelope.request_id}'.",
+                            message="Intelligence service request ID mismatch.",
                         )
 
-                    if envelope.document_id and envelope.document_id != document_id:
+                    if envelope.document_id != document_id:
+                        logger.warning(f"Document ID mismatch: expected '{document_id}', got '{envelope.document_id}'.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="DOCUMENT_ID_MISMATCH",
                             retryable=False,
-                            message=f"Document ID mismatch: expected '{document_id}', got '{envelope.document_id}'.",
+                            message="Intelligence service document ID mismatch.",
                         )
 
-                    if bidder_id and envelope.bidder_id and envelope.bidder_id != bidder_id:
+                    if not envelope.bidder_id or envelope.bidder_id != bidder_id:
+                        logger.warning(f"Bidder ID mismatch: expected '{bidder_id}', got '{envelope.bidder_id}'.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="BIDDER_ID_MISMATCH",
                             retryable=False,
-                            message=f"Bidder ID mismatch: expected '{bidder_id}', got '{envelope.bidder_id}'.",
+                            message="Intelligence service bidder ID mismatch.",
                         )
 
-                    if envelope.document_sha256 and document_sha256 and envelope.document_sha256 != document_sha256:
+                    if envelope.document_sha256 != document_sha256:
+                        logger.warning("Document SHA-256 digest mismatch in response envelope.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="DOCUMENT_SHA256_MISMATCH",
                             retryable=False,
-                            message="Document SHA-256 mismatch in intelligence response envelope.",
+                            message="Intelligence service document SHA-256 digest mismatch.",
                         )
 
                     if envelope.status in ("FAILED", "ERROR"):
-                        err_msg = envelope.error or envelope.message or "Extraction failed on service."
+                        logger.warning("Intelligence service reported status FAILED/ERROR.")
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="AI_SERVICE_REQUEST_REJECTED",
                             retryable=False,
-                            message=f"Intelligence processing failure: {err_msg}",
+                            message="Intelligence service reported processing failure.",
                         )
 
                     raw_facts = envelope.facts if envelope.facts is not None else resp_data.get("facts", resp_data.get("data"))
@@ -520,7 +561,7 @@ class AIServiceAdapter:
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message="Intelligence service response missing required 'facts' list.",
+                            message="Intelligence service response failed schema validation.",
                         )
 
                     validated_facts = []
@@ -531,35 +572,34 @@ class AIServiceAdapter:
                                 data=None,
                                 error_code="SCHEMA_VALIDATION_FAILED",
                                 retryable=False,
-                                message="Extracted fact item must be a JSON object.",
+                                message="Intelligence service response failed schema validation.",
                             )
                         try:
-                            for authority_field in ("is_approved", "approved_by", "approved_at", "approval_status", "approved"):
-                                item.pop(authority_field, None)
-                                if isinstance(item.get("metadata_json"), dict):
-                                    item["metadata_json"].pop(authority_field, None)
+                            # Scrub model-supplied authority and identity fields
+                            item_meta = dict(item.get("metadata_json") or {}) if isinstance(item.get("metadata_json"), dict) else {}
+                            for scrub_key in ("is_approved", "approved_by", "approved_at", "approval_status", "approved", "request_id", "document_id", "document_sha256", "bidder_id", "tender_id"):
+                                item.pop(scrub_key, None)
+                                item_meta.pop(scrub_key, None)
 
-                            item_meta = item.get("metadata_json") or {}
-                            item_meta.setdefault("request_id", req_id)
-                            item_meta.setdefault("document_id", document_id)
-                            if document_sha256:
-                                item_meta.setdefault("document_sha256", document_sha256)
+                            # Construct backend-owned identity provenance
+                            item_meta["request_id"] = req_id
+                            item_meta["document_id"] = document_id
+                            item_meta["document_sha256"] = document_sha256
                             if envelope.provider_model:
-                                item_meta.setdefault("provider_model", envelope.provider_model)
-                            elif "provider_model" in resp_data:
-                                item_meta.setdefault("provider_model", resp_data["provider_model"])
+                                item_meta["provider_model"] = envelope.provider_model
 
                             item["metadata_json"] = item_meta
 
                             fact_obj = ExtractedFactCreate.model_validate(item)
                             validated_facts.append(fact_obj.model_dump())
                         except ValidationError as val_err:
+                            logger.error(f"Extracted fact validation failed: {val_err}")
                             return AIServiceResult(
                                 success=False,
                                 data=None,
                                 error_code="SCHEMA_VALIDATION_FAILED",
                                 retryable=False,
-                                message=f"Extracted fact payload failed schema validation: {val_err}",
+                                message="Intelligence service response failed schema validation.",
                             )
 
                     return AIServiceResult(
@@ -571,6 +611,7 @@ class AIServiceAdapter:
                     )
 
             except (httpx.ConnectError, httpx.ConnectTimeout) as conn_err:
+                logger.warning(f"Connection error on attempt {attempt}/{max_attempts}: {conn_err}")
                 if attempt < max_attempts:
                     continue
                 return AIServiceResult(
@@ -578,39 +619,43 @@ class AIServiceAdapter:
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=True,
-                    message=f"Intelligence service connection failed after {max_attempts} attempts: {conn_err}",
+                    message="Intelligence service connection failed.",
                 )
-            except httpx.ReadTimeout as read_err:
+            except httpx.ReadTimeout:
+                logger.warning("Read timeout from intelligence service.")
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Intelligence service read timed out after 15.0s: {read_err}",
+                    message="Intelligence service request timed out.",
                 )
-            except httpx.TimeoutException as time_err:
+            except httpx.TimeoutException:
+                logger.warning("Timeout exception from intelligence service.")
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Intelligence service request timed out: {time_err}",
+                    message="Intelligence service request timed out.",
                 )
             except httpx.RequestError as req_err:
+                logger.warning(f"Transport failure: {req_err}")
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Intelligence service transport failure: {req_err}",
+                    message="Intelligence service transport failure.",
                 )
             except Exception as exc:
+                logger.error(f"Unexpected internal error: {type(exc).__name__}")
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=False,
-                    message=f"Unexpected internal error: {exc}",
+                    message="Intelligence service request failed.",
                 )
 
         return AIServiceResult(

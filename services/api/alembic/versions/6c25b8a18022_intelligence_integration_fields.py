@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     with op.batch_alter_table('tender_requirements', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('is_approved', sa.Boolean(), server_default='1', nullable=False))
+        batch_op.add_column(sa.Column('is_approved', sa.Boolean(), server_default='0', nullable=False))
         batch_op.add_column(sa.Column('document_id', sa.String(), nullable=True))
         batch_op.add_column(sa.Column('metadata_json', sa.JSON(), server_default='{}', nullable=False))
         batch_op.create_index(batch_op.f('ix_tender_requirements_document_id'), ['document_id'], unique=False)
