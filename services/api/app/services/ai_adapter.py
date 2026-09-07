@@ -1,5 +1,7 @@
 import base64
+import hashlib
 import logging
+import re
 import uuid
 from typing import Any
 import httpx
@@ -15,6 +17,36 @@ from app.schemas.canonical import (
 
 logger = logging.getLogger(__name__)
 
+HEX_SHA256_REGEX = re.compile(r"^[a-fA-F0-9]{64}$")
+
+
+def _validate_adapter_inputs(
+    document_id: str | None,
+    document_sha256: str | None,
+    file_bytes: bytes | None,
+    bidder_id: str | None = None,
+    require_bidder_id: bool = False,
+) -> tuple[bool, str | None, str | None]:
+    """Validates raw inputs to AIServiceAdapter methods without synthetic fallbacks."""
+    if not document_id or not isinstance(document_id, str) or not document_id.strip():
+        return False, "AI_SERVICE_REQUEST_REJECTED", "Missing required document_id."
+
+    if require_bidder_id:
+        if not bidder_id or not isinstance(bidder_id, str) or not bidder_id.strip():
+            return False, "AI_SERVICE_REQUEST_REJECTED", "Missing required bidder_id."
+
+    if not document_sha256 or not isinstance(document_sha256, str) or not HEX_SHA256_REGEX.match(document_sha256):
+        return False, "AI_SERVICE_REQUEST_REJECTED", "Missing or invalid 64-character hex document_sha256 digest."
+
+    if file_bytes is None or not isinstance(file_bytes, bytes) or len(file_bytes) == 0:
+        return False, "AI_SERVICE_REQUEST_REJECTED", "Missing or empty file_bytes."
+
+    computed_sha = hashlib.sha256(file_bytes).hexdigest()
+    if computed_sha.lower() != document_sha256.lower():
+        return False, "DOCUMENT_SHA256_MISMATCH", f"Computed file_bytes SHA-256 digest ({computed_sha}) does not match recorded document_sha256 ({document_sha256})."
+
+    return True, None, None
+
 
 class AIServiceAdapter:
     """Interface for ARGUS Intelligence Service (document parsing & LLM requirement extraction).
@@ -27,10 +59,10 @@ class AIServiceAdapter:
     async def extract_tender(
         self,
         tender_id: str,
+        document_id: str | None = None,
+        document_sha256: str | None = None,
+        file_bytes: bytes | None = None,
         document_uri: str | None = None,
-        document_id: str = "",
-        document_sha256: str = "",
-        file_bytes: bytes = b"",
         filename: str | None = None,
         content_type: str | None = None,
         request_id: str | None = None,
@@ -47,13 +79,28 @@ class AIServiceAdapter:
                 message="ARGUS Intelligence tender extraction URL is unconfigured or unavailable.",
             )
 
-        doc_id = document_id or kwargs.get("document_id") or (document_uri if document_uri and not document_uri.startswith("s3://") else None) or "doc_default"
-        doc_sha = document_sha256 or kwargs.get("document_sha256") or "sha256_default"
-        doc_bytes = file_bytes or kwargs.get("file_bytes") or b"bytes_default"
+        doc_id = document_id or kwargs.get("document_id")
+        doc_sha = document_sha256 or kwargs.get("document_sha256")
+        doc_bytes = file_bytes if file_bytes is not None else kwargs.get("file_bytes")
 
-        document_id = doc_id
-        document_sha256 = doc_sha
-        file_bytes = doc_bytes
+        is_valid, err_code, err_msg = _validate_adapter_inputs(
+            document_id=doc_id,
+            document_sha256=doc_sha,
+            file_bytes=doc_bytes,
+        )
+        if not is_valid:
+            logger.error(f"extract_tender input validation failed: {err_msg}")
+            return AIServiceResult(
+                success=False,
+                data=None,
+                error_code=err_code,
+                retryable=False,
+                message=err_msg,
+            )
+
+        document_id = doc_id  # type: ignore[assignment]
+        document_sha256 = doc_sha  # type: ignore[assignment]
+        file_bytes = doc_bytes  # type: ignore[assignment]
 
         req_id = request_id or str(uuid.uuid4())
         file_b64 = base64.b64encode(file_bytes).decode("utf-8")
@@ -225,14 +272,14 @@ class AIServiceAdapter:
                             message="Intelligence service reported processing failure.",
                         )
 
-                    raw_items = envelope.requirements if envelope.requirements is not None else resp_data.get("requirements", resp_data.get("data"))
-                    if not isinstance(raw_items, list):
+                    raw_items = envelope.requirements
+                    if raw_items is None or not isinstance(raw_items, list):
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message="Intelligence service response failed schema validation.",
+                            message="Intelligence service response missing required 'requirements' list for contract_version 1.0.",
                         )
 
                     validated_requirements = []
@@ -341,12 +388,12 @@ class AIServiceAdapter:
 
     async def extract_document(
         self,
-        document_id: str,
+        document_id: str | None = None,
+        document_sha256: str | None = None,
+        bidder_id: str | None = None,
+        file_bytes: bytes | None = None,
         document_uri: str | None = None,
-        bidder_id: str = "",
         document_type: str | None = None,
-        document_sha256: str = "",
-        file_bytes: bytes = b"",
         filename: str | None = None,
         content_type: str | None = None,
         request_id: str | None = None,
@@ -363,15 +410,32 @@ class AIServiceAdapter:
                 message="ARGUS Intelligence document extraction URL is unconfigured or unavailable.",
             )
 
-        doc_id = document_id or kwargs.get("document_id") or "doc_default"
-        bid_id = bidder_id or kwargs.get("bidder_id") or "bidder_default"
-        doc_sha = document_sha256 or kwargs.get("document_sha256") or "sha256_default"
-        doc_bytes = file_bytes or kwargs.get("file_bytes") or b"bytes_default"
+        doc_id = document_id or kwargs.get("document_id")
+        bid_id = bidder_id or kwargs.get("bidder_id")
+        doc_sha = document_sha256 or kwargs.get("document_sha256")
+        doc_bytes = file_bytes if file_bytes is not None else kwargs.get("file_bytes")
 
-        document_id = doc_id
-        bidder_id = bid_id
-        document_sha256 = doc_sha
-        file_bytes = doc_bytes
+        is_valid, err_code, err_msg = _validate_adapter_inputs(
+            document_id=doc_id,
+            document_sha256=doc_sha,
+            file_bytes=doc_bytes,
+            bidder_id=bid_id,
+            require_bidder_id=True,
+        )
+        if not is_valid:
+            logger.error(f"extract_document input validation failed: {err_msg}")
+            return AIServiceResult(
+                success=False,
+                data=None,
+                error_code=err_code,
+                retryable=False,
+                message=err_msg,
+            )
+
+        document_id = doc_id  # type: ignore[assignment]
+        bidder_id = bid_id  # type: ignore[assignment]
+        document_sha256 = doc_sha  # type: ignore[assignment]
+        file_bytes = doc_bytes  # type: ignore[assignment]
 
         req_id = request_id or str(uuid.uuid4())
         file_b64 = base64.b64encode(file_bytes).decode("utf-8")
@@ -554,14 +618,14 @@ class AIServiceAdapter:
                             message="Intelligence service reported processing failure.",
                         )
 
-                    raw_facts = envelope.facts if envelope.facts is not None else resp_data.get("facts", resp_data.get("data"))
-                    if not isinstance(raw_facts, list):
+                    raw_facts = envelope.facts
+                    if raw_facts is None or not isinstance(raw_facts, list):
                         return AIServiceResult(
                             success=False,
                             data=None,
                             error_code="SCHEMA_VALIDATION_FAILED",
                             retryable=False,
-                            message="Intelligence service response failed schema validation.",
+                            message="Intelligence service response missing required 'facts' list for contract_version 1.0.",
                         )
 
                     validated_facts = []

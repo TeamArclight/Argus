@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timezone
 import pytest
 import httpx
@@ -74,6 +75,8 @@ async def test_ai_adapter_unconfigured(monkeypatch):
 @pytest.mark.asyncio
 async def test_ai_adapter_tender_extraction_success(monkeypatch):
     adapter = AIServiceAdapter()
+    file_bytes = b"%PDF-1.4 Test Tender Document Content"
+    file_sha256 = hashlib.sha256(file_bytes).hexdigest()
 
     async def mock_post(self, url, headers=None, json=None):
         return httpx.Response(
@@ -82,7 +85,7 @@ async def test_ai_adapter_tender_extraction_success(monkeypatch):
                 "contract_version": "1.0",
                 "request_id": (json or {}).get("request_id", "req123"),
                 "document_id": (json or {}).get("document_id", "doc1"),
-                "document_sha256": (json or {}).get("document_sha256", "abc123sha"),
+                "document_sha256": (json or {}).get("document_sha256", file_sha256),
                 "status": "COMPLETED",
                 "provider_model": "gemini-2.5-pro",
                 "requirements": [
@@ -105,8 +108,8 @@ async def test_ai_adapter_tender_extraction_success(monkeypatch):
     res = await adapter.extract_tender(
         tender_id="t1",
         document_id="doc1",
-        document_sha256="abc123sha",
-        file_bytes=b"%PDF-1.4 Test Tender Document Content",
+        document_sha256=file_sha256,
+        file_bytes=file_bytes,
         filename="tender.pdf",
         content_type="application/pdf",
     )
@@ -115,19 +118,21 @@ async def test_ai_adapter_tender_extraction_success(monkeypatch):
     assert len(res.data) == 1
     assert res.data[0]["field"] == "financial.average_annual_turnover"
     assert res.data[0]["metadata_json"]["document_id"] == "doc1"
-    assert res.data[0]["metadata_json"]["document_sha256"] == "abc123sha"
+    assert res.data[0]["metadata_json"]["document_sha256"] == file_sha256
 
 
 @pytest.mark.asyncio
 async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
     adapter = AIServiceAdapter()
+    file_bytes = b"bytes"
+    file_sha256 = hashlib.sha256(file_bytes).hexdigest()
 
     # 400 Bad Request -> AI_SERVICE_REQUEST_REJECTED
     async def mock_post_400(self, url, headers=None, json=None):
         return httpx.Response(400, json={"error": "Bad payload"})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_400)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes)
     assert res.success is False
     assert res.error_code == "AI_SERVICE_REQUEST_REJECTED"
 
@@ -136,7 +141,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(401, json={"error": "Unauthorized"})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_401)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes)
     assert res.success is False
     assert res.error_code == "AI_SERVICE_AUTH_ERROR"
 
@@ -145,7 +150,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(404)
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_404)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes)
     assert res.success is False
     assert res.error_code == "AI_SERVICE_ENDPOINT_NOT_FOUND"
 
@@ -154,7 +159,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(500)
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_500)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes)
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
 
@@ -163,7 +168,7 @@ async def test_ai_adapter_tender_extraction_http_errors(monkeypatch):
         return httpx.Response(200, text="NOT_JSON_PAYLOAD")
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_invalid)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes)
     assert res.success is False
     assert res.error_code == "SCHEMA_VALIDATION_FAILED"
 
@@ -753,6 +758,8 @@ def test_rule_validator_semantics():
 @pytest.mark.asyncio
 async def test_ai_adapter_envelope_mismatches(monkeypatch):
     adapter = AIServiceAdapter()
+    file_bytes = b"bytes"
+    file_sha256 = hashlib.sha256(file_bytes).hexdigest()
 
     # Case 1: Contract version mismatch ("2.0")
     async def mock_post_bad_contract(self, url, headers=None, json=None):
@@ -769,7 +776,7 @@ async def test_ai_adapter_envelope_mismatches(monkeypatch):
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_contract)
-    res1 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes", request_id="req123")
+    res1 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes, request_id="req123")
     assert res1.success is False
     assert res1.error_code == "CONTRACT_MISMATCH"
 
@@ -788,7 +795,7 @@ async def test_ai_adapter_envelope_mismatches(monkeypatch):
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_req_id)
-    res2 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes", request_id="req123")
+    res2 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes, request_id="req123")
     assert res2.success is False
     assert res2.error_code == "REQUEST_ID_MISMATCH"
 
@@ -807,7 +814,7 @@ async def test_ai_adapter_envelope_mismatches(monkeypatch):
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_doc_id)
-    res3 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes", request_id="req123")
+    res3 = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes, request_id="req123")
     assert res3.success is False
     assert res3.error_code == "DOCUMENT_ID_MISMATCH"
 
@@ -815,6 +822,8 @@ async def test_ai_adapter_envelope_mismatches(monkeypatch):
 @pytest.mark.asyncio
 async def test_ai_adapter_read_timeout_not_retried(monkeypatch):
     adapter = AIServiceAdapter()
+    file_bytes = b"bytes"
+    file_sha256 = hashlib.sha256(file_bytes).hexdigest()
     call_attempts = {"count": 0}
 
     async def mock_post_read_timeout(self, url, headers=None, json=None):
@@ -822,7 +831,7 @@ async def test_ai_adapter_read_timeout_not_retried(monkeypatch):
         raise httpx.ReadTimeout("Read timed out after 15s")
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_read_timeout)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes)
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
     assert res.retryable is False
@@ -1019,6 +1028,8 @@ def test_process_bidder_missing_or_corrupt_doc_sha256_fails_closed(monkeypatch):
 @pytest.mark.asyncio
 async def test_ai_adapter_bidder_envelope_mismatches(monkeypatch):
     adapter = AIServiceAdapter()
+    file_bytes = b"bytes"
+    file_sha256 = hashlib.sha256(file_bytes).hexdigest()
 
     # Case: Bidder ID mismatch
     async def mock_post_bad_bidder_id(self, url, headers=None, json=None):
@@ -1040,8 +1051,8 @@ async def test_ai_adapter_bidder_envelope_mismatches(monkeypatch):
         bidder_id="real_bidder_123",
         document_id="doc1",
         document_type="GST_CERT",
-        document_sha256="abc",
-        file_bytes=b"bytes",
+        document_sha256=file_sha256,
+        file_bytes=file_bytes,
         filename="f.pdf",
         content_type="application/pdf",
         request_id="req123",
@@ -1053,12 +1064,14 @@ async def test_ai_adapter_bidder_envelope_mismatches(monkeypatch):
 @pytest.mark.asyncio
 async def test_ai_adapter_error_message_scrubbing(monkeypatch):
     adapter = AIServiceAdapter()
+    file_bytes = b"bytes"
+    file_sha256 = hashlib.sha256(file_bytes).hexdigest()
 
     async def mock_post_leaky_exception(self, url, headers=None, json=None):
         raise httpx.ConnectError("Failed to connect to http://secret-internal-service.local/key=sk-1234567890secret")
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_leaky_exception)
-    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256="abc", file_bytes=b"bytes")
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1", document_sha256=file_sha256, file_bytes=file_bytes)
     assert res.success is False
     assert res.error_code == "AI_SERVICE_UNAVAILABLE"
     # Ensure sensitive string is scrubbed from res.message

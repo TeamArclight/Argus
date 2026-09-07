@@ -30,4 +30,5 @@ build/
 *.db
 *.sqlite
 *.sqlite3
+services/api/data/
 
