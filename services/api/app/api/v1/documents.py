@@ -34,14 +34,4 @@ def get_document_content(
     )
 
 
-@router.delete("/{document_id}")
-def delete_document(
-    document_id: str,
-    principal: AuthenticatedPrincipal = Depends(
-        require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)
-    ),
-    db: Session = Depends(get_db),
-):
-    """Delete a document and its stored file content."""
-    deleted_id = DocumentService.delete_document(db, document_id, principal)
-    return {"status": "deleted", "id": deleted_id}
+

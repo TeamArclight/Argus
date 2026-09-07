@@ -32,11 +32,16 @@ class LocalStorageProvider(StorageProvider):
         return resolved
 
     def store_file(self, file_bytes: bytes, target_key: str) -> str:
+        import uuid
         target_path = self._resolve_safe_path(target_key)
+        if target_path.exists():
+            raise FileExistsError(f"Storage key already exists: '{target_key}'")
+
         target_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Atomic write via temporary file in target directory
-        temp_path = target_path.parent / f".tmp_{target_path.name}"
+        # Atomic write via unique temporary file in target directory
+        temp_name = f".tmp_{uuid.uuid4().hex}_{target_path.name}"
+        temp_path = target_path.parent / temp_name
         try:
             with open(temp_path, "wb") as f:
                 f.write(file_bytes)

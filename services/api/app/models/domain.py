@@ -4,6 +4,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -128,6 +129,12 @@ class ComplianceRun(Base):
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        CheckConstraint(
+            "(tender_id IS NOT NULL AND bidder_id IS NULL) OR (tender_id IS NULL AND bidder_id IS NOT NULL)",
+            name="ck_documents_single_owner",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
     tender_id: Mapped[str | None] = mapped_column(String, ForeignKey("tenders.id"), nullable=True, index=True)
@@ -143,7 +150,6 @@ class Document(Base):
 
     tender: Mapped["Tender | None"] = relationship("Tender", back_populates="documents")
     bidder: Mapped["Bidder | None"] = relationship("Bidder", back_populates="documents")
-    facts: Mapped[list["ExtractedFact"]] = relationship("ExtractedFact", back_populates="document", cascade="all, delete-orphan")
     facts: Mapped[list["ExtractedFact"]] = relationship("ExtractedFact", back_populates="document", cascade="all, delete-orphan")
 
 

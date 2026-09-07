@@ -1,15 +1,14 @@
 import io
 import re
-import zipfile
 from pathlib import Path
 from typing import NamedTuple
 
 from fastapi import HTTPException, status
 
-ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".docx"}
+ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
 DANGEROUS_EXTENSIONS = {
     "exe", "bat", "cmd", "ps1", "sh", "js", "html", "htm", "php",
-    "zip", "rar", "7z", "tar", "gz", "bz2", "jar", "vbs", "msi", "scr", "dll", "so", "sys"
+    "zip", "rar", "7z", "tar", "gz", "bz2", "jar", "vbs", "msi", "scr", "dll", "so", "sys", "docx", "doc"
 }
 
 MAGIC_SIGNATURES = {
@@ -17,7 +16,6 @@ MAGIC_SIGNATURES = {
     ".png": [b"\x89PNG\r\n\x1a\n"],
     ".jpg": [b"\xff\xd8\xff"],
     ".jpeg": [b"\xff\xd8\xff"],
-    ".docx": [b"PK\x03\x04"],
 }
 
 MIME_TYPE_MAP = {
@@ -25,7 +23,13 @@ MIME_TYPE_MAP = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+EXPECTED_MIME_TYPES = {
+    ".pdf": {"application/pdf"},
+    ".png": {"image/png"},
+    ".jpg": {"image/jpeg", "image/pjpeg"},
+    ".jpeg": {"image/jpeg", "image/pjpeg"},
 }
 
 
@@ -38,7 +42,7 @@ class ValidatedFileMetadata(NamedTuple):
 
 
 class DocumentValidationService:
-    """Validates document payloads against file size, extension, double-extensions, and magic signatures."""
+    """Validates document payloads against file size, extension, double-extensions, declared MIME, and magic signatures."""
 
     @staticmethod
     def sanitize_filename(raw_filename: str) -> str:
@@ -56,7 +60,9 @@ class DocumentValidationService:
         return cleaned if cleaned else "unnamed_document"
 
     @classmethod
-    def validate_file(cls, filename: str, content: bytes) -> ValidatedFileMetadata:
+    def validate_file(
+        cls, filename: str, content: bytes, declared_content_type: str | None = None
+    ) -> ValidatedFileMetadata:
         # 1. Zero-byte check
         size_bytes = len(content)
         if size_bytes == 0:
@@ -78,7 +84,7 @@ class DocumentValidationService:
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 detail={
                     "code": "DOCUMENT_TYPE_UNSUPPORTED",
-                    "message": f"Unsupported file extension '{ext}'. Supported formats: PDF, PNG, JPG, JPEG, DOCX.",
+                    "message": f"Unsupported file extension '{ext}'. Supported formats: PDF, PNG, JPG, JPEG.",
                     "details": {"allowed_extensions": sorted(list(ALLOWED_EXTENSIONS))},
                 },
             )
@@ -97,7 +103,25 @@ class DocumentValidationService:
                         },
                     )
 
-        # 3. Magic Header Signature Validation
+        # 3. Declared MIME Consistency Validation
+        if declared_content_type:
+            declared_mime = declared_content_type.split(";")[0].strip().lower()
+            if declared_mime and declared_mime != "application/octet-stream":
+                expected_set = EXPECTED_MIME_TYPES.get(ext, set())
+                if declared_mime not in expected_set:
+                    raise HTTPException(
+                        status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                        detail={
+                            "code": "DOCUMENT_MIME_MISMATCH",
+                            "message": f"Declared content type '{declared_content_type}' is inconsistent with file extension '{ext}'.",
+                            "details": {
+                                "declared_content_type": declared_content_type,
+                                "expected_extension": ext,
+                            },
+                        },
+                    )
+
+        # 4. Magic Header Signature Validation
         signatures = MAGIC_SIGNATURES.get(ext, [])
         header = content[:16]
         matches_sig = any(header.startswith(sig) for sig in signatures)
@@ -112,31 +136,14 @@ class DocumentValidationService:
                 },
             )
 
-        # Detailed DOCX Zip Structure Check
-        if ext == ".docx":
-            try:
-                with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                    namelist = zf.namelist()
-                    if not any(name.startswith("word/") or name == "[Content_Types].xml" for name in namelist):
-                        raise ValueError("Missing Office Word ZIP contents")
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                    detail={
-                        "code": "DOCUMENT_SIGNATURE_INVALID",
-                        "message": "Invalid DOCX file structure: payload is not a valid Word processing document.",
-                        "details": {},
-                    },
-                ) from e
-
-        content_type = MIME_TYPE_MAP.get(ext, "application/octet-stream")
+        canonical_content_type = MIME_TYPE_MAP.get(ext, "application/octet-stream")
         import hashlib
         sha256_hex = hashlib.sha256(content).hexdigest()
 
         return ValidatedFileMetadata(
             sanitized_filename=sanitized,
             extension=ext,
-            content_type=content_type,
+            content_type=canonical_content_type,
             size_bytes=size_bytes,
             sha256_hex=sha256_hex,
         )
