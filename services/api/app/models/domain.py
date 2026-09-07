@@ -226,7 +226,11 @@ class RiskSignal(Base):
     signal_type: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String, nullable=True)
     evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    verification_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    source_mode: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
 
     bidder: Mapped["Bidder"] = relationship("Bidder", back_populates="risk_signals")

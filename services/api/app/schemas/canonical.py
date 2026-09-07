@@ -342,6 +342,7 @@ class VerificationResultRead(BaseModel):
     checked_at: datetime
     verification_reference: str | None = None
     error_message: str | None = None
+    location_metadata: dict[str, Any] | None = None
 
 
 class EvidenceCreate(BaseModel):
@@ -394,6 +395,30 @@ class RuleEvaluationRead(BaseModel):
     evaluated_at: datetime
 
 
+class ProviderConfigurationStatus(str, Enum):
+    CONFIGURED = "CONFIGURED"
+    UNCONFIGURED = "UNCONFIGURED"
+
+
+class ProviderOperationalHealth(str, Enum):
+    AVAILABLE = "AVAILABLE"
+    DEGRADED = "DEGRADED"
+    UNAVAILABLE = "UNAVAILABLE"
+    UNKNOWN = "UNKNOWN"
+
+
+class ProviderHealthRead(BaseModel):
+    provider_identifier: str
+    domain: str
+    configured_mode: VerificationMode
+    configuration_status: ProviderConfigurationStatus
+    operational_health: ProviderOperationalHealth
+    supported_fields: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    last_checked_at: datetime | None = None
+    notes: str | None = None
+
+
 class RiskSignalRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -403,8 +428,41 @@ class RiskSignalRead(BaseModel):
     signal_type: str
     title: str
     description: str
+    reason_code: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
+    verification_ids: list[str] = Field(default_factory=list)
+    source_mode: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+    @field_validator("metadata_json", mode="before")
+    @classmethod
+    def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
+        return v if v is not None else {}
+
+
+class RiskSummaryRead(BaseModel):
+    signal_count: int = 0
+    counts_by_severity: dict[str, int] = Field(default_factory=dict)
+    counts_by_type: dict[str, int] = Field(default_factory=dict)
+    unresolved_count: int = 0
+    source_mode_breakdown: dict[str, int] = Field(default_factory=dict)
+    risk_engine_version: str = "1.0"
+    risk_policy_version: str = "1.0"
+
+
+class AdvisoryMLRiskSignalRead(BaseModel):
+    contract_version: str = "1.0"
+    request_id: str
+    bidder_id: str
+    run_id: str | None = None
+    model_identifier: str
+    model_version: str
+    advisory_signal_type: str
+    explanation: str
+    supporting_evidence_ids: list[str] = Field(default_factory=list)
+    confidence_score: float | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class HumanDecisionCreate(BaseModel):
@@ -505,6 +563,7 @@ class ComplianceOverviewRead(BaseModel):
     human_decision_status: HumanDecisionStatus
     rule_evaluations: list[RuleEvaluationRead] = Field(default_factory=list)
     risk_signals: list[RiskSignalRead] = Field(default_factory=list)
+    risk_summary: RiskSummaryRead | None = None
     latest_decision: HumanDecisionRead | None = None
 
 
@@ -516,6 +575,7 @@ class ReportRead(BaseModel):
     compliance_matrix: ComplianceMatrixRead | None = None
     verification_results: list[VerificationResultRead] = Field(default_factory=list)
     evidence: list[EvidenceRead] = Field(default_factory=list)
+    risk_summary: RiskSummaryRead | None = None
     human_decision: HumanDecisionRead | None = None
     historical_limitations_notice: str | None = None
     audit_trail_count: int = 0

@@ -1595,6 +1595,37 @@
         }
       }
     },
+    "/api/v1/providers": {
+      "get": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "List Provider Health",
+        "description": "Returns operational health, configuration status, supported fields, and active mode for all verification providers without external HTTP pings.",
+        "operationId": "list_provider_health_api_v1_providers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderHealthRead"
+                  },
+                  "type": "array",
+                  "title": "Response List Provider Health Api V1 Providers Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -1938,20 +1969,54 @@
             "title": "Requirement Id"
           },
           "clause": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Clause"
           },
           "requirement_type": {
-            "$ref": "#/components/schemas/RequirementType"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequirementType"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "field": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Field"
           },
           "operator": {
-            "$ref": "#/components/schemas/OperatorEnum"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperatorEnum"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expected_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
             "title": "Expected Value"
           },
           "unit": {
@@ -1966,7 +2031,14 @@
             "title": "Unit"
           },
           "mandatory": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Mandatory"
           },
           "status": {
@@ -2025,12 +2097,6 @@
         "type": "object",
         "required": [
           "requirement_id",
-          "clause",
-          "requirement_type",
-          "field",
-          "operator",
-          "expected_value",
-          "mandatory",
           "status",
           "reason_code"
         ],
@@ -2065,6 +2131,16 @@
             },
             "type": "array",
             "title": "Risk Signals"
+          },
+          "risk_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskSummaryRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "latest_decision": {
             "anyOf": [
@@ -2641,8 +2717,15 @@
             "title": "Id"
           },
           "created_at": {
-            "type": "string",
-            "format": "date-time",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Created At"
           }
         },
@@ -2651,8 +2734,7 @@
           "entity_type",
           "entity_id",
           "snippet",
-          "id",
-          "created_at"
+          "id"
         ],
         "title": "EvidenceRead"
       },
@@ -3086,6 +3168,91 @@
         "title": "OperatorEnum",
         "description": "Supported deterministic rule operators."
       },
+      "ProviderConfigurationStatus": {
+        "type": "string",
+        "enum": [
+          "CONFIGURED",
+          "UNCONFIGURED"
+        ],
+        "title": "ProviderConfigurationStatus"
+      },
+      "ProviderHealthRead": {
+        "properties": {
+          "provider_identifier": {
+            "type": "string",
+            "title": "Provider Identifier"
+          },
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "configured_mode": {
+            "$ref": "#/components/schemas/VerificationMode"
+          },
+          "configuration_status": {
+            "$ref": "#/components/schemas/ProviderConfigurationStatus"
+          },
+          "operational_health": {
+            "$ref": "#/components/schemas/ProviderOperationalHealth"
+          },
+          "supported_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supported Fields"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider_identifier",
+          "domain",
+          "configured_mode",
+          "configuration_status",
+          "operational_health"
+        ],
+        "title": "ProviderHealthRead"
+      },
+      "ProviderOperationalHealth": {
+        "type": "string",
+        "enum": [
+          "AVAILABLE",
+          "DEGRADED",
+          "UNAVAILABLE",
+          "UNKNOWN"
+        ],
+        "title": "ProviderOperationalHealth"
+      },
       "RAGQueryRequest": {
         "properties": {
           "query": {
@@ -3215,6 +3382,16 @@
             "type": "array",
             "title": "Evidence"
           },
+          "risk_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskSummaryRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "human_decision": {
             "anyOf": [
               {
@@ -3314,12 +3491,46 @@
             "type": "string",
             "title": "Description"
           },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
           "evidence_ids": {
             "items": {
               "type": "string"
             },
             "type": "array",
             "title": "Evidence Ids"
+          },
+          "verification_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Verification Ids"
+          },
+          "source_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Mode"
+          },
+          "metadata_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata Json"
           },
           "created_at": {
             "type": "string",
@@ -3338,6 +3549,53 @@
           "created_at"
         ],
         "title": "RiskSignalRead"
+      },
+      "RiskSummaryRead": {
+        "properties": {
+          "signal_count": {
+            "type": "integer",
+            "title": "Signal Count",
+            "default": 0
+          },
+          "counts_by_severity": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts By Severity"
+          },
+          "counts_by_type": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts By Type"
+          },
+          "unresolved_count": {
+            "type": "integer",
+            "title": "Unresolved Count",
+            "default": 0
+          },
+          "source_mode_breakdown": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Source Mode Breakdown"
+          },
+          "risk_engine_version": {
+            "type": "string",
+            "title": "Risk Engine Version",
+            "default": "1.0"
+          },
+          "risk_policy_version": {
+            "type": "string",
+            "title": "Risk Policy Version",
+            "default": "1.0"
+          }
+        },
+        "type": "object",
+        "title": "RiskSummaryRead"
       },
       "RuleEvaluationRead": {
         "properties": {
@@ -3995,6 +4253,18 @@
               }
             ],
             "title": "Error Message"
+          },
+          "location_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location Metadata"
           }
         },
         "type": "object",

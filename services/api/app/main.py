@@ -9,6 +9,7 @@ from app.api.v1.bidders import router as bidders_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.evaluations import router as evaluations_router
 from app.api.v1.jobs import router as jobs_router
+from app.api.v1.providers import router as providers_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.tenders import router as tenders_router
 from app.core.config import settings
@@ -46,6 +47,7 @@ app.include_router(evaluations_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
+app.include_router(providers_router, prefix="/api/v1")
 
 
 
