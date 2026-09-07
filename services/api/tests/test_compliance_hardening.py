@@ -132,7 +132,7 @@ def test_financial_missing_required_currency():
 
 
 def test_financial_year_mismatch_and_missing():
-    """Mismatched FY returns FINANCIAL_CONTEXT_MISMATCH; missing FY returns MISSING_FINANCIAL_CONTEXT."""
+    """Mismatched FY returns FINANCIAL_CONTEXT_MISMATCH; missing FY returns FINANCIAL_CONTEXT_MISMATCH."""
     req_fy = make_req(OperatorEnum.GTE, 10000000, meta={"fy": "2023-2024", "currency": "INR"})
 
     # Mismatched FY
@@ -145,7 +145,7 @@ def test_financial_year_mismatch_and_missing():
     facts_missing = [make_fact(20000000, meta={"currency": "INR"})]
     res_missing = ComplianceEngine.evaluate(req_fy, facts_missing, [])
     assert res_missing.status == ComplianceStatus.REVIEW_REQUIRED
-    assert res_missing.reason_code == ReasonCode.MISSING_FINANCIAL_CONTEXT
+    assert res_missing.reason_code == ReasonCode.FINANCIAL_CONTEXT_MISMATCH
 
 
 def test_financial_averaging_period_and_metric_mismatch():
@@ -167,6 +167,16 @@ def test_financial_averaging_period_and_metric_mismatch():
     res_metric = ComplianceEngine.evaluate(req, facts_metric, [])
     assert res_metric.status == ComplianceStatus.REVIEW_REQUIRED
     assert res_metric.reason_code == ReasonCode.FINANCIAL_CONTEXT_MISMATCH
+
+
+def test_input_scale_independence_rule_unit_not_applied_to_input():
+    """Rule unit 'Crore' must not be applied to input '50000000 INR'."""
+    req = make_req(OperatorEnum.GTE, 5, unit="Crore", meta={"currency": "INR"})
+    # Observed fact has 50000000 INR (base units)
+    facts = [make_fact("50000000 INR")]
+    res = ComplianceEngine.evaluate(req, facts, [])
+    assert res.status == ComplianceStatus.PASS
+    assert res.reason_code == ReasonCode.GREATER_THAN_OR_EQUAL
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +277,7 @@ def test_mixed_date_only_and_datetime_mismatch():
 
 
 # ---------------------------------------------------------------------------
-# 4. OPTIONALITY & APPLICABILITY TRUTH TABLE
+# 4. OPTIONALITY & APPLICABILITY TRUTH TABLE & STRICT STRING PARSING
 # ---------------------------------------------------------------------------
 
 def test_applicability_truth_table():
@@ -303,14 +313,68 @@ def test_applicability_truth_table():
     assert ComplianceEngine.evaluate(req_opt_app, [], []).reason_code == ReasonCode.MISSING_EVIDENCE
 
 
-def test_categorical_bidder_applicability():
-    """Rule targeting specific bidder categories evaluates as inapplicable for other categories."""
+def test_applicability_string_parsing_and_invalids():
+    """Strictly parses boolean strings and rejects invalid applicability strings."""
+    # is_applicable="false"
+    req_false_str = make_req(OperatorEnum.EXISTS, True, mandatory=True, meta={"is_applicable": "false"})
+    res_false = ComplianceEngine.evaluate(req_false_str, [], [])
+    assert res_false.status == ComplianceStatus.NOT_APPLICABLE
+    assert res_false.reason_code == ReasonCode.NOT_APPLICABLE_EXPLICIT
+
+    # is_applicable="true"
+    req_true_str = make_req(OperatorEnum.EXISTS, True, mandatory=True, meta={"is_applicable": "true"})
+    res_true = ComplianceEngine.evaluate(req_true_str, [], [])
+    assert res_true.status == ComplianceStatus.UNKNOWN  # Missing evidence on applicable rule
+    assert res_true.reason_code == ReasonCode.MISSING_EVIDENCE
+
+    # is_applicable="invalid"
+    req_invalid_str = make_req(OperatorEnum.EXISTS, True, mandatory=True, meta={"is_applicable": "maybe_applicable"})
+    res_inv = ComplianceEngine.evaluate(req_invalid_str, [], [])
+    assert res_inv.status == ComplianceStatus.UNKNOWN
+    assert res_inv.reason_code == ReasonCode.INVALID_APPLICABILITY_POLICY
+
+
+def test_approved_and_unapproved_exemptions():
+    """Approved exemptions return NOT_APPLICABLE_EXEMPTION, unapproved returns INVALID_APPLICABILITY_POLICY."""
+    # Approved exemption
+    req_app_ex = make_req(OperatorEnum.EXISTS, True, meta={"exemption": "APPROVED"})
+    res_ex = ComplianceEngine.evaluate(req_app_ex, [], [])
+    assert res_ex.status == ComplianceStatus.NOT_APPLICABLE
+    assert res_ex.reason_code == ReasonCode.NOT_APPLICABLE_EXEMPTION
+
+    # Unapproved exemption string
+    req_unapp_ex = make_req(OperatorEnum.EXISTS, True, meta={"exemption": "random_self_claimed_exemption"})
+    res_unapp = ComplianceEngine.evaluate(req_unapp_ex, [], [])
+    assert res_unapp.status == ComplianceStatus.UNKNOWN
+    assert res_unapp.reason_code == ReasonCode.INVALID_APPLICABILITY_POLICY
+
+
+def test_mandatory_missing_not_overridden_by_optional_policy():
+    """Mandatory requirement missing evidence must NOT be overridden by optional_missing_policy."""
+    req_mand = make_req(
+        OperatorEnum.EXISTS,
+        True,
+        mandatory=True,
+        meta={"optional_missing_policy": "NOT_APPLICABLE"},
+    )
+    res = ComplianceEngine.evaluate(req_mand, [], [])
+    assert res.status == ComplianceStatus.UNKNOWN
+    assert res.reason_code == ReasonCode.MISSING_EVIDENCE
+
+
+def test_categorical_bidder_applicability_and_missing_category():
+    """Rule targeting specific bidder categories; missing bidder category is NOT treated as mismatch."""
     req_msme = make_req(
         OperatorEnum.EXISTS,
         True,
         mandatory=True,
         meta={"applicable_bidder_types": ["MSME", "STARTUP"]},
     )
+
+    # Missing bidder category -> not treated as mismatch -> UNKNOWN (MISSING_EVIDENCE)
+    res_missing_cat = ComplianceEngine.evaluate(req_msme, [], [], context={})
+    assert res_missing_cat.status == ComplianceStatus.UNKNOWN
+    assert res_missing_cat.reason_code == ReasonCode.MISSING_EVIDENCE
 
     # MSME bidder -> applicable, missing evidence -> UNKNOWN
     res_msme = ComplianceEngine.evaluate(req_msme, [], [], context={"bidder_category": "MSME"})
@@ -327,18 +391,19 @@ def test_categorical_bidder_applicability():
 # 5. EXPLICIT EVALUATION CLOCK & CONFLICT RESOLUTION
 # ---------------------------------------------------------------------------
 
-def test_missing_evaluation_clock_on_time_dependent_rule():
-    """Time-dependent rule missing evaluation clock returns MISSING_EVALUATION_CLOCK."""
+def test_missing_evaluation_clock_on_time_dependent_rule_no_1970():
+    """Time-dependent rule missing evaluation clock returns MISSING_EVALUATION_CLOCK without 1970 fallback."""
     req_time = make_req(
         OperatorEnum.DATE_BEFORE,
         "now",
         field="general.registration_expiry",
         meta={"is_time_dependent": True},
     )
-    # No evaluation_timestamp passed
     res = ComplianceEngine.evaluate(req_time, [make_fact("2025-01-01")], [], context={})
     assert res.status == ComplianceStatus.UNKNOWN
     assert res.reason_code == ReasonCode.MISSING_EVALUATION_CLOCK
+    assert res.evaluated_at != datetime(1970, 1, 1, tzinfo=timezone.utc)
+    assert res.evaluated_at.year >= 2026
 
 
 def test_multi_fact_conflicts_linking_all_evidence():
@@ -354,7 +419,7 @@ def test_multi_fact_conflicts_linking_all_evidence():
 
 
 # ---------------------------------------------------------------------------
-# 6. CANONICAL RULE HASH & HISTORICAL REPLAY
+# 6. CANONICAL RULE HASH & HISTORICAL REPLAY BOUNDS
 # ---------------------------------------------------------------------------
 
 def test_canonical_rule_hash_includes_policy_excludes_ids():
@@ -371,3 +436,48 @@ def test_canonical_rule_hash_includes_policy_excludes_ids():
     r3 = make_req(OperatorEnum.GTE, 5000000, req_id="REQ-AAA", meta={"currency": "USD", "fy": "2023-2024"})
     hash3 = ComplianceEngine.compute_rules_hash([r3])
     assert hash1 != hash3
+
+
+def test_historical_replay_bounds_unsupported_version():
+    """Replaying historical snapshot with unsupported engine version returns HISTORICAL_VERSION_UNSUPPORTED."""
+    snapshot = {
+        "engine_version": "0.9.0",  # Unsupported legacy version
+        "bidder_id": "BIDDER-101",
+        "rule_evaluations": [],
+    }
+    res = ComplianceEngine.replay_evaluation(snapshot, "REQ-101")
+    assert res.status == ComplianceStatus.REVIEW_REQUIRED
+    assert res.reason_code == ReasonCode.HISTORICAL_VERSION_UNSUPPORTED
+
+
+def test_invalid_context_cannot_fallback_to_raw_numeric_equality():
+    """Different currency or missing required financial metadata must not fall back to raw number equality."""
+    # 50,000,000 INR vs 50,000,000 USD (same raw number, different currency)
+    req_curr = make_req(OperatorEnum.EQ, "50000000 INR", unit="INR", meta={"currency": "INR"})
+    facts_curr = [make_fact("50000000 USD", meta={"currency": "USD"})]
+    res_curr = ComplianceEngine.evaluate(req_curr, facts_curr, [])
+    assert res_curr.status == ComplianceStatus.REVIEW_REQUIRED
+    assert res_curr.reason_code == ReasonCode.CURRENCY_MISMATCH
+
+    # Same raw number, but fact is missing required currency
+    facts_no_curr = [make_fact(50000000)]
+    res_no_curr = ComplianceEngine.evaluate(req_curr, facts_no_curr, [])
+    assert res_no_curr.status == ComplianceStatus.REVIEW_REQUIRED
+    assert res_no_curr.reason_code == ReasonCode.MISSING_FINANCIAL_CONTEXT
+
+
+def test_non_financial_numeric_unaffected():
+    """Non-financial numeric and count fields compare cleanly without requiring financial metadata."""
+    req_exp = make_req(
+        OperatorEnum.GTE,
+        5,
+        field="general.experience_years",
+        unit="years",
+        req_type=RequirementType.EXPERIENCE,
+        meta={},
+    )
+    facts_exp = [make_fact(7, field="general.experience_years")]
+    res_exp = ComplianceEngine.evaluate(req_exp, facts_exp, [])
+    assert res_exp.status == ComplianceStatus.PASS
+    assert res_exp.reason_code == ReasonCode.GREATER_THAN_OR_EQUAL
+

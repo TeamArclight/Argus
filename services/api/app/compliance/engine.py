@@ -53,6 +53,8 @@ class ComplianceEngine:
     FINANCIAL_CONTEXT_POLICY_VERSION = "1.2.0"
     TEMPORAL_POLICY_VERSION = "1.2.0"
 
+    SUPPORTED_REPLAY_VERSIONS = {"1.2.0"}
+
     MAX_INPUT_STR_LENGTH = 100
     MAX_DECIMAL_DIGITS = 38
     MAX_DECIMAL_EXPONENT = 30
@@ -108,7 +110,13 @@ class ComplianceEngine:
                     "averaging_period",
                     "is_base_unit",
                     "applicable_bidder_types",
+                    "applicable_categories",
                     "optional_missing_policy",
+                    "exemption",
+                    "optional_exemption",
+                    "exemption_reason",
+                    "is_time_dependent",
+                    "relative_time",
                 ):
                     if k in raw_meta and raw_meta[k] is not None:
                         policy_meta[k] = raw_meta[k]
@@ -154,6 +162,75 @@ class ComplianceEngine:
         )
 
     @classmethod
+    def _is_financial_domain(
+        cls,
+        rule: TenderRequirementRead | None = None,
+        obs_val: Any = None,
+        exp_val: Any = None,
+        obs_meta: dict[str, Any] | None = None,
+        exp_meta: dict[str, Any] | None = None,
+    ) -> bool:
+        """Determines if an evaluation context belongs to the financial domain requiring FinancialContext."""
+        obs_meta = obs_meta or {}
+        exp_meta = exp_meta or {}
+
+        # 1. Rule type or field name indicates financial
+        if rule:
+            req_type = getattr(rule, "requirement_type", None)
+            if req_type in (RequirementType.TURNOVER, "TURNOVER", "FINANCIAL"):
+                return True
+            field_l = str(getattr(rule, "field", "")).lower()
+            if any(
+                tok in field_l
+                for tok in (
+                    "turnover",
+                    "net_worth",
+                    "revenue",
+                    "financial",
+                    "amount",
+                    "capital",
+                    "cost",
+                    "price",
+                    "bid_value",
+                    "fee",
+                    "deposit",
+                    "emd",
+                    "pbg",
+                    "solvency",
+                )
+            ):
+                return True
+            if rule.unit:
+                unit_s = str(rule.unit)
+                if any(sym in unit_s for sym in ("₹", "$", "€", "£")):
+                    return True
+                if re.search(r"\b(inr|usd|eur|gbp|rs\.?|rupees?|crores?|lakhs?|cr\.?|lac|million|billion)\b", unit_s.lower()):
+                    return True
+
+        # 2. Metadata indicates financial attributes
+        for meta in (obs_meta, exp_meta):
+            if (
+                meta.get("currency")
+                or meta.get("fy")
+                or meta.get("financial_year")
+                or meta.get("averaging_period")
+                or meta.get("metric")
+                or meta.get("is_base_unit")
+            ):
+                return True
+
+        # 3. String representations contain financial tokens
+        for val in (obs_val, exp_val):
+            if isinstance(val, str):
+                s_l = val.lower()
+                if any(sym in val for sym in ("₹", "$", "€", "£")):
+                    return True
+                if re.search(r"\b(inr|usd|eur|gbp|rs\.?|rupees?|crores?|lakhs?|cr\.?|lac|million|billion)\b", s_l):
+                    return True
+
+        return False
+
+    @classmethod
     def _validate_comma_formatting(cls, s: str) -> bool:
         """Validates that commas follow standard Western or Indian numeral grouping without corruption."""
         if "," not in s:
@@ -165,12 +242,9 @@ class ComplianceEngine:
             return False
         int_part = parts[0]
         if len(parts) == 2 and "," in parts[1]:
-            # No commas allowed after decimal point
             return False
 
-        # Western grouping: 1,234,567
         western_pattern = r"^\d{1,3}(,\d{3})*$"
-        # Indian grouping: 1,23,45,678 or 12,34,567
         indian_pattern = r"^\d{1,2}(,\d{2})*,\d{3}$"
 
         if re.match(western_pattern, int_part) or re.match(indian_pattern, int_part):
@@ -179,9 +253,9 @@ class ComplianceEngine:
 
     @classmethod
     def _normalize_number(cls, val: Any) -> Decimal | None:
-        """Normalizes numeric representations to exact Decimal.
+        """Normalizes pure non-financial numeric representations to exact Decimal.
 
-        Rejects NaN, Infinity, -Infinity, boolean types, corrupt commas, and malformed strings.
+        Rejects NaN, Infinity, boolean types, corrupt commas, and malformed strings.
         Enforces precision and input length bounds.
         """
         if val is None or isinstance(val, bool):
@@ -206,30 +280,10 @@ class ComplianceEngine:
             if s_lower in ("nan", "inf", "-inf", "+inf", "infinity", "-infinity", "+infinity"):
                 return None
 
-            # Strip standard currency tokens
-            s_clean = s.replace("₹", "").replace("$", "").replace("€", "").replace("£", "")
-            tokens_to_remove = [
-                "INR", "inr", "Rs.", "rs.", "Rs", "rs", "USD", "usd", "EUR", "eur", "GBP", "gbp", "Rupees", "rupees"
-            ]
-            for token in tokens_to_remove:
-                s_clean = re.sub(r"" + re.escape(token) + r"", "", s_clean, flags=re.IGNORECASE)
-            s_clean = s_clean.strip()
-            if not s_clean:
+            if not cls._validate_comma_formatting(s):
                 return None
 
-            # Check scale words in string
-            scale_mult = Decimal("1")
-            for scale_token, (mult, _) in cls.UNIT_SCALE_MAP.items():
-                pattern = r"" + re.escape(scale_token) + r""
-                if re.search(pattern, s_clean, flags=re.IGNORECASE):
-                    scale_mult = mult
-                    s_clean = re.sub(pattern, "", s_clean, flags=re.IGNORECASE).strip()
-                    break
-
-            if not cls._validate_comma_formatting(s_clean):
-                return None
-
-            s_clean = s_clean.replace(",", "").strip()
+            s_clean = s.replace(",", "").strip()
             try:
                 dec = Decimal(s_clean)
                 if dec.is_nan() or dec.is_infinite():
@@ -238,7 +292,7 @@ class ComplianceEngine:
                     return None
                 if len(dec.as_tuple().digits) > cls.MAX_DECIMAL_DIGITS:
                     return None
-                return dec * scale_mult
+                return dec
             except (InvalidOperation, TypeError, ValueError):
                 return None
 
@@ -250,8 +304,8 @@ class ComplianceEngine:
     ) -> FinancialContext:
         """Parses a typed FinancialContext from a raw value and its metadata.
 
-        Derives scale from explicit representation only. Never blindly applies default_unit to inputs.
-        Recognizes already-normalized base-unit values.
+        Derives scale from explicit representation only. Never blindly applies rule default_unit to inputs.
+        Recognizes already-normalized base-unit values and avoids double scaling.
         """
         meta = meta or {}
         if val is None:
@@ -372,7 +426,6 @@ class ComplianceEngine:
         input_meta_unit = meta.get("unit") or default_unit
         if input_meta_unit and isinstance(input_meta_unit, str) and not is_base_unit:
             unit_clean = input_meta_unit.lower().strip()
-            # Extract currency if embedded in unit
             for c_token in ("inr", "usd", "eur", "gbp", "₹", "$", "€", "£"):
                 unit_clean = unit_clean.replace(c_token, "").strip()
             if unit_clean in cls.UNIT_SCALE_MAP:
@@ -409,11 +462,11 @@ class ComplianceEngine:
                 error_reason=ReasonCode.UNIT_MISMATCH,
             )
 
-        resolved_scale_token = canonical_meta_unit or canonical_text_unit
+        resolved_scale_token = canonical_text_unit or canonical_meta_unit
         if is_base_unit:
             scale_multiplier = Decimal("1")
         else:
-            scale_multiplier = meta_scale if canonical_meta_unit else (text_scale if canonical_text_unit else Decimal("1"))
+            scale_multiplier = text_scale if canonical_text_unit else (meta_scale if canonical_meta_unit else Decimal("1"))
 
         # 4. Numeric base value extraction
         clean_s = val_str
@@ -535,11 +588,11 @@ class ComplianceEngine:
         ctx_a: FinancialContext,
         ctx_b: FinancialContext,
         *,
-        require_financial_context: bool = False,
+        require_financial_context: bool = True,
     ) -> tuple[bool, str | None]:
         """Checks whether two financial contexts are strictly compatible before comparison.
 
-        Does not invent FX conversion, units, periods, or metric equivalence.
+        Rejects one-sided missing metadata and does not invent currency, FY, period, or metric conversions.
         """
         if not ctx_a.is_valid:
             return False, ctx_a.error_reason or ReasonCode.MALFORMED_NUMBER
@@ -562,7 +615,7 @@ class ComplianceEngine:
                 return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
         elif require_financial_context and (ctx_a.financial_year is not None or ctx_b.financial_year is not None):
             if (ctx_a.financial_year is None) != (ctx_b.financial_year is None):
-                return False, ReasonCode.MISSING_FINANCIAL_CONTEXT
+                return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
 
         # 3. Averaging period compatibility
         if ctx_a.averaging_period and ctx_b.averaging_period:
@@ -570,14 +623,39 @@ class ComplianceEngine:
                 return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
         elif require_financial_context and (ctx_a.averaging_period is not None or ctx_b.averaging_period is not None):
             if (ctx_a.averaging_period is None) != (ctx_b.averaging_period is None):
-                return False, ReasonCode.MISSING_FINANCIAL_CONTEXT
+                return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
 
         # 4. Metric compatibility
         if ctx_a.metric and ctx_b.metric:
             if str(ctx_a.metric).strip().lower() != str(ctx_b.metric).strip().lower():
                 return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
+        elif require_financial_context and (ctx_a.metric is not None or ctx_b.metric is not None):
+            if (ctx_a.metric is None) != (ctx_b.metric is None):
+                return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
 
         return True, None
+
+    @classmethod
+    def _parse_boolean_strict(cls, val: Any) -> bool | None:
+        """Strictly parses canonical booleans without treating arbitrary non-empty strings as True."""
+        if val is None:
+            return None
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, Decimal)):
+            if val == 1:
+                return True
+            if val == 0:
+                return False
+            return None
+        if isinstance(val, str):
+            s = val.strip().lower()
+            if s in ("true", "1", "yes"):
+                return True
+            if s in ("false", "0", "no"):
+                return False
+            return None
+        return None
 
     @staticmethod
     def _normalize_bool(val: Any) -> bool | None:
@@ -620,7 +698,6 @@ class ComplianceEngine:
                 return int(val)
             return None
         if isinstance(val, float):
-            # Reject floats for exact count behavior to prevent rounding inaccuracies
             return None
         if isinstance(val, str):
             s = val.strip()
@@ -667,21 +744,18 @@ class ComplianceEngine:
             # Try ISO 8601 datetime with or without timezone
             try:
                 if "T" in s or (" " in s and ":" in s):
-                    # Datetime string
                     if s.endswith("Z"):
                         dt = datetime.fromisoformat(s[:-1] + "+00:00")
                         return dt, "AWARE_DATETIME"
                     dt = datetime.fromisoformat(s)
                     return dt, "AWARE_DATETIME" if dt.tzinfo is not None else "NAIVE_DATETIME"
                 else:
-                    # Date-only ISO format YYYY-MM-DD
                     if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
                         d = date.fromisoformat(s)
                         return d, "DATE_ONLY"
             except (ValueError, TypeError):
                 pass
 
-            # Standard date-only formats with leap-year boundary validation
             for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
                 try:
                     dt = datetime.strptime(s, fmt)
@@ -716,38 +790,44 @@ class ComplianceEngine:
         unit: str | None = None,
         rule_unit: str | None = None,
         case_insensitive: bool = False,
+        rule: TenderRequirementRead | None = None,
     ) -> bool:
         """Determines semantic equality across numeric, boolean, date, and string domains with strict context."""
         if a is None or b is None:
             return a is b
-        if a == b and not meta_a and not meta_b:
+        if a == b and not meta_a and not meta_b and not unit and not rule_unit and not rule:
             return True
 
-        eff_unit = unit or rule_unit
+        meta_a = meta_a or {}
+        meta_b = meta_b or {}
 
-        # 1. Numeric / Financial comparison with FinancialContext
-        ctx_a = cls._parse_financial_context(a, meta_a, default_unit=None)
-        ctx_b = cls._parse_financial_context(b, meta_b, default_unit=eff_unit)
+        # 1. Financial check
+        if cls._is_financial_domain(rule=rule, obs_val=a, exp_val=b, obs_meta=meta_a, exp_meta=meta_b):
+            ctx_a = cls._parse_financial_context(a, meta_a, default_unit=None)
+            ctx_b = cls._parse_financial_context(b, meta_b, default_unit=rule_unit or unit)
 
-        if ctx_a.is_valid and ctx_b.is_valid:
-            is_compat, _ = cls._check_financial_compatibility(ctx_a, ctx_b, require_financial_context=False)
+            if not ctx_a.is_valid or not ctx_b.is_valid:
+                return False
+
+            is_compat, _ = cls._check_financial_compatibility(ctx_a, ctx_b, require_financial_context=True)
             if not is_compat:
                 return False
+
             return ctx_a.base_decimal_value == ctx_b.base_decimal_value
 
-        # Fallback simple numeric comparison
+        # 2. Pure Non-Financial Numeric comparison
         num_a = cls._normalize_number(a)
         num_b = cls._normalize_number(b)
         if num_a is not None and num_b is not None:
             return num_a == num_b
 
-        # 2. Boolean comparison
+        # 3. Boolean comparison
         bool_a = cls._normalize_bool(a)
         bool_b = cls._normalize_bool(b)
         if bool_a is not None and bool_b is not None:
             return bool_a == bool_b
 
-        # 3. Date / Datetime comparison
+        # 4. Date / Datetime comparison
         obj_a, t_type_a = cls._parse_date_or_datetime(a)
         obj_b, t_type_b = cls._parse_date_or_datetime(b)
         if obj_a is not None and obj_b is not None:
@@ -759,10 +839,9 @@ class ComplianceEngine:
                 return dt_a == dt_b
             if t_type_a == "NAIVE_DATETIME" and t_type_b == "NAIVE_DATETIME":
                 return obj_a == obj_b
-            # Mixed date/datetime or naive/aware are not equivalent
             return False
 
-        # 4. String comparison
+        # 5. String comparison
         str_a = cls._normalize_string(a)
         str_b = cls._normalize_string(b)
         if str_a is not None and str_b is not None:
@@ -825,29 +904,58 @@ class ComplianceEngine:
         rule_meta = getattr(rule, "metadata_json", {}) or {}
 
         # 1. Explicit boolean applicability in metadata
-        if "is_applicable" in rule_meta and rule_meta["is_applicable"] is not None:
-            is_app = bool(rule_meta["is_applicable"])
-            return is_app, ReasonCode.NOT_APPLICABLE_EXPLICIT if not is_app else "APPLICABLE"
-        if "applicable" in rule_meta and rule_meta["applicable"] is not None:
-            is_app = bool(rule_meta["applicable"])
-            return is_app, ReasonCode.NOT_APPLICABLE_EXPLICIT if not is_app else "APPLICABLE"
+        for bool_key in ("is_applicable", "applicable"):
+            if bool_key in rule_meta and rule_meta[bool_key] is not None:
+                parsed_bool = cls._parse_boolean_strict(rule_meta[bool_key])
+                if parsed_bool is True:
+                    return True, "APPLICABLE"
+                elif parsed_bool is False:
+                    return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
+                else:
+                    return None, ReasonCode.INVALID_APPLICABILITY_POLICY
 
         # 2. String policy in metadata
-        app_str = str(rule_meta.get("applicability", "")).strip().upper()
-        if app_str in ("NOT_APPLICABLE", "INAPPLICABLE", "EXEMPT"):
-            return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
-        if app_str in ("APPLICABLE", "MANDATORY"):
-            return True, "APPLICABLE"
+        if "applicability" in rule_meta and rule_meta["applicability"] is not None:
+            app_str = str(rule_meta["applicability"]).strip().upper()
+            if app_str in ("NOT_APPLICABLE", "INAPPLICABLE"):
+                return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
+            elif app_str == "EXEMPT":
+                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
+            elif app_str in ("APPLICABLE", "MANDATORY"):
+                return True, "APPLICABLE"
+            else:
+                return None, ReasonCode.INVALID_APPLICABILITY_POLICY
 
-        # 3. Categorical bidder-type applicability
+        # 3. Approved exemption policy
+        if "exemption" in rule_meta and rule_meta["exemption"] is not None:
+            ex_val = rule_meta["exemption"]
+            parsed_ex = cls._parse_boolean_strict(ex_val)
+            if parsed_ex is True:
+                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
+            elif parsed_ex is False:
+                pass
+            elif isinstance(ex_val, str) and ex_val.strip().upper() in ("APPROVED", "VALID", "GRANTED", "YES"):
+                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
+            else:
+                return None, ReasonCode.INVALID_APPLICABILITY_POLICY
+
+        if "optional_exemption" in rule_meta and rule_meta["optional_exemption"] is not None:
+            opt_ex = cls._parse_boolean_strict(rule_meta["optional_exemption"])
+            if opt_ex is True and not rule.mandatory:
+                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
+
+        # 4. Categorical bidder-type applicability
         applicable_types = rule_meta.get("applicable_bidder_types") or rule_meta.get("applicable_categories")
         if applicable_types and isinstance(applicable_types, (list, tuple, set)):
             bidder_type = context.get("bidder_type") or context.get("bidder_category")
             if bidder_type:
-                if bidder_type in applicable_types:
+                if str(bidder_type).strip().lower() in [str(t).strip().lower() for t in applicable_types]:
                     return True, "APPLICABLE"
                 else:
                     return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
+            else:
+                # Do not treat missing bidder category as a categorical mismatch
+                return None, "UNKNOWN_APPLICABILITY"
 
         return None, "UNKNOWN_APPLICABILITY"
 
@@ -877,23 +985,24 @@ class ComplianceEngine:
                 f"ComplianceEngine cannot evaluate unapproved requirement candidate '{getattr(rule, 'id', 'UNKNOWN')}'."
             )
 
-        # Deterministic evaluation timestamp: require explicit clock or recorded context
+        # Explicit recorded evaluation timestamp
         eval_ts = evaluation_timestamp or context.get("evaluation_timestamp") or context.get("evaluated_at")
+        if eval_ts is None and cls._is_time_dependent_rule(rule):
+            return RuleEvaluationRead(
+                id=str(uuid.uuid4()),
+                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule.id,
+                status=ComplianceStatus.UNKNOWN,
+                reason_code=ReasonCode.MISSING_EVALUATION_CLOCK,
+                observed_value=None,
+                expected_value=rule.expected_value,
+                evidence_ids=[],
+                rule_version=f"{cls.ENGINE_VERSION}",
+                evaluated_at=datetime.now(timezone.utc),
+            )
+
         if eval_ts is None:
-            if cls._is_time_dependent_rule(rule):
-                return RuleEvaluationRead(
-                    id=str(uuid.uuid4()),
-                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
-                    requirement_id=rule.id,
-                    status=ComplianceStatus.UNKNOWN,
-                    reason_code=ReasonCode.MISSING_EVALUATION_CLOCK,
-                    observed_value=None,
-                    expected_value=rule.expected_value,
-                    evidence_ids=[],
-                    rule_version=f"{cls.ENGINE_VERSION}",
-                    evaluated_at=datetime(1970, 1, 1, tzinfo=timezone.utc),
-                )
-            eval_ts = datetime(1970, 1, 1, tzinfo=timezone.utc)
+            eval_ts = datetime.now(timezone.utc)
 
         eval_id = str(uuid.uuid4())
         is_ci = cls._is_status_or_enum_field(rule.field, rule.requirement_type)
@@ -907,6 +1016,19 @@ class ComplianceEngine:
                 requirement_id=rule.id,
                 status=ComplianceStatus.NOT_APPLICABLE,
                 reason_code=app_reason or ReasonCode.NOT_APPLICABLE_EXPLICIT,
+                observed_value=None,
+                expected_value=rule.expected_value,
+                evidence_ids=[],
+                rule_version=f"{cls.ENGINE_VERSION}",
+                evaluated_at=eval_ts,
+            )
+        elif app_reason == ReasonCode.INVALID_APPLICABILITY_POLICY:
+            return RuleEvaluationRead(
+                id=eval_id,
+                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule.id,
+                status=ComplianceStatus.UNKNOWN,
+                reason_code=ReasonCode.INVALID_APPLICABILITY_POLICY,
                 observed_value=None,
                 expected_value=rule.expected_value,
                 evidence_ids=[],
@@ -949,7 +1071,7 @@ class ComplianceEngine:
         if len(verified_with_val) > 1:
             first_v = verified_with_val[0].verified_value
             for v in verified_with_val[1:]:
-                if not cls._values_equivalent(first_v, v.verified_value, unit=rule.unit, case_insensitive=is_ci):
+                if not cls._values_equivalent(first_v, v.verified_value, unit=rule.unit, case_insensitive=is_ci, rule=rule):
                     has_ver_conflict = True
                     break
 
@@ -1002,6 +1124,7 @@ class ComplianceEngine:
                     meta_b=f_meta,
                     unit=rule.unit,
                     case_insensitive=is_ci,
+                    rule=rule,
                 ):
                     has_fact_conflict = True
                     break
@@ -1048,6 +1171,7 @@ class ComplianceEngine:
                 meta_b=ver_meta,
                 unit=rule.unit,
                 case_insensitive=is_ci,
+                rule=rule,
             ):
                 return RuleEvaluationRead(
                     id=eval_id,
@@ -1246,7 +1370,6 @@ class ComplianceEngine:
                 evaluated_at=eval_ts,
             )
 
-        # Attach fact metadata if present
         if facts_with_val and hasattr(facts_with_val[0], "metadata_json") and facts_with_val[0].metadata_json:
             obs_meta = {**facts_with_val[0].metadata_json, **obs_meta}
 
@@ -1281,6 +1404,9 @@ class ComplianceEngine:
             return ComplianceStatus.UNKNOWN, ReasonCode.OBSERVED_VALUE_NULL
 
         is_ci = cls._is_status_or_enum_field(rule.field, rule.requirement_type)
+        is_financial = cls._is_financial_domain(
+            rule=rule, obs_val=observed, exp_val=expected, obs_meta=obs_meta, exp_meta=rule_meta
+        )
 
         if operator in (OperatorEnum.EQ, OperatorEnum.NE):
             # 1. Check if expected establishes boolean requirement
@@ -1299,18 +1425,18 @@ class ComplianceEngine:
                 else:
                     return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
-            # 2. Check if expected establishes financial / numeric requirement with FinancialContext
-            ctx_exp = cls._parse_financial_context(expected, rule_meta, default_unit=rule.unit)
-            if ctx_exp.is_valid and not isinstance(expected, bool) and not (
-                isinstance(expected, str) and expected.strip().lower() in ("true", "false", "yes", "no")
-            ):
+            # 2. Check if financial domain comparison
+            if is_financial:
+                ctx_exp = cls._parse_financial_context(expected, rule_meta, default_unit=rule.unit)
                 ctx_obs = cls._parse_financial_context(observed, obs_meta, default_unit=None)
+
                 if not ctx_obs.is_valid:
                     return ComplianceStatus.REVIEW_REQUIRED, ctx_obs.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
+                if not ctx_exp.is_valid:
+                    return ComplianceStatus.REVIEW_REQUIRED, ctx_exp.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
 
-                # Check strict financial context compatibility
                 is_compat, compat_reason = cls._check_financial_compatibility(
-                    ctx_exp, ctx_obs, require_financial_context=bool(rule.unit or ctx_exp.currency)
+                    ctx_exp, ctx_obs, require_financial_context=True
                 )
                 if not is_compat:
                     return ComplianceStatus.REVIEW_REQUIRED, compat_reason or ReasonCode.CURRENCY_MISMATCH
@@ -1321,7 +1447,7 @@ class ComplianceEngine:
                 else:
                     return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
-            # 3. Check if expected establishes date / datetime requirement
+            # 3. Check if date / datetime requirement
             dt_exp_obj, t_exp_type = cls._parse_date_or_datetime(expected)
             if dt_exp_obj is not None and isinstance(expected, (datetime, date, str)) and (
                 isinstance(expected, (datetime, date))
@@ -1333,7 +1459,6 @@ class ComplianceEngine:
                 if dt_obs_obj is None:
                     return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.MALFORMED_DATE
 
-                # Check temporal types
                 if t_obs_type == "DATE_ONLY" and t_exp_type == "DATE_ONLY":
                     match = dt_obs_obj == dt_exp_obj
                 elif t_obs_type == "AWARE_DATETIME" and t_exp_type == "AWARE_DATETIME":
@@ -1345,7 +1470,6 @@ class ComplianceEngine:
                 ):
                     return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.AMBIGUOUS_TIMEZONE
                 else:
-                    # Mixed date and datetime
                     return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TEMPORAL_CONTEXT_MISMATCH
 
                 if operator == OperatorEnum.EQ:
@@ -1353,7 +1477,17 @@ class ComplianceEngine:
                 else:
                     return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
-            # 4. General string / enum comparison
+            # 4. Pure Non-Financial Numeric comparison
+            num_obs = cls._normalize_number(observed)
+            num_exp = cls._normalize_number(expected)
+            if num_obs is not None and num_exp is not None:
+                match = num_obs == num_exp
+                if operator == OperatorEnum.EQ:
+                    return (ComplianceStatus.PASS, ReasonCode.EQUAL) if match else (ComplianceStatus.FAIL, ReasonCode.NOT_EQUAL)
+                else:
+                    return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
+
+            # 5. General string / enum comparison
             match = cls._values_equivalent(
                 observed,
                 expected,
@@ -1361,6 +1495,7 @@ class ComplianceEngine:
                 meta_b=rule_meta,
                 unit=rule.unit,
                 case_insensitive=is_ci,
+                rule=rule,
             )
             if operator == OperatorEnum.EQ:
                 return (ComplianceStatus.PASS, ReasonCode.EQUAL) if match else (ComplianceStatus.FAIL, ReasonCode.NOT_EQUAL)
@@ -1368,23 +1503,28 @@ class ComplianceEngine:
                 return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
         elif operator in (OperatorEnum.GT, OperatorEnum.GTE, OperatorEnum.LT, OperatorEnum.LTE):
-            ctx_obs = cls._parse_financial_context(observed, obs_meta, default_unit=None)
-            ctx_exp = cls._parse_financial_context(expected, rule_meta, default_unit=rule.unit)
+            if is_financial:
+                ctx_obs = cls._parse_financial_context(observed, obs_meta, default_unit=None)
+                ctx_exp = cls._parse_financial_context(expected, rule_meta, default_unit=rule.unit)
 
-            if not ctx_obs.is_valid:
-                return ComplianceStatus.REVIEW_REQUIRED, ctx_obs.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
-            if not ctx_exp.is_valid:
-                return ComplianceStatus.REVIEW_REQUIRED, ctx_exp.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
+                if not ctx_obs.is_valid:
+                    return ComplianceStatus.REVIEW_REQUIRED, ctx_obs.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
+                if not ctx_exp.is_valid:
+                    return ComplianceStatus.REVIEW_REQUIRED, ctx_exp.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
 
-            # Strict financial context compatibility check
-            is_compat, compat_reason = cls._check_financial_compatibility(
-                ctx_exp, ctx_obs, require_financial_context=bool(rule.unit or ctx_exp.currency)
-            )
-            if not is_compat:
-                return ComplianceStatus.REVIEW_REQUIRED, compat_reason or ReasonCode.CURRENCY_MISMATCH
+                is_compat, compat_reason = cls._check_financial_compatibility(
+                    ctx_exp, ctx_obs, require_financial_context=True
+                )
+                if not is_compat:
+                    return ComplianceStatus.REVIEW_REQUIRED, compat_reason or ReasonCode.CURRENCY_MISMATCH
 
-            dec_obs = ctx_obs.base_decimal_value
-            dec_exp = ctx_exp.base_decimal_value
+                dec_obs = ctx_obs.base_decimal_value
+                dec_exp = ctx_exp.base_decimal_value
+            else:
+                dec_obs = cls._normalize_number(observed)
+                dec_exp = cls._normalize_number(expected)
+                if dec_obs is None or dec_exp is None:
+                    return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TYPE_CONVERSION_ERROR
 
             if operator == OperatorEnum.GT:
                 return (ComplianceStatus.PASS, ReasonCode.GREATER_THAN) if dec_obs > dec_exp else (ComplianceStatus.FAIL, ReasonCode.NOT_GREATER_THAN)
@@ -1411,14 +1551,12 @@ class ComplianceEngine:
             if obs_obj is None or exp_obj is None:
                 return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.MALFORMED_DATE
 
-            # Date vs Date comparison
             if obs_type == "DATE_ONLY" and exp_type == "DATE_ONLY":
                 if operator == OperatorEnum.DATE_BEFORE:
                     return (ComplianceStatus.PASS, ReasonCode.BEFORE_DATE) if obs_obj < exp_obj else (ComplianceStatus.FAIL, ReasonCode.ON_OR_AFTER_DATE)
                 else:
                     return (ComplianceStatus.PASS, ReasonCode.AFTER_DATE) if obs_obj > exp_obj else (ComplianceStatus.FAIL, ReasonCode.ON_OR_BEFORE_DATE)
 
-            # Datetime vs Datetime comparison
             if obs_type == "AWARE_DATETIME" and exp_type == "AWARE_DATETIME":
                 obs_dt = obs_obj.astimezone(timezone.utc)
                 exp_dt = exp_obj.astimezone(timezone.utc)
@@ -1438,7 +1576,6 @@ class ComplianceEngine:
             ):
                 return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.AMBIGUOUS_TIMEZONE
 
-            # Mixed Date and Datetime comparison
             return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TEMPORAL_CONTEXT_MISMATCH
 
         elif operator == OperatorEnum.IN:
@@ -1450,6 +1587,7 @@ class ComplianceEngine:
                     meta_a=obs_meta,
                     rule_unit=rule.unit,
                     case_insensitive=is_ci,
+                    rule=rule,
                 )
                 for item in exp_list
             )
@@ -1464,9 +1602,64 @@ class ComplianceEngine:
                     meta_a=obs_meta,
                     rule_unit=rule.unit,
                     case_insensitive=is_ci,
+                    rule=rule,
                 )
                 for item in exp_list
             )
             return (ComplianceStatus.PASS, ReasonCode.VALUE_NOT_IN_SET) if not match else (ComplianceStatus.FAIL, ReasonCode.VALUE_IN_SET)
 
         return ComplianceStatus.UNKNOWN, ReasonCode.UNSUPPORTED_OPERATOR
+
+    @classmethod
+    def replay_evaluation(
+        cls,
+        snapshot: dict[str, Any],
+        rule_id: str,
+    ) -> RuleEvaluationRead:
+        """Performs bounded historical evaluation verification against an authoritative stored snapshot.
+
+        Reconstruction uses recorded results as the authoritative record. Full semantic replay across
+        disparate engine versions is bounded to supported engine versions matching ENGINE_VERSION.
+        """
+        snap_ts = snapshot.get("started_at") or snapshot.get("created_at") or datetime.now(timezone.utc)
+        if isinstance(snap_ts, str):
+            try:
+                snap_ts = datetime.fromisoformat(snap_ts.replace("Z", "+00:00"))
+            except Exception:
+                snap_ts = datetime.now(timezone.utc)
+
+        recorded_engine_version = snapshot.get("engine_version") or snapshot.get("rule_version")
+        if recorded_engine_version and recorded_engine_version not in cls.SUPPORTED_REPLAY_VERSIONS:
+            return RuleEvaluationRead(
+                id=str(uuid.uuid4()),
+                bidder_id=snapshot.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule_id,
+                status=ComplianceStatus.REVIEW_REQUIRED,
+                reason_code=ReasonCode.HISTORICAL_VERSION_UNSUPPORTED,
+                observed_value=None,
+                expected_value=None,
+                evidence_ids=[],
+                rule_version=f"{cls.ENGINE_VERSION}",
+                evaluated_at=snap_ts,
+            )
+
+        recorded_evals = snapshot.get("rule_evaluations") or []
+        for ev in recorded_evals:
+            ev_req_id = ev.get("requirement_id") if isinstance(ev, dict) else getattr(ev, "requirement_id", None)
+            if ev_req_id == rule_id:
+                if isinstance(ev, dict):
+                    return RuleEvaluationRead.model_validate(ev)
+                return ev
+
+        return RuleEvaluationRead(
+            id=str(uuid.uuid4()),
+            bidder_id=snapshot.get("bidder_id", "UNKNOWN_BIDDER"),
+            requirement_id=rule_id,
+            status=ComplianceStatus.UNKNOWN,
+            reason_code=ReasonCode.MISSING_EVIDENCE,
+            observed_value=None,
+            expected_value=None,
+            evidence_ids=[],
+            rule_version=f"{cls.ENGINE_VERSION}",
+            evaluated_at=snap_ts,
+        )

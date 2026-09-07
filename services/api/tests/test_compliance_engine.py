@@ -19,9 +19,11 @@ def make_requirement(
     expected_value: any,
     field: str = "financial.average_annual_turnover",
     mandatory: bool = True,
-    req_type: RequirementType = RequirementType.TURNOVER,
+    req_type: RequirementType | None = None,
     meta: dict | None = None,
 ) -> TenderRequirementRead:
+    if req_type is None:
+        req_type = RequirementType.TURNOVER if "financial" in field else RequirementType.CUSTOM
     return TenderRequirementRead(
         id="REQ-001",
         tender_id="TENDER-001",
