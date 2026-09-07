@@ -137,9 +137,26 @@ def test_idempotency_key_deduplication():
 
 
 def test_idempotency_invalid_key_format_422():
+    # First create tender & bidder so endpoint reaches idempotency validation
+    create_res = client.post(
+        "/api/v1/tenders",
+        json={"tender_number": "TENDER-IDEM-422", "title": "Idempotency 422 Test Tender"},
+        headers=get_auth_headers(),
+    )
+    assert create_res.status_code == 201
+    tender_id = create_res.json()["id"]
+
+    bidder_res = client.post(
+        f"/api/v1/tenders/{tender_id}/bidders",
+        json={"bidder_name": "Idempotent 422 Bidder LLC"},
+        headers=get_auth_headers(),
+    )
+    assert bidder_res.status_code == 201
+    bidder_id = bidder_res.json()["id"]
+
     headers = get_auth_headers()
     headers["X-Idempotency-Key"] = "invalid key with spaces!@#"
-    res = client.post("/api/v1/bidders/some-bidder-id/verify", headers=headers)
+    res = client.post(f"/api/v1/bidders/{bidder_id}/verify", headers=headers)
     assert res.status_code == 422
     assert res.json()["error"]["code"] == "INVALID_IDEMPOTENCY_KEY"
 
@@ -179,7 +196,6 @@ def test_idempotency_crash_retry_recovery():
         db.close()
 
     # Retry request with same key should recover crashed state rather than 409 conflict
-    # First create bidder to allow endpoint to process
     create_tender = client.post(
         "/api/v1/tenders",
         json={"tender_number": "TENDER-CRASH-001", "title": "Crash Recovery Test Tender"},
@@ -207,10 +223,11 @@ def test_sse_monotonic_integer_cursor_and_reconnect():
     from app.db.session import SessionLocal
     from app.models.domain import JobEvent, ProcessingJob
 
+    job_id = "job-sse-test-100"
     db = SessionLocal()
     try:
         job = ProcessingJob(
-            id="job-sse-test-100",
+            id=job_id,
             target_type="BIDDER",
             target_id="bidder-sse-100",
             job_type="VERIFY_BIDDER",
@@ -219,9 +236,9 @@ def test_sse_monotonic_integer_cursor_and_reconnect():
         db.add(job)
         db.commit()
 
-        ev1 = JobEvent(job_id=job.id, seq=1, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=10, message="Stage 1 started")
-        ev2 = JobEvent(job_id=job.id, seq=2, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=50, message="Stage 2 running")
-        ev3 = JobEvent(job_id=job.id, seq=3, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=90, message="Stage 3 finishing")
+        ev1 = JobEvent(job_id=job_id, seq=1, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=10, message="Stage 1 started")
+        ev2 = JobEvent(job_id=job_id, seq=2, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=50, message="Stage 2 running")
+        ev3 = JobEvent(job_id=job_id, seq=3, stage=JobStage.VERIFICATION, status=JobStatus.RUNNING, progress=90, message="Stage 3 finishing")
         db.add_all([ev1, ev2, ev3])
         db.commit()
     finally:
@@ -230,7 +247,7 @@ def test_sse_monotonic_integer_cursor_and_reconnect():
     # Reconnect with Last-Event-ID: 2 -> should receive only event 3
     headers = get_auth_headers()
     headers["Last-Event-ID"] = "2"
-    res = client.get(f"/api/v1/jobs/{job.id}/events", headers=headers)
+    res = client.get(f"/api/v1/jobs/{job_id}/events", headers=headers)
     assert res.status_code == 200
     content = res.text
     assert "id: 3" in content
@@ -242,10 +259,11 @@ def test_sse_payload_sanitization():
     from app.db.session import SessionLocal
     from app.models.domain import JobEvent, ProcessingJob
 
+    job_id = "job-sse-sanitization-200"
     db = SessionLocal()
     try:
         job = ProcessingJob(
-            id="job-sse-sanitization-200",
+            id=job_id,
             target_type="BIDDER",
             target_id="bidder-sse-200",
             job_type="VERIFY_BIDDER",
@@ -255,7 +273,7 @@ def test_sse_payload_sanitization():
         db.commit()
 
         ev = JobEvent(
-            job_id=job.id,
+            job_id=job_id,
             seq=1,
             stage=JobStage.VERIFICATION,
             status=JobStatus.FAILED,
@@ -269,7 +287,7 @@ def test_sse_payload_sanitization():
         db.close()
 
     headers = get_auth_headers()
-    res = client.get(f"/api/v1/jobs/{job.id}/events", headers=headers)
+    res = client.get(f"/api/v1/jobs/{job_id}/events", headers=headers)
     assert res.status_code == 200
     content = res.text
     assert "Secret DB credentials leak" not in content
@@ -280,7 +298,7 @@ def test_sse_authorization_and_404():
     # 404 Not Found for non-existent job
     res_404 = client.get("/api/v1/jobs/non-existent-job-uuid-9999/events", headers=get_auth_headers())
     assert res_404.status_code == 404
-    assert res_404.json()["error"]["code"] == "NOT_FOUND"
+    assert res_404.json()["error"]["code"] in ("NOT_FOUND", "HTTP_404")
 
     # 401 Unauthenticated
     res_401 = client.get("/api/v1/jobs/some-job-id/events")

@@ -69,11 +69,14 @@ class BidVerificationService:
         return ComplianceStatus.PASS
 
     @staticmethod
-    def close_orphaned_run(db: Session, run: ComplianceRun, bidder_id: str) -> None:
-        """Marks a stale RUNNING ComplianceRun as FAILED only if started > 5 minutes ago."""
-        if run.started_at and (datetime.now(timezone.utc) - run.started_at.replace(tzinfo=timezone.utc)).total_seconds() < 300:
-            # Active run created recently (likely currently being linked by concurrent request) - do not orphan
-            return
+    def close_orphaned_run(db: Session, run: ComplianceRun, bidder_id: str, force: bool = False) -> None:
+        """Marks a stale RUNNING ComplianceRun as FAILED if orphaned (unlinked or started > 5 minutes ago)."""
+        if not force and run.job_id is not None and run.started_at:
+            now_utc = datetime.now(timezone.utc)
+            run_started = run.started_at.replace(tzinfo=timezone.utc) if run.started_at.tzinfo is None else run.started_at
+            if (now_utc - run_started).total_seconds() < 300:
+                # Active job-linked run created recently (< 5 mins) - do not orphan
+                return
 
         run.execution_status = JobStatus.FAILED
         run.completed_at = datetime.now(timezone.utc)
