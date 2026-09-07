@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 from app.audit.logger import AuditLogger
 from app.auth.dependencies import get_current_principal, require_roles
@@ -29,6 +29,8 @@ from app.schemas.canonical import (
     ComplianceRunSummaryRead,
     ComplianceStatus,
     DocumentCreate,
+    DocumentRead,
+    DocumentType,
     EvidenceRead,
     HumanDecisionCreate,
     HumanDecisionRead,
@@ -44,6 +46,7 @@ from app.schemas.canonical import (
 )
 from app.services.ai_adapter import AIServiceAdapter
 from app.services.bid_verification_service import BidVerificationService
+from app.services.document_service import DocumentService
 
 router = APIRouter(tags=["Bidders"])
 ai_adapter = AIServiceAdapter()
@@ -497,4 +500,39 @@ async def get_bidder_report(
         evidence=[],
         audit_trail_count=audit_count,
     )
+
+
+@router.post("/bidders/{bidder_id}/documents", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
+async def upload_bidder_document(
+    bidder_id: str,
+    file: UploadFile = File(...),
+    document_type: DocumentType = Form(...),
+    principal: AuthenticatedPrincipal = Depends(
+        require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)
+    ),
+    db: Session = Depends(get_db),
+):
+    """Upload a raw document for a bidder."""
+    return await DocumentService.upload_bidder_document(
+        db, bidder_id=bidder_id, file=file, document_type=document_type, principal=principal
+    )
+
+
+@router.get("/bidders/{bidder_id}/documents", response_model=list[DocumentRead])
+def list_bidder_documents(
+    bidder_id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+    """List all documents associated with a bidder."""
+    bidder = db.query(Bidder).filter(Bidder.id == bidder_id).first()
+    if not bidder:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bidder with ID {bidder_id} not found.",
+        )
+
+    documents = db.query(Document).filter(Document.bidder_id == bidder_id).all()
+    return documents
+
 

@@ -284,6 +284,114 @@
         }
       }
     },
+    "/api/v1/tenders/{tender_id}/documents": {
+      "post": {
+        "tags": [
+          "Tenders"
+        ],
+        "summary": "Upload Tender Document",
+        "description": "Upload a raw document for a tender.",
+        "operationId": "upload_tender_document_api_v1_tenders__tender_id__documents_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tender_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tender Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_tender_document_api_v1_tenders__tender_id__documents_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Tenders"
+        ],
+        "summary": "List Tender Documents",
+        "description": "List all documents associated with a tender.",
+        "operationId": "list_tender_documents_api_v1_tenders__tender_id__documents_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tender_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tender Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentRead"
+                  },
+                  "title": "Response List Tender Documents Api V1 Tenders  Tender Id  Documents Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tenders/{tender_id}/bidders": {
       "post": {
         "tags": [
@@ -744,6 +852,252 @@
                 "schema": {
                   "$ref": "#/components/schemas/ReportRead"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bidders/{bidder_id}/documents": {
+      "post": {
+        "tags": [
+          "Bidders"
+        ],
+        "summary": "Upload Bidder Document",
+        "description": "Upload a raw document for a bidder.",
+        "operationId": "upload_bidder_document_api_v1_bidders__bidder_id__documents_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bidder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bidder Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_bidder_document_api_v1_bidders__bidder_id__documents_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Bidders"
+        ],
+        "summary": "List Bidder Documents",
+        "description": "List all documents associated with a bidder.",
+        "operationId": "list_bidder_documents_api_v1_bidders__bidder_id__documents_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bidder_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bidder Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentRead"
+                  },
+                  "title": "Response List Bidder Documents Api V1 Bidders  Bidder Id  Documents Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Get Document",
+        "description": "Retrieve metadata for a specific document by ID.",
+        "operationId": "get_document_api_v1_documents__document_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Delete Document",
+        "description": "Delete a document and its stored file content.",
+        "operationId": "delete_document_api_v1_documents__document_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/content": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Get Document Content",
+        "description": "Download or view stored file content for a document.",
+        "operationId": "get_document_content_api_v1_documents__document_id__content_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -1296,6 +1650,42 @@
         ],
         "title": "BidderRead"
       },
+      "Body_upload_bidder_document_api_v1_bidders__bidder_id__documents_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "document_type": {
+            "$ref": "#/components/schemas/DocumentType"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file",
+          "document_type"
+        ],
+        "title": "Body_upload_bidder_document_api_v1_bidders__bidder_id__documents_post"
+      },
+      "Body_upload_tender_document_api_v1_tenders__tender_id__documents_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "document_type": {
+            "$ref": "#/components/schemas/DocumentType",
+            "default": "TENDER"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_tender_document_api_v1_tenders__tender_id__documents_post"
+      },
       "ComplianceOverviewRead": {
         "properties": {
           "bidder_id": {
@@ -1580,6 +1970,50 @@
             "type": "string",
             "title": "Filename"
           },
+          "tender_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tender Id"
+          },
+          "bidder_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bidder Id"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
           "sha256": {
             "anyOf": [
               {
@@ -1607,10 +2041,6 @@
             "type": "string",
             "title": "Id"
           },
-          "bidder_id": {
-            "type": "string",
-            "title": "Bidder Id"
-          },
           "facts": {
             "items": {
               "$ref": "#/components/schemas/FactRead"
@@ -1630,7 +2060,6 @@
           "storage_uri",
           "filename",
           "id",
-          "bidder_id",
           "created_at"
         ],
         "title": "DocumentRead"
@@ -1638,6 +2067,7 @@
       "DocumentType": {
         "type": "string",
         "enum": [
+          "TENDER",
           "TURNOVER_CERT",
           "GST_CERT",
           "UDYAM_CERT",
@@ -1645,10 +2075,14 @@
           "EPFO_CHALLAN",
           "ESIC_CHALLAN",
           "PAN_CERT",
+          "FINANCIAL_STATEMENT",
+          "MCA_DOCUMENT",
+          "OEM_AUTHORIZATION",
+          "LOCAL_CONTENT_CERTIFICATE",
           "OTHER"
         ],
         "title": "DocumentType",
-        "description": "Bidder document categories."
+        "description": "Document categories for tenders and bidders."
       },
       "EvidenceRead": {
         "properties": {

@@ -105,6 +105,32 @@ class Settings(BaseSettings):
             raise ValueError("ARGUS_JWT_ACCESS_TOKEN_MINUTES must be a positive integer <= 525600.")
         return v
 
+    # Storage Configuration
+    ARGUS_STORAGE_BACKEND: Literal["local"] = "local"
+    ARGUS_STORAGE_LOCAL_PATH: str = "./data/uploads"
+    ARGUS_MAX_UPLOAD_MB: int = 20
+
+    @field_validator("ARGUS_STORAGE_BACKEND")
+    @classmethod
+    def validate_storage_backend(cls, v: str) -> str:
+        if v not in ("local",):
+            raise ValueError("ARGUS_STORAGE_BACKEND must be 'local'.")
+        return v
+
+    @field_validator("ARGUS_STORAGE_LOCAL_PATH")
+    @classmethod
+    def validate_storage_local_path(cls, v: str) -> str:
+        if not v or not isinstance(v, str) or not v.strip():
+            raise ValueError("ARGUS_STORAGE_LOCAL_PATH must be a non-empty string.")
+        return v.strip()
+
+    @field_validator("ARGUS_MAX_UPLOAD_MB")
+    @classmethod
+    def validate_max_upload_mb(cls, v: int) -> int:
+        if not isinstance(v, int) or v <= 0 or v > 500:
+            raise ValueError("ARGUS_MAX_UPLOAD_MB must be a positive integer <= 500.")
+        return v
+
 
     def get_cors_origins(self) -> list[str]:
         """Returns list of allowed origins parsed from string or list."""
