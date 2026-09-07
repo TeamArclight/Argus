@@ -13,8 +13,6 @@ from app.models.domain import (
     VerificationResult,
 )
 from app.schemas.canonical import (
-    EvidenceCreate,
-    EvidenceRead,
     VerificationMode,
     VerificationStatus,
 )
@@ -38,12 +36,22 @@ class EvidenceNormalizationService:
         fact: ExtractedFact | None = None,
         verification: VerificationResult | None = None,
         run: ComplianceRun | None = None,
+        run_id: str | None = None,
     ) -> None:
-        """Validates that all evidence components strictly belong to the specified bidder and tender."""
+        """Validates that all evidence components strictly exist and belong together without silent fallbacks."""
         if db:
             bidder = db.query(Bidder).filter(Bidder.id == bidder_id).first()
-            if bidder and bidder.tender_id != tender_id:
-                raise EvidenceOwnershipError(f"Bidder '{bidder_id}' tender_id '{bidder.tender_id}' does not match target tender_id '{tender_id}'.")
+            if not bidder:
+                raise EvidenceOwnershipError(f"Target bidder '{bidder_id}' not found.")
+            
+            tender = db.query(Tender).filter(Tender.id == tender_id).first()
+            if not tender:
+                raise EvidenceOwnershipError(f"Target tender '{tender_id}' not found.")
+
+            if bidder.tender_id != tender_id:
+                raise EvidenceOwnershipError(f"Target bidder '{bidder_id}' does not belong to target tender '{tender_id}'.")
+
+        target_run_id = run.id if run else run_id
 
         if run:
             if run.bidder_id != bidder_id:
@@ -60,14 +68,24 @@ class EvidenceNormalizationService:
         if fact:
             if fact.bidder_id != bidder_id:
                 raise EvidenceOwnershipError(f"ExtractedFact '{fact.id}' bidder_id '{fact.bidder_id}' does not match target bidder_id '{bidder_id}'.")
-            if document and fact.document_id != document.id:
-                raise EvidenceOwnershipError(f"ExtractedFact '{fact.id}' document_id '{fact.document_id}' does not match Document '{document.id}'.")
+            
+            doc_to_check = document
+            if not doc_to_check and fact.document_id and db:
+                doc_to_check = db.query(Document).filter(Document.id == fact.document_id).first()
+                if not doc_to_check:
+                    raise EvidenceOwnershipError(f"Document '{fact.document_id}' for ExtractedFact '{fact.id}' not found.")
+
+            if doc_to_check:
+                if fact.document_id != doc_to_check.id:
+                    raise EvidenceOwnershipError(f"ExtractedFact '{fact.id}' document_id '{fact.document_id}' does not match Document '{doc_to_check.id}'.")
+                if doc_to_check.bidder_id and doc_to_check.bidder_id != bidder_id:
+                    raise EvidenceOwnershipError(f"Document '{doc_to_check.id}' bidder_id '{doc_to_check.bidder_id}' does not match target bidder_id '{bidder_id}'.")
 
         if verification:
             if verification.bidder_id != bidder_id:
                 raise EvidenceOwnershipError(f"VerificationResult '{verification.id}' bidder_id '{verification.bidder_id}' does not match target bidder_id '{bidder_id}'.")
-            if run and verification.run_id and verification.run_id != run.id:
-                raise EvidenceOwnershipError(f"VerificationResult '{verification.id}' run_id '{verification.run_id}' does not match ComplianceRun '{run.id}'.")
+            if target_run_id and verification.run_id and verification.run_id != target_run_id:
+                raise EvidenceOwnershipError(f"VerificationResult '{verification.id}' run_id '{verification.run_id}' does not match target run_id '{target_run_id}'.")
 
     @classmethod
     def normalize_fact_evidence(
@@ -80,7 +98,7 @@ class EvidenceNormalizationService:
         run_id: str | None = None,
     ) -> Evidence:
         """Normalizes an ExtractedFact (document claim) into a canonical Evidence record without internal commits."""
-        cls.validate_ownership(db, bidder_id, tender_id, document=document, fact=fact)
+        cls.validate_ownership(db, bidder_id, tender_id, document=document, fact=fact, run_id=run_id)
 
         snippet_text = fact.source_text or ""
         doc_sha = document.sha256 if document else None
@@ -129,12 +147,15 @@ class EvidenceNormalizationService:
         run_id: str | None = None,
     ) -> Evidence:
         """Normalizes a VerificationResult into a canonical Evidence record preserving trust mode without internal commits."""
-        cls.validate_ownership(db, bidder_id, tender_id, verification=verification)
+        cls.validate_ownership(db, bidder_id, tender_id, verification=verification, run_id=run_id)
 
         mode_val = verification.mode
         mode_str = mode_val.value if hasattr(mode_val, "value") else str(mode_val) if mode_val else "UNKNOWN"
         source_val = verification.source.value if verification.source and hasattr(verification.source, "value") else str(verification.source) if verification.source else None
-        snippet_text = verification.error_message or verification.verification_reference or ""
+        
+        # Snippet stores empty string for registry verifications (source text comes from documents only).
+        # Error messages and verification references are kept in distinct metadata fields.
+        snippet_text = ""
         summary_text = f"Registry verification for {verification.field}: status={verification.status.value if hasattr(verification.status, 'value') else verification.status}, verified={verification.verified_value}"
 
         evidence = Evidence(
@@ -149,6 +170,7 @@ class EvidenceNormalizationService:
                 "claimed_value": verification.claimed_value,
                 "verified_value": verification.verified_value,
                 "verification_reference": verification.verification_reference,
+                "error_message": verification.error_message,
                 "summary": summary_text,
             },
             created_at=datetime.now(timezone.utc),

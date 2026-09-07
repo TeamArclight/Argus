@@ -21,7 +21,7 @@ The `Evidence` domain model ([domain.py](file:///c:/Users/user/OneDrive/Document
 * `source_type`: Provenance category (`"DOCUMENT"`, `"REGISTRY"`, `"PORTAL_CACHE"`, `"DEMO"`).
 * `source_reference`: Reference string (e.g. document filename or API reference ID).
 * `page_number`: 1-based page number where extracted text was located.
-* `snippet`: Raw text snippet or verified summary representation (no synthetic snippets fabricated).
+* `snippet`: Raw source-derived text snippet (empty for registry verifications to prevent diagnostic string pollution).
 * `sha256`: Digest of the underlying document bytes at extraction time.
 * `verification_mode`: Sourcing operational mode (`LIVE`, `PORTAL_CACHED`, `DEMO`, `DOCUMENT`).
 * `verification_status`: Verification outcome (`VERIFIED`, `UNVERIFIED`, `MISMATCH`, `SERVICE_ERROR`, `UNAVAILABLE`, `TIMEOUT`).
@@ -30,7 +30,7 @@ The `Evidence` domain model ([domain.py](file:///c:/Users/user/OneDrive/Document
 
 ---
 
-## 2. Trust Semantics & Verification Modes
+## 2. Trust Semantics & Truthful Source Separation
 
 The pipeline enforces strict truthfulness boundaries between extracted document claims and live external registry verifications:
 
@@ -41,20 +41,20 @@ The pipeline enforces strict truthfulness boundaries between extracted document 
 2. **Registry Verification Adapters**:
    - `verification_mode` reflects actual operational mode (`LIVE`, `PORTAL_CACHED`, `DEMO`).
    - Mismatches, network errors, timeouts, or fallback modes preserve their true status (`MISMATCH`, `SERVICE_ERROR`, `TIMEOUT`, `UNAVAILABLE`).
-   - System error or missing configuration states never simulate successful verification.
+   - Diagnostic strings (`error_message`, `verification_reference`) are kept in distinct `location_metadata` and `source_reference` fields, never fabricated as source snippets.
 
 ---
 
-## 3. Evidence Ownership Isolation & Normalization
+## 3. Fail-Closed Ownership Isolation & Normalization
 
-`EvidenceNormalizationService` ([evidence_service.py](file:///c:/Users/user/OneDrive/Documents/My%20Projects/Argus-main/services/api/app/services/evidence_service.py)) provides centralized validation:
+`EvidenceNormalizationService` ([evidence_service.py](file:///c:/Users/user/OneDrive/Documents/My%20Projects/Argus-main/services/api/app/services/evidence_service.py)) provides centralized fail-closed validation:
 
 * **Ownership Validation**:
-  - `validate_ownership()` verifies that bidder IDs, tender IDs, document IDs, facts, and verification results belong to the target entity across DB relationships.
-  - Cross-bidder or cross-tender linkage raises explicit `ValueError` or `EvidenceOwnershipError` exceptions to prevent data leakage.
+  - `validate_ownership()` verifies that bidder IDs, tender IDs, document IDs, facts, and verification results exist in the DB and belong together across relationships.
+  - Missing entities, cross-bidder, cross-tender, or cross-run references raise explicit `EvidenceOwnershipError` exceptions to prevent data leakage.
 * **Transaction Boundary**:
-  - `normalize_fact_evidence()` and `normalize_verification_evidence()` stage evidence records in the active DB session without intermediate `commit()` or `refresh()` calls.
-  - Transaction boundaries are owned strictly by workflow entry points (`BidVerificationService`), guaranteeing atomic commits or clean rollbacks upon failure.
+  - `normalize_fact_evidence()` and `normalize_verification_evidence()` stage evidence records in the active DB session without intermediate `commit()` calls.
+  - The initial `RUNNING` status row for `ComplianceRun` is committed at workflow start to allow real-time status monitoring. All subsequent workflow artifacts (facts evidence, verification results, evidence, evaluations, risk signals, snapshot JSON, run completion status, job status, and audit log) are staged in session and committed atomically in a SINGLE final transaction upon success. On workflow failure or snapshot error, all staged artifacts are rolled back, and the run is marked `FAILED`.
 
 ---
 

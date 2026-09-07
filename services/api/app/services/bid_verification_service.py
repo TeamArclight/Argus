@@ -454,6 +454,26 @@ class BidVerificationService:
                 summary_dict["reason_code"] = reason_code
             run.summary_json = summary_dict
             run.input_snapshot_json = input_snapshot
+
+            # Update job completion status in session
+            if job:
+                job.status = JobStatus.COMPLETED if overall_status in (ComplianceStatus.PASS, ComplianceStatus.FAIL) else JobStatus.REVIEW_REQUIRED
+                job.current_stage = JobStage.REPORTING
+                job.progress = 100
+                job.completed_at = datetime.now(timezone.utc)
+
+            # Stage completion audit entry in session without intermediate commit
+            AuditLogger.create_entry(
+                self.db,
+                action="COMPLIANCE_EVALUATION_COMPLETED",
+                entity_type="BIDDER",
+                entity_id=bidder.id,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                payload={"overall_status": overall_status, "evaluations_count": len(evaluations_schema), "run_id": run.id},
+            )
+
+            # Single atomic commit for entire completion batch (run, evaluations, risks, evidence, job, audit)
             self.db.commit()
 
             # 6. Fetch latest human decision if present
@@ -464,22 +484,6 @@ class BidVerificationService:
                 .first()
             )
             latest_decision_schema = HumanDecisionRead.model_validate(latest_decision_db) if latest_decision_db else None
-
-            # Update job completion status
-            if job:
-                job.status = JobStatus.COMPLETED if overall_status in (ComplianceStatus.PASS, ComplianceStatus.FAIL) else JobStatus.REVIEW_REQUIRED
-                job.current_stage = JobStage.REPORTING
-                job.progress = 100
-                job.completed_at = datetime.now(timezone.utc)
-                self.db.commit()
-
-            AuditLogger.log(
-                self.db,
-                action="COMPLIANCE_EVALUATION_COMPLETED",
-                entity_type="BIDDER",
-                entity_id=bidder.id,
-                payload={"overall_status": overall_status, "evaluations_count": len(evaluations_schema), "run_id": run.id},
-            )
 
             return ComplianceOverviewRead(
                 bidder_id=bidder.id,

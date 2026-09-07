@@ -534,7 +534,7 @@ def test_cross_bidder_tender_document_run_ownership(db_session, sample_tender, s
     db_session.commit()
 
     # 1. Cross-tender bidder
-    with pytest.raises(EvidenceOwnershipError, match="does not match target tender_id"):
+    with pytest.raises(EvidenceOwnershipError, match="does not belong to target tender"):
         EvidenceNormalizationService.validate_ownership(
             db=db_session,
             bidder_id=other_bidder.id,
@@ -654,3 +654,162 @@ def test_current_human_decision_clearly_separated_from_historical_report(db_sess
     db_session.refresh(sample_bidder)
     assert decision.status == HumanDecisionStatus.QUALIFIED
     assert decision.officer_id == "officer-101"
+
+
+def test_missing_snapshot_fields_and_stable_reconstruction(db_session, sample_bidder):
+    """14. Verifies missing snapshot fields return explicit limitations notice without crashing or fabricating data, and repeated reads are stable."""
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_bidder.tender_id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        completed_at=datetime(2026, 1, 1, 10, 0, 5, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            # missing "approved_requirements", "facts", "verifications", "evidence"
+        },
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    matrix1, ev_schema1, notice1 = build_compliance_matrix(db_session, sample_bidder, run, [], [])
+    matrix2, ev_schema2, notice2 = build_compliance_matrix(db_session, sample_bidder, run, [], [])
+
+    assert notice1 is not None
+    assert "missing or malformed required sections" in notice1
+    # Stable repeated reads
+    assert matrix1.model_dump() == matrix2.model_dump()
+    assert notice1 == notice2
+    assert len(ev_schema1) == len(ev_schema2)
+
+
+def test_no_fabricated_evidence_ids_or_timestamps(db_session, sample_bidder):
+    """15. Verifies reconstructed evidence retains exact snapshot IDs and timestamps without fabricating random UUIDs or now()."""
+    run_time = datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ev_id = "ev-exact-id-123"
+
+    run = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_bidder.tender_id,
+        execution_status=JobStatus.COMPLETED,
+        overall_status=ComplianceStatus.PASS,
+        started_at=run_time,
+        completed_at=run_time,
+        created_at=run_time,
+        input_snapshot_json={
+            "snapshot_version": "1.0",
+            "approved_requirements": [],
+            "facts": [],
+            "verifications": [],
+            "evidence": [
+                {
+                    "id": ev_id,
+                    "entity_type": "EXTRACTED_FACT",
+                    "entity_id": "fact-1",
+                    "snippet": "Exact snippet text",
+                    "created_at": "2026-02-01T12:00:00+00:00",
+                }
+            ],
+            "exact_evaluation_linkage": [],
+        },
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    _, evidence_list, _ = build_compliance_matrix(db_session, sample_bidder, run, [], [])
+    assert len(evidence_list) == 1
+    ev_item = evidence_list[0]
+    assert ev_item.id == ev_id
+    assert ev_item.snippet == "Exact snippet text"
+    assert ev_item.created_at == run_time
+
+
+def test_verification_evidence_snippet_separation(db_session, sample_tender, sample_bidder):
+    """16. Verifies normalize_verification_evidence keeps snippet as empty string and stores reference/error in distinct metadata fields."""
+    ver = VerificationResult(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        field="general.gstin",
+        claimed_value="27AAACA12341ZV",
+        verified_value=None,
+        status=VerificationStatus.SERVICE_ERROR,
+        source="GST_AUTHORIZED_API",
+        mode=VerificationMode.LIVE,
+        checked_at=datetime.now(timezone.utc),
+        verification_reference="GST-REF-9999",
+        error_message="Gateway 503 Service Unavailable",
+    )
+    db_session.add(ver)
+    db_session.commit()
+
+    ev = EvidenceNormalizationService.normalize_verification_evidence(
+        db=db_session,
+        bidder_id=sample_bidder.id,
+        tender_id=sample_tender.id,
+        verification=ver,
+    )
+
+    # Truthful source fields
+    assert ev.snippet == ""
+    assert ev.source_reference == "GST-REF-9999"
+    assert ev.location_metadata.get("error_message") == "Gateway 503 Service Unavailable"
+    assert ev.location_metadata.get("verification_reference") == "GST-REF-9999"
+    assert ev.page_number is None
+
+
+def test_fail_closed_ownership_missing_entities_and_cross_run(db_session, sample_tender, sample_bidder):
+    """17. Verifies validate_ownership fails closed when target bidder, tender, document, or run do not exist or mismatch."""
+    # 1. Missing bidder in DB
+    with pytest.raises(EvidenceOwnershipError, match="Target bidder 'nonexistent-bidder' not found"):
+        EvidenceNormalizationService.validate_ownership(
+            db=db_session,
+            bidder_id="nonexistent-bidder",
+            tender_id=sample_tender.id,
+        )
+
+    # 2. Missing tender in DB
+    with pytest.raises(EvidenceOwnershipError, match="Target tender 'nonexistent-tender' not found"):
+        EvidenceNormalizationService.validate_ownership(
+            db=db_session,
+            bidder_id=sample_bidder.id,
+            tender_id="nonexistent-tender",
+        )
+
+    # 3. Cross-run verification
+    run1 = ComplianceRun(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        tender_id=sample_tender.id,
+        execution_status=JobStatus.RUNNING,
+        started_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run1)
+    db_session.commit()
+
+    ver_other_run = VerificationResult(
+        id=str(uuid.uuid4()),
+        bidder_id=sample_bidder.id,
+        run_id="other-run-id-999",
+        field="general.gstin",
+        status=VerificationStatus.VERIFIED,
+        source="GST_DEMO_DATA",
+        mode=VerificationMode.DEMO,
+        checked_at=datetime.now(timezone.utc),
+    )
+    db_session.add(ver_other_run)
+    db_session.commit()
+
+    with pytest.raises(EvidenceOwnershipError, match="does not match target run_id"):
+        EvidenceNormalizationService.validate_ownership(
+            db=db_session,
+            bidder_id=sample_bidder.id,
+            tender_id=sample_tender.id,
+            verification=ver_other_run,
+            run=run1,
+        )
+
