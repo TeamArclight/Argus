@@ -59,7 +59,7 @@ def test_alembic_migration_upgrade_and_tables():
         with test_engine.connect() as connection:
             context = MigrationContext.configure(connection)
             current_rev = context.get_current_revision()
-            assert current_rev == "6c25b8a18022", f"Unexpected current revision: {current_rev}"
+            assert current_rev == "7f3416a29033", f"Unexpected current revision: {current_rev}"
 
     finally:
         if test_engine is not None:
@@ -108,7 +108,7 @@ def test_alembic_migration_upgrade_from_phase6_with_historical_documents():
                 )
             )
 
-        # Step 2: Upgrade to head (5b14a9f27911)
+        # Step 2: Upgrade to head (7f3416a29033)
         command.upgrade(alembic_cfg, "head")
 
         # Step 3: Verify historical document row preserved
@@ -178,7 +178,7 @@ def test_alembic_migration_upgrade_from_phase7_with_populated_intelligence_data(
                 )
             )
 
-        # Step 2: Upgrade to head (6c25b8a18022)
+        # Step 2: Upgrade to head (7f3416a29033)
         command.upgrade(alembic_cfg, "head")
 
         # Step 3: Verify requirement and fact fields after migration
@@ -186,7 +186,7 @@ def test_alembic_migration_upgrade_from_phase7_with_populated_intelligence_data(
             req = conn.execute(text("SELECT id, clause, is_approved, document_id, metadata_json FROM tender_requirements WHERE id = 'req-p7-1'")).fetchone()
             assert req is not None
             assert req._mapping["clause"] == "1.1"
-            assert req._mapping["is_approved"] == 0 or req._mapping["is_approved"] is False  # server_default='0' conservative default
+            assert req._mapping["is_approved"] == 0 or req._mapping["is_approved"] is False
             assert req._mapping["document_id"] is None
 
             fact = conn.execute(text("SELECT id, field, value, metadata_json FROM extracted_facts WHERE id = 'fact-p7-1'")).fetchone()
@@ -199,6 +199,74 @@ def test_alembic_migration_upgrade_from_phase7_with_populated_intelligence_data(
             test_engine.dispose()
         if test_db_path.exists():
             test_db_path.unlink()
+
+
+def test_alembic_migration_upgrade_from_phase8_with_populated_evidence_data():
+    """Verifies upgrading an existing Phase 8 database populated with evidence and compliance runs to Phase 9 head preserves data and adds new columns."""
+    api_dir = Path(__file__).resolve().parent.parent
+    ini_path = api_dir / "alembic.ini"
+    test_db_path = api_dir / "test_migration_phase8.db"
+
+    if test_db_path.exists():
+        test_db_path.unlink()
+
+    db_url = f"sqlite:///{test_db_path}"
+    alembic_cfg = Config(str(ini_path))
+    alembic_cfg.set_main_option("script_location", str(api_dir / "alembic"))
+    alembic_cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
+
+    test_engine = None
+    try:
+        # Step 1: Upgrade to Phase 8 baseline 6c25b8a18022
+        command.upgrade(alembic_cfg, "6c25b8a18022")
+
+        test_engine = create_engine(db_url)
+        with test_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO tenders (id, tender_number, title, status, metadata_json, created_at, updated_at) "
+                    "VALUES ('t-p8-1', 'GEM/2026/P8/001', 'Phase 8 Tender', 'COMPLETED', '{}', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO bidders (id, tender_id, bidder_name, status, metadata_json, created_at) "
+                    "VALUES ('b-p8-1', 't-p8-1', 'Phase 8 Bidder', 'PENDING', '{}', '2026-01-01 00:00:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO compliance_runs (id, bidder_id, tender_id, execution_status, overall_status, summary_json, started_at, created_at) "
+                    "VALUES ('run-p8-1', 'b-p8-1', 't-p8-1', 'COMPLETED', 'PASS', '{}', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO evidence (id, entity_type, entity_id, snippet, location_metadata, created_at) "
+                    "VALUES ('ev-p8-1', 'BIDDER', 'b-p8-1', 'Turnover certificate snippet', '{}', '2026-01-01 00:00:00')"
+                )
+            )
+
+        # Step 2: Upgrade to head (7f3416a29033)
+        command.upgrade(alembic_cfg, "head")
+
+        # Step 3: Verify new columns on compliance_runs and evidence
+        with test_engine.connect() as conn:
+            run = conn.execute(text("SELECT id, input_snapshot_json FROM compliance_runs WHERE id = 'run-p8-1'")).fetchone()
+            assert run is not None
+            assert run._mapping["input_snapshot_json"] == "{}" or run._mapping["input_snapshot_json"] == {}
+
+            ev = conn.execute(text("SELECT id, bidder_id, tender_id, document_id, verification_mode FROM evidence WHERE id = 'ev-p8-1'")).fetchone()
+            assert ev is not None
+            assert ev._mapping["bidder_id"] is None
+            assert ev._mapping["verification_mode"] is None
+
+    finally:
+        if test_engine is not None:
+            test_engine.dispose()
+        if test_db_path.exists():
+            test_db_path.unlink()
+
 
 
 

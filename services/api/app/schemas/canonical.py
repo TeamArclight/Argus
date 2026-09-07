@@ -344,21 +344,39 @@ class VerificationResultRead(BaseModel):
     error_message: str | None = None
 
 
-class EvidenceRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: str
+class EvidenceCreate(BaseModel):
     entity_type: str
     entity_id: str
     snippet: str
     source_uri: str | None = None
     page_number: int | None = None
     location_metadata: dict[str, Any] | None = Field(default_factory=dict)
-    created_at: datetime
+
+    # Sourcing & Provenance Extensions
+    bidder_id: str | None = None
+    tender_id: str | None = None
+    document_id: str | None = None
+    extracted_fact_id: str | None = None
+    verification_result_id: str | None = None
+    run_id: str | None = None
+    source_type: str | None = None
+    source_reference: str | None = None
+    sha256: str | None = None
+    verification_mode: VerificationMode | None = None
+    verification_status: VerificationStatus | None = None
+    provider_identifier: str | None = None
+    observed_at: datetime | None = None
 
     @field_validator("location_metadata", mode="before")
     @classmethod
     def sanitize_metadata(cls, v: Any) -> dict[str, Any]:
         return v if v is not None else {}
+
+
+class EvidenceRead(EvidenceCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    created_at: datetime
 
 
 class RuleEvaluationRead(BaseModel):
@@ -408,7 +426,6 @@ class HumanDecisionRead(BaseModel):
     decided_at: datetime
 
 
-
 class ComplianceRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -423,8 +440,9 @@ class ComplianceRunRead(BaseModel):
     created_at: datetime
     rule_version: str | None = "1.0"
     summary_json: dict[str, Any] = Field(default_factory=dict)
+    input_snapshot_json: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("summary_json", mode="before")
+    @field_validator("summary_json", "input_snapshot_json", mode="before")
     @classmethod
     def sanitize_summary(cls, v: Any) -> dict[str, Any]:
         return v if v is not None else {}
@@ -449,6 +467,35 @@ class ComplianceRunDetailRead(BaseModel):
     verification_results: list[VerificationResultRead] = Field(default_factory=list)
     rule_evaluations: list[RuleEvaluationRead] = Field(default_factory=list)
     risk_signals: list[RiskSignalRead] = Field(default_factory=list)
+    evidence: list[EvidenceRead] = Field(default_factory=list)
+
+
+class ComplianceMatrixRow(BaseModel):
+    requirement_id: str
+    clause: str
+    requirement_type: RequirementType
+    field: str
+    operator: OperatorEnum
+    expected_value: Any
+    unit: str | None = None
+    mandatory: bool
+    status: ComplianceStatus
+    reason_code: str
+    observed_value: Any | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    verification_refs: list[dict[str, Any]] = Field(default_factory=list)
+    source_refs: list[dict[str, Any]] = Field(default_factory=list)
+    review_required: bool = False
+
+
+class ComplianceMatrixRead(BaseModel):
+    tender_id: str
+    bidder_id: str
+    run_id: str | None = None
+    overall_status: ComplianceStatus
+    rows: list[ComplianceMatrixRow] = Field(default_factory=list)
+    historical_limitations_notice: str | None = None
 
 
 class ComplianceOverviewRead(BaseModel):
@@ -466,8 +513,11 @@ class ReportRead(BaseModel):
     tender: TenderRead
     bidder: BidderRead
     compliance_overview: ComplianceOverviewRead
+    compliance_matrix: ComplianceMatrixRead | None = None
     verification_results: list[VerificationResultRead] = Field(default_factory=list)
     evidence: list[EvidenceRead] = Field(default_factory=list)
+    human_decision: HumanDecisionRead | None = None
+    historical_limitations_notice: str | None = None
     audit_trail_count: int = 0
 
 

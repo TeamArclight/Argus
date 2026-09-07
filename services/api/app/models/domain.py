@@ -122,6 +122,7 @@ class ComplianceRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False, index=True)
     rule_version: Mapped[str | None] = mapped_column(String, default="1.0", nullable=True)
     summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
     bidder: Mapped["Bidder"] = relationship("Bidder", back_populates="compliance_runs")
     tender: Mapped["Tender"] = relationship("Tender")
@@ -129,6 +130,7 @@ class ComplianceRun(Base):
     verification_results: Mapped[list["VerificationResult"]] = relationship("VerificationResult", back_populates="compliance_run", cascade="all, delete-orphan")
     rule_evaluations: Mapped[list["RuleEvaluation"]] = relationship("RuleEvaluation", back_populates="compliance_run", cascade="all, delete-orphan")
     risk_signals: Mapped[list["RiskSignal"]] = relationship("RiskSignal", back_populates="compliance_run", cascade="all, delete-orphan")
+    evidence: Mapped[list["Evidence"]] = relationship("Evidence", back_populates="compliance_run", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -242,6 +244,26 @@ class Evidence(Base):
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     location_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+
+    # Phase 9 Sourcing & Provenance Extensions
+    bidder_id: Mapped[str | None] = mapped_column(String, ForeignKey("bidders.id"), nullable=True, index=True)
+    tender_id: Mapped[str | None] = mapped_column(String, ForeignKey("tenders.id"), nullable=True, index=True)
+    document_id: Mapped[str | None] = mapped_column(String, ForeignKey("documents.id"), nullable=True, index=True)
+    extracted_fact_id: Mapped[str | None] = mapped_column(String, ForeignKey("extracted_facts.id"), nullable=True, index=True)
+    verification_result_id: Mapped[str | None] = mapped_column(String, ForeignKey("verification_results.id"), nullable=True, index=True)
+    run_id: Mapped[str | None] = mapped_column(String, ForeignKey("compliance_runs.id"), nullable=True, index=True)
+    source_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_reference: Mapped[str | None] = mapped_column(String, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    verification_mode: Mapped[VerificationMode | None] = mapped_column(String, nullable=True)
+    verification_status: Mapped[VerificationStatus | None] = mapped_column(String, nullable=True)
+    provider_identifier: Mapped[str | None] = mapped_column(String, nullable=True)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    compliance_run: Mapped["ComplianceRun | None"] = relationship("ComplianceRun", back_populates="evidence")
+    bidder: Mapped["Bidder | None"] = relationship("Bidder")
+    tender: Mapped["Tender | None"] = relationship("Tender")
+    document: Mapped["Document | None"] = relationship("Document")
 
 
 class ProcessingJob(Base):

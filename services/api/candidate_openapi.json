@@ -928,6 +928,71 @@
         }
       }
     },
+    "/api/v1/bidders/{id}/matrix": {
+      "get": {
+        "tags": [
+          "Bidders"
+        ],
+        "summary": "Get Bidder Compliance Matrix",
+        "operationId": "get_bidder_compliance_matrix_api_v1_bidders__id__matrix_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional compliance run ID",
+              "title": "Run Id"
+            },
+            "description": "Optional compliance run ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplianceMatrixRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bidders/{id}/report": {
       "get": {
         "tags": [
@@ -1815,6 +1880,162 @@
         ],
         "title": "Body_upload_tender_document_api_v1_tenders__tender_id__documents_post"
       },
+      "ComplianceMatrixRead": {
+        "properties": {
+          "tender_id": {
+            "type": "string",
+            "title": "Tender Id"
+          },
+          "bidder_id": {
+            "type": "string",
+            "title": "Bidder Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "overall_status": {
+            "$ref": "#/components/schemas/ComplianceStatus"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ComplianceMatrixRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          },
+          "historical_limitations_notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Historical Limitations Notice"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tender_id",
+          "bidder_id",
+          "overall_status"
+        ],
+        "title": "ComplianceMatrixRead"
+      },
+      "ComplianceMatrixRow": {
+        "properties": {
+          "requirement_id": {
+            "type": "string",
+            "title": "Requirement Id"
+          },
+          "clause": {
+            "type": "string",
+            "title": "Clause"
+          },
+          "requirement_type": {
+            "$ref": "#/components/schemas/RequirementType"
+          },
+          "field": {
+            "type": "string",
+            "title": "Field"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/OperatorEnum"
+          },
+          "expected_value": {
+            "title": "Expected Value"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "mandatory": {
+            "type": "boolean",
+            "title": "Mandatory"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ComplianceStatus"
+          },
+          "reason_code": {
+            "type": "string",
+            "title": "Reason Code"
+          },
+          "observed_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Value"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Ids"
+          },
+          "evidence_refs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Evidence Refs"
+          },
+          "verification_refs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Verification Refs"
+          },
+          "source_refs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Source Refs"
+          },
+          "review_required": {
+            "type": "boolean",
+            "title": "Review Required",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "requirement_id",
+          "clause",
+          "requirement_type",
+          "field",
+          "operator",
+          "expected_value",
+          "mandatory",
+          "status",
+          "reason_code"
+        ],
+        "title": "ComplianceMatrixRow"
+      },
       "ComplianceOverviewRead": {
         "properties": {
           "bidder_id": {
@@ -1890,6 +2111,13 @@
             },
             "type": "array",
             "title": "Risk Signals"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRead"
+            },
+            "type": "array",
+            "title": "Evidence"
           }
         },
         "type": "object",
@@ -1985,6 +2213,11 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Summary Json"
+          },
+          "input_snapshot_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Input Snapshot Json"
           }
         },
         "type": "object",
@@ -2215,10 +2448,6 @@
       },
       "EvidenceRead": {
         "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
           "entity_type": {
             "type": "string",
             "title": "Entity Type"
@@ -2265,6 +2494,152 @@
             ],
             "title": "Location Metadata"
           },
+          "bidder_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bidder Id"
+          },
+          "tender_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tender Id"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "extracted_fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extracted Fact Id"
+          },
+          "verification_result_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Result Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
+          },
+          "source_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Reference"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "verification_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Identifier"
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -2273,10 +2648,10 @@
         },
         "type": "object",
         "required": [
-          "id",
           "entity_type",
           "entity_id",
           "snippet",
+          "id",
           "created_at"
         ],
         "title": "EvidenceRead"
@@ -2816,6 +3191,16 @@
           "compliance_overview": {
             "$ref": "#/components/schemas/ComplianceOverviewRead"
           },
+          "compliance_matrix": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComplianceMatrixRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "verification_results": {
             "items": {
               "$ref": "#/components/schemas/VerificationResultRead"
@@ -2829,6 +3214,27 @@
             },
             "type": "array",
             "title": "Evidence"
+          },
+          "human_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HumanDecisionRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "historical_limitations_notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Historical Limitations Notice"
           },
           "audit_trail_count": {
             "type": "integer",

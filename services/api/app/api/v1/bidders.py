@@ -11,6 +11,7 @@ from app.models.domain import (
     Bidder,
     ComplianceRun,
     Document,
+    Evidence,
     ExtractedFact,
     HumanDecision,
     ProcessingJob,
@@ -24,6 +25,8 @@ from app.schemas.canonical import (
     AuthenticatedPrincipal,
     BidderCreate,
     BidderRead,
+    ComplianceMatrixRead,
+    ComplianceMatrixRow,
     ComplianceOverviewRead,
     ComplianceRunDetailRead,
     ComplianceRunRead,
@@ -40,7 +43,9 @@ from app.schemas.canonical import (
     JobRead,
     JobStage,
     JobStatus,
+    OperatorEnum,
     ReportRead,
+    RequirementType,
     RiskSignalRead,
     RuleEvaluationRead,
     UserRole,
@@ -408,6 +413,231 @@ def record_human_decision(
     return decision
 
 
+def build_compliance_matrix(
+    db: Session,
+    bidder: Bidder,
+    run: ComplianceRun,
+    evaluations_db: list[RuleEvaluation],
+    verifications_db: list[VerificationResult],
+) -> tuple[ComplianceMatrixRead, list[EvidenceRead], str | None]:
+    """Reconstruct compliance matrix, evidence list, and historical limitations notice from run input snapshot."""
+    evidence_db = db.query(Evidence).filter(Evidence.run_id == run.id).all()
+    evidence_schema: list[EvidenceRead] = []
+
+    if evidence_db:
+        evidence_schema = [EvidenceRead.model_validate(e) for e in evidence_db]
+    else:
+        snapshot_ev = (run.input_snapshot_json or {}).get("evidence", [])
+        for item in snapshot_ev:
+            if isinstance(item, dict):
+                evidence_schema.append(
+                    EvidenceRead(
+                        id=item.get("id", str(uuid.uuid4())),
+                        entity_type=item.get("entity_type", "BIDDER"),
+                        entity_id=item.get("entity_id", bidder.id),
+                        snippet=item.get("snippet", ""),
+                        source_uri=item.get("source_uri"),
+                        page_number=item.get("page_number"),
+                        bidder_id=bidder.id,
+                        tender_id=bidder.tender_id,
+                        document_id=item.get("document_id"),
+                        extracted_fact_id=item.get("extracted_fact_id"),
+                        verification_result_id=item.get("verification_result_id"),
+                        run_id=run.id,
+                        source_type=item.get("source_type", "DOCUMENT"),
+                        source_reference=item.get("source_reference"),
+                        sha256=item.get("sha256"),
+                        verification_mode=item.get("verification_mode"),
+                        verification_status=item.get("verification_status"),
+                        provider_identifier=item.get("provider_identifier"),
+                        observed_at=item.get("observed_at"),
+                        created_at=datetime.now(timezone.utc),
+                    )
+                )
+
+    snapshot_data = run.input_snapshot_json or {}
+    has_snapshot = bool(snapshot_data.get("snapshot_version") or snapshot_data.get("approved_requirements"))
+    notice = None if has_snapshot else "Historical compliance run was completed before snapshot recording (Phase 9). Evidence citations and exact evaluation inputs cannot be reconstructed historically for this run."
+
+    approved_reqs = snapshot_data.get("approved_requirements", [])
+    req_map: dict[str, dict[str, Any]] = {}
+    for r in approved_reqs:
+        if isinstance(r, dict) and "id" in r:
+            req_map[r["id"]] = r
+
+    missing_req_ids = [e.requirement_id for e in evaluations_db if e.requirement_id not in req_map]
+    if missing_req_ids:
+        db_reqs = db.query(TenderRequirement).filter(TenderRequirement.id.in_(missing_req_ids)).all()
+        for dr in db_reqs:
+            req_map[dr.id] = {
+                "clause": dr.clause,
+                "requirement_type": dr.requirement_type,
+                "field": dr.field,
+                "operator": dr.operator,
+                "expected_value": dr.expected_value,
+                "unit": dr.unit,
+                "mandatory": dr.mandatory,
+            }
+
+    evidence_by_id = {e.id: e for e in evidence_schema}
+    ver_by_field = {v.field: v for v in verifications_db}
+
+    facts_snapshot = snapshot_data.get("facts", [])
+    facts_by_field: dict[str, list[dict[str, Any]]] = {}
+    for f in facts_snapshot:
+        if isinstance(f, dict) and "field" in f:
+            facts_by_field.setdefault(f["field"], []).append(f)
+
+    rows: list[ComplianceMatrixRow] = []
+    for eval_item in evaluations_db:
+        req_info = req_map.get(eval_item.requirement_id, {})
+        clause = req_info.get("clause", "N/A")
+        req_type = req_info.get("requirement_type", RequirementType.CUSTOM)
+        field = req_info.get("field", "unknown")
+        operator = req_info.get("operator", OperatorEnum.EQ)
+        expected_value = req_info.get("expected_value")
+        unit = req_info.get("unit")
+        mandatory = req_info.get("mandatory", True)
+
+        evidence_refs: list[dict[str, Any]] = []
+        for ev_id in (eval_item.evidence_ids or []):
+            if ev_id in evidence_by_id:
+                ev_obj = evidence_by_id[ev_id]
+                evidence_refs.append(
+                    {
+                        "evidence_id": ev_obj.id,
+                        "document_id": ev_obj.document_id,
+                        "extracted_fact_id": ev_obj.extracted_fact_id,
+                        "verification_result_id": ev_obj.verification_result_id,
+                        "source_type": ev_obj.source_type,
+                        "source_reference": ev_obj.source_reference,
+                        "page_number": ev_obj.page_number,
+                        "snippet": ev_obj.snippet,
+                        "sha256": ev_obj.sha256,
+                        "verification_mode": ev_obj.verification_mode.value if hasattr(ev_obj.verification_mode, "value") else str(ev_obj.verification_mode) if ev_obj.verification_mode else None,
+                        "verification_status": ev_obj.verification_status.value if hasattr(ev_obj.verification_status, "value") else str(ev_obj.verification_status) if ev_obj.verification_status else None,
+                        "provider_identifier": ev_obj.provider_identifier,
+                        "observed_at": ev_obj.observed_at.isoformat() if hasattr(ev_obj.observed_at, "isoformat") and ev_obj.observed_at else str(ev_obj.observed_at) if ev_obj.observed_at else None,
+                    }
+                )
+
+        verification_refs: list[dict[str, Any]] = []
+        if field in ver_by_field:
+            v_obj = ver_by_field[field]
+            verification_refs.append(
+                {
+                    "id": v_obj.id,
+                    "field": v_obj.field,
+                    "status": v_obj.status.value if hasattr(v_obj.status, "value") else str(v_obj.status),
+                    "mode": v_obj.mode.value if hasattr(v_obj.mode, "value") else str(v_obj.mode),
+                    "source": v_obj.source.value if hasattr(v_obj.source, "value") else str(v_obj.source),
+                    "claimed_value": v_obj.claimed_value,
+                    "verified_value": v_obj.verified_value,
+                    "checked_at": v_obj.checked_at.isoformat() if hasattr(v_obj.checked_at, "isoformat") and v_obj.checked_at else str(v_obj.checked_at) if v_obj.checked_at else None,
+                }
+            )
+
+        source_refs: list[dict[str, Any]] = []
+        for f_item in facts_by_field.get(field, []):
+            source_refs.append(
+                {
+                    "document_id": f_item.get("document_id"),
+                    "source_page": f_item.get("source_page"),
+                    "source_text": f_item.get("source_text"),
+                    "confidence": f_item.get("confidence"),
+                }
+            )
+
+        review_req = bool(
+            eval_item.status in (ComplianceStatus.REVIEW_REQUIRED, ComplianceStatus.UNKNOWN, ComplianceStatus.FAIL)
+            or (eval_item.status != ComplianceStatus.PASS and mandatory)
+        )
+
+        rows.append(
+            ComplianceMatrixRow(
+                requirement_id=eval_item.requirement_id,
+                clause=clause,
+                requirement_type=req_type,
+                field=field,
+                operator=operator,
+                expected_value=expected_value,
+                unit=unit,
+                mandatory=mandatory,
+                status=eval_item.status,
+                reason_code=eval_item.reason_code,
+                observed_value=eval_item.observed_value,
+                evidence_ids=eval_item.evidence_ids or [],
+                evidence_refs=evidence_refs,
+                verification_refs=verification_refs,
+                source_refs=source_refs,
+                review_required=review_req,
+            )
+        )
+
+    matrix = ComplianceMatrixRead(
+        tender_id=bidder.tender_id,
+        bidder_id=bidder.id,
+        run_id=run.id,
+        overall_status=run.overall_status or ComplianceStatus.UNKNOWN,
+        rows=rows,
+        historical_limitations_notice=notice,
+    )
+    return matrix, evidence_schema, notice
+
+
+@router.get("/bidders/{id}/matrix", response_model=ComplianceMatrixRead)
+async def get_bidder_compliance_matrix(
+    id: str,
+    run_id: str | None = Query(None, description="Optional compliance run ID"),
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+    bidder = db.query(Bidder).filter(Bidder.id == id).first()
+    if not bidder:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bidder with ID {id} not found.",
+        )
+
+    if run_id:
+        target_run = db.query(ComplianceRun).filter(ComplianceRun.id == run_id).first()
+        if not target_run or target_run.bidder_id != id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Compliance run {run_id} not found for bidder {id}.",
+            )
+    else:
+        target_run = (
+            db.query(ComplianceRun)
+            .filter(
+                ComplianceRun.bidder_id == id,
+                ComplianceRun.execution_status == JobStatus.COMPLETED,
+            )
+            .order_by(
+                ComplianceRun.completed_at.desc(),
+                ComplianceRun.created_at.desc(),
+                ComplianceRun.id.desc(),
+            )
+            .first()
+        )
+
+    if not target_run:
+        return ComplianceMatrixRead(
+            tender_id=bidder.tender_id,
+            bidder_id=id,
+            run_id=None,
+            overall_status=ComplianceStatus.UNKNOWN,
+            rows=[],
+            historical_limitations_notice=None,
+        )
+
+    evaluations_db = db.query(RuleEvaluation).filter(RuleEvaluation.run_id == target_run.id).all()
+    verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == target_run.id).all()
+
+    matrix, _, _ = build_compliance_matrix(db, bidder, target_run, evaluations_db, verifications_db)
+    return matrix
+
+
 @router.get("/bidders/{id}/report", response_model=ReportRead)
 async def get_bidder_report(
     id: str,
@@ -466,13 +696,24 @@ async def get_bidder_report(
             risk_signals=[],
             latest_decision=latest_decision_schema,
         )
+        empty_matrix = ComplianceMatrixRead(
+            tender_id=bidder.tender_id,
+            bidder_id=id,
+            run_id=None,
+            overall_status=ComplianceStatus.UNKNOWN,
+            rows=[],
+            historical_limitations_notice=None,
+        )
         return ReportRead(
             generated_at=datetime.now(timezone.utc),
             tender=tender,
             bidder=bidder,
             compliance_overview=overview,
+            compliance_matrix=empty_matrix,
             verification_results=[],
             evidence=[],
+            human_decision=latest_decision_schema,
+            historical_limitations_notice=None,
             audit_trail_count=audit_count,
         )
 
@@ -494,13 +735,20 @@ async def get_bidder_report(
         latest_decision=latest_decision_schema,
     )
 
+    matrix, evidence_schema, notice = build_compliance_matrix(
+        db, bidder, target_run, evaluations_db, verifications_db
+    )
+
     return ReportRead(
         generated_at=datetime.now(timezone.utc),
         tender=tender,
         bidder=bidder,
         compliance_overview=overview,
+        compliance_matrix=matrix,
         verification_results=verifications_db,
-        evidence=[],
+        evidence=evidence_schema,
+        human_decision=latest_decision_schema,
+        historical_limitations_notice=notice,
         audit_trail_count=audit_count,
     )
 
