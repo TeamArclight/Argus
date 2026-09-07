@@ -28,12 +28,16 @@ from app.schemas.canonical import (
     HumanDecisionStatus,
     JobStage,
     JobStatus,
+    RiskInputRef,
+    RiskInputType,
     RiskSeverity,
     RiskSignalRead,
+    RiskSummaryRead,
     RuleEvaluationRead,
     TenderRequirementRead,
     VerificationResultRead,
 )
+from app.risk.engine import RiskEngine, RiskSignalCandidate
 from app.verification.adapters import (
     BlacklistVerificationAdapter,
     EPFOVerificationAdapter,
@@ -349,58 +353,240 @@ class BidVerificationService:
                 )
                 self.db.add(db_eval)
 
-                # Generate Risk Signals for failures / mismatches
-                if eval_res.status == ComplianceStatus.FAIL and req.mandatory:
-                    risk_id = str(uuid.uuid4())
-                    risk = RiskSignalRead(
-                        id=risk_id,
-                        bidder_id=bidder.id,
-                        run_id=run.id,
-                        severity=RiskSeverity.HIGH,
-                        signal_type="MANDATORY_REQUIREMENT_FAILED",
-                        title=f"Mandatory Requirement Failed: {req.clause}",
-                        description=f"Field '{req.field}' observed value {eval_res.observed_value} does not meet expected threshold {eval_res.expected_value}.",
-                        evidence_ids=eval_res.evidence_ids,
-                        created_at=datetime.now(timezone.utc),
-                    )
-                    risk_signals_schema.append(risk)
+            # 5. Run Pure Deterministic RiskEngine
+            bidder_docs = self.db.query(Document).filter(Document.bidder_id == bidder.id).all()
+            bidder_docs_dict = [
+                {
+                    "id": d.id,
+                    "filename": d.filename,
+                    "document_type": d.document_type.value if hasattr(d.document_type, "value") else str(d.document_type),
+                    "sha256": d.sha256,
+                }
+                for d in bidder_docs
+            ]
 
-                elif eval_res.status == ComplianceStatus.REVIEW_REQUIRED:
-                    risk_id = str(uuid.uuid4())
-                    risk = RiskSignalRead(
-                        id=risk_id,
-                        bidder_id=bidder.id,
-                        run_id=run.id,
-                        severity=RiskSeverity.MEDIUM,
-                        signal_type="DISCREPANCY_REVIEW_REQUIRED",
-                        title=f"Discrepancy Requiring Officer Review: {req.clause}",
-                        description=f"Reason: {eval_res.reason_code}. Observed: {eval_res.observed_value}.",
-                        evidence_ids=eval_res.evidence_ids,
-                        created_at=datetime.now(timezone.utc),
-                    )
-                    risk_signals_schema.append(risk)
+            # Fetch authorized preselected document metadata from other bidders in the same tender
+            other_bidders_docs = (
+                self.db.query(Document)
+                .join(Bidder, Document.bidder_id == Bidder.id)
+                .filter(
+                    Bidder.tender_id == tender.id,
+                    Bidder.id != bidder.id,
+                )
+                .all()
+            )
+            eval_ts = datetime.now(timezone.utc)
 
-            for r in risk_signals_schema:
-                db_r = RiskSignal(
-                    id=r.id,
-                    bidder_id=r.bidder_id,
+            comparison_metadata = [
+                {
+                    "id": d.id,
+                    "sha256": d.sha256,
+                    "document_type": d.document_type.value if hasattr(d.document_type, "value") else str(d.document_type),
+                }
+                for d in other_bidders_docs
+                if d.sha256
+            ]
+
+            risk_candidates = RiskEngine.evaluate_risks(
+                facts=facts_schema,
+                verifications=verifications_schema,
+                documents=bidder_docs_dict,
+                bidder_data=bidder_data,
+                comparison_metadata=comparison_metadata,
+                freshness_policy=RiskEngine.DEFAULT_FRESHNESS_DAYS,
+                evaluation_timestamp=eval_ts,
+            )
+
+            # Generate Rule Evaluation failure / review risk signals
+            for req in requirements_schema:
+                eval_matches = [e for e in evaluations_schema if e.requirement_id == req.id]
+                if eval_matches:
+                    eval_res = eval_matches[0]
+                    if eval_res.status == ComplianceStatus.FAIL and req.mandatory:
+                        risk_candidates.append(
+                            RiskSignalCandidate(
+                                severity=RiskSeverity.HIGH,
+                                signal_type="MANDATORY_REQUIREMENT_FAILED",
+                                title=f"Mandatory Requirement Failed: {req.clause}",
+                                description=f"Field '{req.field}' observed value {eval_res.observed_value} does not meet expected threshold {eval_res.expected_value}.",
+                                reason_code="MANDATORY_REQUIREMENT_FAILED",
+                                input_refs=[RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=eid) for eid in eval_res.evidence_ids],
+                            )
+                        )
+                    elif eval_res.status == ComplianceStatus.REVIEW_REQUIRED:
+                        risk_candidates.append(
+                            RiskSignalCandidate(
+                                severity=RiskSeverity.MEDIUM,
+                                signal_type="DISCREPANCY_REVIEW_REQUIRED",
+                                title=f"Discrepancy Requiring Officer Review: {req.clause}",
+                                description=f"Reason: {eval_res.reason_code}. Observed: {eval_res.observed_value}.",
+                                reason_code="DISCREPANCY_REVIEW_REQUIRED",
+                                input_refs=[RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=eid) for eid in eval_res.evidence_ids],
+                            )
+                        )
+
+            # Map Risk Engine Candidate input_refs to Evidence IDs & Verification IDs with fail-closed validation
+            risk_signals_schema: list[RiskSignalRead] = []
+            now_risk = datetime.now(timezone.utc)
+            staged_evidence_list = list(fact_evidence_map.values()) + list(ver_evidence_map.values())
+
+            fact_by_id = {f.id: f for f in facts_db}
+            doc_by_id = {d.id: d for d in bidder_docs}
+            ver_by_id = {v.id: v for v in verifications_schema}
+            staged_ev_by_id = {e.id: e for e in staged_evidence_list}
+
+            for cand in risk_candidates:
+                mapped_ev_ids: list[str] = []
+                mapped_ver_ids: list[str] = []
+                mapped_refs: list[RiskInputRef] = []
+                unmapped_ids: list[str] = []
+
+                for ref in cand.input_refs:
+                    if ref.ref_type == RiskInputType.EXTRACTED_FACT:
+                        f_obj = fact_by_id.get(ref.id)
+                        if not f_obj or f_obj.bidder_id != bidder.id:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        if f_obj.document_id:
+                            d_obj = doc_by_id.get(f_obj.document_id)
+                            if not d_obj:
+                                unmapped_ids.append(ref.id)
+                                continue
+                            if d_obj.bidder_id is not None and d_obj.bidder_id != bidder.id:
+                                unmapped_ids.append(ref.id)
+                                continue
+
+                        if ref.id in fact_evidence_map:
+                            ev_id = fact_evidence_map[ref.id].id
+                            if ev_id not in mapped_ev_ids:
+                                mapped_ev_ids.append(ev_id)
+                            mapped_refs.append(RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=ev_id, metadata={"fact_id": ref.id}))
+                        else:
+                            mapped_refs.append(ref)
+                            unmapped_ids.append(ref.id)
+
+                    elif ref.ref_type == RiskInputType.VERIFICATION_RESULT:
+                        v_obj = ver_by_id.get(ref.id)
+                        if not v_obj or v_obj.bidder_id != bidder.id or v_obj.run_id != run.id:
+                            unmapped_ids.append(ref.id)
+                            continue
+
+                        if ref.id not in mapped_ver_ids:
+                            mapped_ver_ids.append(ref.id)
+
+                        if ref.id in ver_evidence_map:
+                            ev_id = ver_evidence_map[ref.id].id
+                            if ev_id not in mapped_ev_ids:
+                                mapped_ev_ids.append(ev_id)
+                            mapped_refs.append(RiskInputRef(ref_type=RiskInputType.EVIDENCE, id=ev_id, metadata={"verification_result_id": ref.id}))
+                        else:
+                            mapped_refs.append(ref)
+
+                    elif ref.ref_type == RiskInputType.DOCUMENT:
+                        d_obj = doc_by_id.get(ref.id)
+                        if not d_obj:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        if d_obj.bidder_id is not None:
+                            if d_obj.bidder_id != bidder.id or bidder.tender_id != tender.id:
+                                unmapped_ids.append(ref.id)
+                                continue
+                        elif d_obj.tender_id is not None:
+                            if d_obj.tender_id != tender.id:
+                                unmapped_ids.append(ref.id)
+                                continue
+                        else:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        mapped_refs.append(RiskInputRef(ref_type=RiskInputType.DOCUMENT, id=ref.id))
+
+                    elif ref.ref_type == RiskInputType.EVIDENCE:
+                        ev_obj = staged_ev_by_id.get(ref.id)
+                        if not ev_obj or ev_obj.bidder_id != bidder.id or ev_obj.tender_id != tender.id or ev_obj.run_id != run.id:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        if ref.id not in mapped_ev_ids:
+                            mapped_ev_ids.append(ref.id)
+                        mapped_refs.append(ref)
+
+                    elif ref.ref_type == RiskInputType.BIDDER_RECORD:
+                        if ref.id != bidder.id:
+                            unmapped_ids.append(ref.id)
+                            continue
+                        mapped_refs.append(ref)
+
+                    else:
+                        mapped_refs.append(ref)
+
+                meta_json = dict(cand.metadata_json)
+                if unmapped_ids:
+                    meta_json["unmapped_input_ids"] = unmapped_ids
+                meta_json["input_refs"] = [ref.model_dump(mode="json") if hasattr(ref, "model_dump") else ref for ref in mapped_refs]
+
+                r_schema = RiskSignalRead(
+                    id=str(uuid.uuid4()),
+                    bidder_id=bidder.id,
                     run_id=run.id,
-                    severity=r.severity,
-                    signal_type=r.signal_type,
-                    title=r.title,
-                    description=r.description,
-                    evidence_ids=r.evidence_ids,
-                    created_at=r.created_at,
+                    severity=cand.severity,
+                    signal_type=cand.signal_type,
+                    title=cand.title,
+                    description=cand.description,
+                    reason_code=cand.reason_code,
+                    evidence_ids=mapped_ev_ids,
+                    verification_ids=mapped_ver_ids,
+                    input_refs=mapped_refs,
+                    source_mode=cand.source_mode,
+                    metadata_json=meta_json,
+                    created_at=now_risk,
+                )
+                risk_signals_schema.append(r_schema)
+
+                db_r = RiskSignal(
+                    id=r_schema.id,
+                    bidder_id=r_schema.bidder_id,
+                    run_id=run.id,
+                    severity=r_schema.severity,
+                    signal_type=r_schema.signal_type,
+                    title=r_schema.title,
+                    description=r_schema.description,
+                    reason_code=r_schema.reason_code,
+                    evidence_ids=r_schema.evidence_ids,
+                    verification_ids=r_schema.verification_ids,
+                    source_mode=r_schema.source_mode,
+                    metadata_json=r_schema.metadata_json,
+                    created_at=r_schema.created_at,
                 )
                 self.db.add(db_r)
 
-            # 5. Build explicit run input snapshot
-            staged_evidence_list = list(fact_evidence_map.values()) + list(ver_evidence_map.values())
-            bidder_docs = self.db.query(Document).filter(Document.bidder_id == bidder.id).all()
+            # Compute Risk Summary
+            sev_counts: dict[str, int] = {}
+            type_counts: dict[str, int] = {}
+            mode_counts: dict[str, int] = {}
+            for r in risk_signals_schema:
+                sev_str = r.severity.value if hasattr(r.severity, "value") else str(r.severity)
+                sev_counts[sev_str] = sev_counts.get(sev_str, 0) + 1
+                type_counts[r.signal_type] = type_counts.get(r.signal_type, 0) + 1
+                if r.source_mode:
+                    mode_counts[r.source_mode] = mode_counts.get(r.source_mode, 0) + 1
 
+            risk_summary_schema = RiskSummaryRead(
+                signal_count=len(risk_signals_schema),
+                counts_by_severity=sev_counts,
+                counts_by_type=type_counts,
+                unresolved_count=len(risk_signals_schema),
+                source_mode_breakdown=mode_counts,
+                risk_engine_version="1.0",
+                risk_policy_version="1.0",
+            )
+
+            # 6. Build explicit run input snapshot
             input_snapshot = {
                 "snapshot_version": "1.0",
-                "evaluated_at": datetime.now(timezone.utc).isoformat(),
+                "risk_engine_version": "1.0",
+                "risk_policy_version": "1.0",
+                "risk_evaluation_timestamp": eval_ts.isoformat(),
+                "evaluated_at": eval_ts.isoformat(),
+                "freshness_policy": RiskEngine.DEFAULT_FRESHNESS_DAYS,
                 "approved_requirements": [r.model_dump(mode="json") for r in requirements_schema],
                 "facts": [f.model_dump(mode="json") for f in facts_schema],
                 "verifications": [v.model_dump(mode="json") for v in verifications_schema],
@@ -426,15 +612,9 @@ class BidVerificationService:
                     for e in staged_evidence_list
                 ],
                 "exact_evaluation_linkage": [e.model_dump(mode="json") for e in evaluations_schema],
-                "documents": [
-                    {
-                        "id": d.id,
-                        "filename": d.filename,
-                        "document_type": d.document_type.value if hasattr(d.document_type, "value") else str(d.document_type),
-                        "sha256": d.sha256,
-                    }
-                    for d in bidder_docs
-                ],
+                "documents": bidder_docs_dict,
+                "risk_signals": [r.model_dump(mode="json") for r in risk_signals_schema],
+                "risk_summary": risk_summary_schema.model_dump(mode="json"),
             }
 
             # Compute overall compliance status
@@ -476,7 +656,7 @@ class BidVerificationService:
             # Single atomic commit for entire completion batch (run, evaluations, risks, evidence, job, audit)
             self.db.commit()
 
-            # 6. Fetch latest human decision if present
+            # 7. Fetch latest human decision if present
             latest_decision_db = (
                 self.db.query(HumanDecision)
                 .filter(HumanDecision.bidder_id == bidder_id)
@@ -492,6 +672,7 @@ class BidVerificationService:
                 human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
                 rule_evaluations=evaluations_schema,
                 risk_signals=risk_signals_schema,
+                risk_summary=risk_summary_schema,
                 latest_decision=latest_decision_schema,
             )
 

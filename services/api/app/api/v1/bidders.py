@@ -47,6 +47,7 @@ from app.schemas.canonical import (
     ReportRead,
     RequirementType,
     RiskSignalRead,
+    RiskSummaryRead,
     RuleEvaluationRead,
     UserRole,
     VerificationResultRead,
@@ -267,12 +268,31 @@ async def get_bidder_compliance(
     )
     evaluations_schema = [RuleEvaluationRead.model_validate(e) for e in evaluations_db]
 
-    risk_db = (
-        db.query(RiskSignal)
-        .filter(RiskSignal.run_id == latest_run.id)
-        .all()
-    )
-    risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
+    snapshot_data = latest_run.input_snapshot_json or {}
+    has_snapshot = _is_phase9_snapshot(snapshot_data)
+
+    if has_snapshot:
+        if "risk_signals" in snapshot_data and isinstance(snapshot_data["risk_signals"], list):
+            try:
+                risk_schema = [RiskSignalRead.model_validate(r) if isinstance(r, dict) else r for r in snapshot_data["risk_signals"]]
+            except Exception:
+                risk_schema = []
+        else:
+            risk_schema = []
+    else:
+        risk_db = (
+            db.query(RiskSignal)
+            .filter(RiskSignal.run_id == latest_run.id)
+            .all()
+        )
+        risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
+
+    risk_summary_schema = None
+    if has_snapshot and "risk_summary" in snapshot_data and isinstance(snapshot_data["risk_summary"], dict):
+        try:
+            risk_summary_schema = RiskSummaryRead.model_validate(snapshot_data["risk_summary"])
+        except Exception:
+            risk_summary_schema = None
 
     overall_status = latest_run.overall_status or service.compute_overall_status(evaluations_db)
 
@@ -283,6 +303,7 @@ async def get_bidder_compliance(
         human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
         rule_evaluations=evaluations_schema,
         risk_signals=risk_schema,
+        risk_summary=risk_summary_schema,
         latest_decision=latest_decision_schema,
     )
 
@@ -785,11 +806,11 @@ async def get_bidder_report(
 
     evaluations_db = db.query(RuleEvaluation).filter(RuleEvaluation.run_id == target_run.id).all()
     evaluations_schema = [RuleEvaluationRead.model_validate(e) for e in evaluations_db]
-    risk_db = db.query(RiskSignal).filter(RiskSignal.run_id == target_run.id).all()
-    risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
+
     has_snapshot = _is_phase9_snapshot(target_run.input_snapshot_json)
+    snapshot_data = target_run.input_snapshot_json or {}
+
     if has_snapshot:
-        snapshot_data = target_run.input_snapshot_json or {}
         if "verifications" in snapshot_data and isinstance(snapshot_data["verifications"], list):
             verifications_for_report = [
                 VerificationResultRead.model_validate(v) if isinstance(v, dict) else v
@@ -797,9 +818,27 @@ async def get_bidder_report(
             ]
         else:
             verifications_for_report = []
+
+        if "risk_signals" in snapshot_data and isinstance(snapshot_data["risk_signals"], list):
+            risk_schema = [RiskSignalRead.model_validate(r) if isinstance(r, dict) else r for r in snapshot_data["risk_signals"]]
+        else:
+            risk_schema = []
+
+        if "risk_summary" in snapshot_data and isinstance(snapshot_data["risk_summary"], dict):
+            try:
+                risk_summary_schema = RiskSummaryRead.model_validate(snapshot_data["risk_summary"])
+            except Exception as e:
+                import logging
+                logging.error(f"Risk summary validation error in snapshot: {e}")
+                risk_summary_schema = None
+        else:
+            risk_summary_schema = None
     else:
         verifications_db = db.query(VerificationResult).filter(VerificationResult.run_id == target_run.id).all()
         verifications_for_report = [VerificationResultRead.model_validate(v) for v in verifications_db]
+        risk_db = db.query(RiskSignal).filter(RiskSignal.run_id == target_run.id).all()
+        risk_schema = [RiskSignalRead.model_validate(r) for r in risk_db]
+        risk_summary_schema = None
 
     overall_status = target_run.overall_status or service.compute_overall_status(evaluations_db)
 
@@ -810,6 +849,7 @@ async def get_bidder_report(
         human_decision_status=latest_decision_db.status if latest_decision_db else HumanDecisionStatus.PENDING,
         rule_evaluations=evaluations_schema,
         risk_signals=risk_schema,
+        risk_summary=risk_summary_schema,
         latest_decision=latest_decision_schema,
     )
 
@@ -826,6 +866,7 @@ async def get_bidder_report(
         compliance_matrix=matrix,
         verification_results=verifications_for_report,
         evidence=evidence_schema,
+        risk_summary=risk_summary_schema,
         human_decision=latest_decision_schema,
         historical_limitations_notice=notice,
         audit_trail_count=audit_count,
