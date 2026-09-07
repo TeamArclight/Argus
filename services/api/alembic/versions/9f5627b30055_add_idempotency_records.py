@@ -57,12 +57,11 @@ def upgrade() -> None:
     op.create_index(op.f('ix_idempotency_records_key'), 'idempotency_records', ['key'], unique=False)
     op.create_index(op.f('ix_idempotency_records_principal_id'), 'idempotency_records', ['principal_id'], unique=False)
 
+    # 1. Add nullable seq column without default
     with op.batch_alter_table('job_events', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('seq', sa.Integer(), nullable=False, server_default='1'))
-        batch_op.create_unique_constraint('uq_job_events_job_seq', ['job_id', 'seq'])
-        batch_op.create_index(batch_op.f('ix_job_events_seq'), ['seq'], unique=False)
+        batch_op.add_column(sa.Column('seq', sa.Integer(), nullable=True))
 
-    # Deterministically backfill existing historical JobEvent rows per job_id
+    # 2. Deterministically backfill existing historical JobEvent rows per job_id
     bind = op.get_bind()
     events = bind.execute(sa.text("SELECT id, job_id FROM job_events ORDER BY job_id, timestamp ASC, id ASC")).fetchall()
     current_job_id = None
@@ -79,6 +78,17 @@ def upgrade() -> None:
             sa.text("UPDATE job_events SET seq = :seq WHERE id = :id"),
             {"seq": current_seq, "id": ev_id}
         )
+
+    # 3. Validate that no rows have NULL seq
+    null_count = bind.execute(sa.text("SELECT COUNT(*) FROM job_events WHERE seq IS NULL")).scalar()
+    if null_count and null_count > 0:
+        raise RuntimeError(f"JobEvent sequence backfill failed: {null_count} rows have NULL seq.")
+
+    # 4. Make seq NOT NULL, create unique constraint and index
+    with op.batch_alter_table('job_events', schema=None) as batch_op:
+        batch_op.alter_column('seq', existing_type=sa.Integer(), nullable=False)
+        batch_op.create_unique_constraint('uq_job_events_job_seq', ['job_id', 'seq'])
+        batch_op.create_index(batch_op.f('ix_job_events_seq'), ['seq'], unique=False)
 
 
 def downgrade() -> None:

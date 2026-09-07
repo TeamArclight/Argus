@@ -20,7 +20,8 @@ class JobEventService:
         payload: dict[str, Any] | None = None,
     ) -> JobEvent:
         """Atomically allocates the next monotonic sequence number for job_id and records JobEvent."""
-        if db.bind is not None and db.bind.dialect.name == 'postgresql':
+        bind = db.get_bind()
+        if bind is not None and bind.dialect.name == 'postgresql':
             db.execute(
                 select(ProcessingJob.id).where(ProcessingJob.id == job_id).with_for_update()
             )

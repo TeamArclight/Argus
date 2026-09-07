@@ -271,7 +271,7 @@ def test_alembic_migration_upgrade_from_phase8_with_populated_evidence_data():
 
 
 def test_alembic_migration_upgrade_to_phase11_idempotency_and_job_events():
-    """Verifies upgrading from Phase 10 (7f3416a29033) to Phase 11 head (9f5627b30055) adds idempotency_records and job_events.seq."""
+    """Verifies upgrading from Phase 10 (9e4516a29044) to Phase 11 head (9f5627b30055) safely backfills populated job_events."""
     api_dir = Path(__file__).resolve().parent.parent
     ini_path = api_dir / "alembic.ini"
     test_db_path = api_dir / "test_migration_phase11.db"
@@ -286,33 +286,86 @@ def test_alembic_migration_upgrade_to_phase11_idempotency_and_job_events():
 
     test_engine = None
     try:
-        # Step 1: Upgrade to Phase 10 baseline 7f3416a29033
-        command.upgrade(alembic_cfg, "7f3416a29033")
+        # Step 1: Upgrade to Phase 10 baseline 9e4516a29044
+        command.upgrade(alembic_cfg, "9e4516a29044")
+
+        test_engine = create_engine(db_url)
+        with test_engine.begin() as conn:
+            # Create historical processing jobs
+            conn.execute(
+                text(
+                    "INSERT INTO processing_jobs (id, target_type, target_id, job_type, status, current_stage, progress, started_at, completed_at) "
+                    "VALUES ('job-p10-1', 'BIDDER', 'b-1', 'VERIFICATION', 'COMPLETED', 'REPORTING', 100, '2026-01-01 10:00:00', '2026-01-01 10:05:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO processing_jobs (id, target_type, target_id, job_type, status, current_stage, progress, started_at, completed_at) "
+                    "VALUES ('job-p10-2', 'BIDDER', 'b-2', 'VERIFICATION', 'COMPLETED', 'REPORTING', 100, '2026-01-01 11:00:00', '2026-01-01 11:05:00')"
+                )
+            )
+            # Insert multiple historical job_events per job (WITHOUT seq column)
+            conn.execute(
+                text(
+                    "INSERT INTO job_events (id, job_id, stage, status, progress, message, payload, timestamp) "
+                    "VALUES ('ev-1', 'job-p10-1', 'VERIFICATION', 'RUNNING', 10, 'Started verification', '{}', '2026-01-01 10:01:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO job_events (id, job_id, stage, status, progress, message, payload, timestamp) "
+                    "VALUES ('ev-2', 'job-p10-1', 'EVALUATION', 'RUNNING', 50, 'Evaluating rules', '{}', '2026-01-01 10:02:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO job_events (id, job_id, stage, status, progress, message, payload, timestamp) "
+                    "VALUES ('ev-3', 'job-p10-1', 'REPORTING', 'COMPLETED', 100, 'Completed job', '{}', '2026-01-01 10:05:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO job_events (id, job_id, stage, status, progress, message, payload, timestamp) "
+                    "VALUES ('ev-4', 'job-p10-2', 'VERIFICATION', 'RUNNING', 20, 'Job 2 started', '{}', '2026-01-01 11:01:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO job_events (id, job_id, stage, status, progress, message, payload, timestamp) "
+                    "VALUES ('ev-5', 'job-p10-2', 'REPORTING', 'COMPLETED', 100, 'Job 2 done', '{}', '2026-01-01 11:05:00')"
+                )
+            )
 
         # Step 2: Upgrade to head (9f5627b30055)
         command.upgrade(alembic_cfg, "head")
 
-        test_engine = create_engine(db_url)
         inspector = inspect(test_engine)
         tables = set(inspector.get_table_names())
         assert "idempotency_records" in tables
+        assert "active_operation_locks" in tables
 
-        # Verify columns on idempotency_records
-        columns = {col["name"] for col in inspector.get_columns("idempotency_records")}
-        expected_cols = {"id", "key", "principal_id", "resource_type", "resource_id", "operation", "request_hash", "status", "response_code", "response_json", "job_id", "run_id", "created_at", "expires_at"}
-        assert expected_cols.issubset(columns)
+        # Step 3: Verify deterministic monotonic backfill on populated historical events
+        with test_engine.connect() as conn:
+            job1_events = conn.execute(
+                text("SELECT id, seq FROM job_events WHERE job_id = 'job-p10-1' ORDER BY seq ASC")
+            ).fetchall()
+            assert len(job1_events) == 3
+            assert [e._mapping["seq"] for e in job1_events] == [1, 2, 3]
+            assert [e._mapping["id"] for e in job1_events] == ['ev-1', 'ev-2', 'ev-3']
 
-        # Verify job_events.seq
-        job_event_cols = {col["name"] for col in inspector.get_columns("job_events")}
-        assert "seq" in job_event_cols
+            job2_events = conn.execute(
+                text("SELECT id, seq FROM job_events WHERE job_id = 'job-p10-2' ORDER BY seq ASC")
+            ).fetchall()
+            assert len(job2_events) == 2
+            assert [e._mapping["seq"] for e in job2_events] == [1, 2]
+            assert [e._mapping["id"] for e in job2_events] == ['ev-4', 'ev-5']
+
+            # Confirm no NULL seq values exist
+            null_count = conn.execute(text("SELECT COUNT(*) FROM job_events WHERE seq IS NULL")).scalar()
+            assert null_count == 0
 
     finally:
         if test_engine is not None:
             test_engine.dispose()
         if test_db_path.exists():
             test_db_path.unlink()
-
-
-
-
-

@@ -33,8 +33,20 @@ class OperationLockService:
             .first()
         )
         if existing_lock:
+            from app.models.domain import ComplianceRun
+            from app.audit.logger import AuditLogger
+
             linked_job = db.query(ProcessingJob).filter(ProcessingJob.id == existing_lock.job_id).first()
-            if linked_job and linked_job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+            linked_run = (
+                db.query(ComplianceRun).filter(ComplianceRun.id == existing_lock.run_id).first()
+                if existing_lock.run_id
+                else None
+            )
+
+            is_job_active = linked_job and linked_job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+            is_run_active = linked_run and linked_run.execution_status == JobStatus.RUNNING
+
+            if is_job_active or is_run_active:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
@@ -49,9 +61,23 @@ class OperationLockService:
                         },
                     },
                 )
-            else:
-                db.delete(existing_lock)
-                db.commit()
+
+            # Reconcile terminal state or orphaned lock
+            if linked_job is None and linked_run is None:
+                AuditLogger.log(
+                    db,
+                    action="ORPHAN_LOCK_RECONCILED",
+                    entity_type=resource_type,
+                    entity_id=resource_id,
+                    actor_id=principal_id,
+                    payload={
+                        "reconciled_lock_id": existing_lock.id,
+                        "orphan_job_id": existing_lock.job_id,
+                        "operation": operation,
+                    },
+                )
+            db.delete(existing_lock)
+            db.commit()
 
         active_job = (
             db.query(ProcessingJob)

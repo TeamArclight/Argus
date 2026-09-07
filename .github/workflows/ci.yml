@@ -50,17 +50,33 @@ jobs:
           python-version: "3.11"
       - name: Install Dependencies
         run: pip install -r requirements.txt
+      - name: Wait for PostgreSQL Service Readiness
+        run: |
+          python -c "
+          import socket, time
+          for i in range(30):
+              try:
+                  s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                  s.connect(('127.0.0.1', 5432))
+                  s.close()
+                  print('PostgreSQL port 5432 is open and ready.')
+                  break
+              except Exception:
+                  time.sleep(1)
+          else:
+              raise RuntimeError('PostgreSQL did not become ready in 30 seconds.')
+          "
       - name: Verify PostgreSQL Alembic Upgrade and Drift Check
         env:
           ARGUS_JWT_SECRET: "12345678901234567890123456789012"
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/argus_test"
+          DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/argus_test"
         run: |
           python -m alembic upgrade head
           python -m alembic check
       - name: Run Backend Pytest Suite (PostgreSQL)
         env:
           ARGUS_JWT_SECRET: "12345678901234567890123456789012"
-          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/argus_test"
+          DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/argus_test"
         run: pytest
       - name: Run Backend Pytest Suite (SQLite Fallback)
         env:

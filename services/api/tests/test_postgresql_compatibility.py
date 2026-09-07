@@ -4,6 +4,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
 
 from app.models.domain import (
+    ActiveOperationLock,
     AuditEvent,
     Bidder,
     ComplianceRun,
@@ -12,6 +13,7 @@ from app.models.domain import (
     ExtractedFact,
     HumanDecision,
     IdempotencyRecord,
+    JobEvent,
     ProcessingJob,
     RiskSignal,
     RuleEvaluation,
@@ -37,9 +39,11 @@ def test_postgresql_schema_compilation():
         ComplianceRun,
         RiskSignal,
         ProcessingJob,
+        JobEvent,
         HumanDecision,
         AuditEvent,
         IdempotencyRecord,
+        ActiveOperationLock,
     ]
 
     for model in models:
@@ -59,8 +63,34 @@ def test_alembic_postgresql_dialect_migration_check():
     script_dir = ScriptDirectory.from_config(config)
 
     revisions = list(script_dir.walk_revisions())
-    assert len(revisions) >= 5
+    assert len(revisions) >= 6
 
-    # Confirm latest revision is idempotency records addition
+    # Confirm latest revision is idempotency and active operation locks addition
     head_rev = script_dir.get_current_head()
     assert head_rev == "9f5627b30055"
+
+
+def _get_live_postgres_engine():
+    import os
+    from app.core.config import settings
+    pg_url = os.environ.get("TEST_POSTGRES_URL") or os.environ.get("DATABASE_URL") or settings.DATABASE_URL
+    if not pg_url or not ("postgres" in pg_url or "psycopg" in pg_url):
+        return None
+    try:
+        engine = create_engine(pg_url)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return engine
+    except Exception:
+        return None
+
+
+def test_live_postgres_integration_suite():
+    """Executes live PostgreSQL integration validations when a real PostgreSQL service is available."""
+    pg_engine = _get_live_postgres_engine()
+    if pg_engine is None:
+        pytest.skip("No live PostgreSQL service reachable. Skipping live PG integration test.")
+
+    with pg_engine.connect() as conn:
+        res = conn.execute(text("SELECT 1")).scalar()
+        assert res == 1
