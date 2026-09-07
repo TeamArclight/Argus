@@ -1,3 +1,4 @@
+import concurrent.futures
 import io
 import os
 import shutil
@@ -8,11 +9,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit.logger import AuditLogger
 from app.core.config import settings
 from app.db.session import Base, engine, get_db
 from app.main import app
 from app.models.domain import AuditEvent, Bidder, Document, ExtractedFact, Tender
 from app.schemas.canonical import DocumentType, UserRole
+from app.services.document_service import DocumentService
 from app.services.document_validation_service import DocumentValidationService
 from app.storage.factory import get_storage_provider
 from app.storage.local import LocalStorageProvider
@@ -30,7 +33,7 @@ def setup_database_and_storage(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 1. STORAGE PROVIDER TESTS
+# 1. ATOMIC NO-OVERWRITE STORAGE & CONCURRENCY TESTS
 # ---------------------------------------------------------------------------
 
 def test_local_storage_provider_operations(tmp_path):
@@ -59,6 +62,46 @@ def test_local_storage_provider_operations(tmp_path):
     deleted = provider.delete_file(uri)
     assert deleted is True
     assert provider.file_exists(uri) is False
+
+
+def test_concurrent_writes_to_same_key_atomic_no_clobber(tmp_path):
+    provider = LocalStorageProvider(base_path=str(tmp_path / "concurrent_storage"))
+    target_key = "tenders/t_race/race_doc.pdf"
+    content1 = b"%PDF-1.4 Winner payload content bytes"
+    content2 = b"%PDF-1.4 Loser payload content bytes"
+
+    results = []
+
+    def worker(data):
+        try:
+            res = provider.store_file(data, target_key=target_key)
+            return ("SUCCESS", res, data)
+        except Exception as exc:
+            return ("ERROR", type(exc).__name__, data)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(worker, content1)
+        f2 = executor.submit(worker, content2)
+        results = [f1.result(), f2.result()]
+
+    statuses = [r[0] for r in results]
+    assert statuses.count("SUCCESS") == 1
+    assert statuses.count("ERROR") == 1
+
+    success_result = [r for r in results if r[0] == "SUCCESS"][0]
+    error_result = [r for r in results if r[0] == "ERROR"][0]
+
+    assert error_result[1] == "FileExistsError"
+    winner_content = success_result[2]
+
+    # Verify winning payload remains completely intact on storage
+    stored_bytes = provider.read_file(target_key)
+    assert stored_bytes == winner_content
+
+    # Ensure no orphan temporary files remain in target directory
+    target_dir = provider.get_file_path(target_key).parent
+    temp_files = list(target_dir.glob(".tmp_*"))
+    assert len(temp_files) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -347,21 +390,23 @@ def test_single_owner_check_constraint(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 7. DB FAILURE CLEANUP PRESERVES EXISTING FILES
+# 7. TRANSACTION BOUNDARY & COMMIT FAILURE CLEANUP TESTS
 # ---------------------------------------------------------------------------
 
-def test_db_failure_cleanup_preserves_existing_files(monkeypatch):
+def test_audit_transaction_boundary_and_rollback_safety(monkeypatch):
     headers = get_auth_headers(UserRole.PROCUREMENT_OFFICER)
+    provider = get_storage_provider()
+
     with TestClient(app) as client:
         t_res = client.post(
             "/api/v1/tenders",
-            json={"tender_number": "GEM/2026/DOC/008", "title": "Cleanup Safety Test Tender"},
+            json={"tender_number": "GEM/2026/DOC/008", "title": "Tx Safety Test Tender"},
             headers=headers,
         )
         tender_id = t_res.json()["id"]
 
-        pdf_content1 = b"%PDF-1.4 Existing Document Content Bytes"
-        pdf_content2 = b"%PDF-1.4 Failed Upload Content Bytes"
+        pdf_content1 = b"%PDF-1.4 Existing Document Bytes"
+        pdf_content2 = b"%PDF-1.4 Failed Upload Document Bytes"
 
         # Step 1: Upload doc 1 successfully
         up1 = client.post(
@@ -371,27 +416,69 @@ def test_db_failure_cleanup_preserves_existing_files(monkeypatch):
             data={"document_type": DocumentType.TENDER.value},
         )
         assert up1.status_code == 201
-        doc1_id = up1.json()["id"]
+        doc1_uri = up1.json()["storage_uri"]
+        assert provider.file_exists(doc1_uri) is True
 
-        # Step 2: Monkeypatch db.commit to simulate DB error on second upload
+        # Step 2: Patch Session.commit to raise an exception during doc 2 upload
         original_commit = Session.commit
 
         def failing_commit(self_session):
-            if hasattr(self_session, "_force_fail") and self_session._force_fail:
-                raise Exception("Simulated DB Disk Full Error")
+            # Check if this session is attempting to save doc 2
+            for obj in self_session.new:
+                if isinstance(obj, Document) and obj.filename == "failed.pdf":
+                    raise Exception("Simulated DB Disk Full Failure during transaction commit")
             return original_commit(self_session)
 
         monkeypatch.setattr(Session, "commit", failing_commit)
 
-        # Force next DB commit to fail by patching DocumentService or Session
-        # In endpoint execution, attempt upload with failure
-        # We can test transactional cleanup via DocumentService directly
-        provider = get_storage_provider()
-        
-        # Verify doc 1 content is accessible
-        assert provider.file_exists(up1.json()["storage_uri"]) is True
-        c1_bytes = provider.read_file(up1.json()["storage_uri"])
-        assert c1_bytes == pdf_content1
+        # Upload doc 2 (will fail pre-commit)
+        up2 = client.post(
+            f"/api/v1/tenders/{tender_id}/documents",
+            headers=headers,
+            files={"file": ("failed.pdf", pdf_content2, "application/pdf")},
+            data={"document_type": DocumentType.TENDER.value},
+        )
+        assert up2.status_code == 500
+        assert up2.json()["error"]["code"] == "DOCUMENT_STORAGE_FAILED"
+
+        # Verify doc 1 physical content is STILL intact on storage
+        assert provider.file_exists(doc1_uri) is True
+        assert provider.read_file(doc1_uri) == pdf_content1
+
+
+def test_post_commit_refresh_failure_preserves_committed_file(monkeypatch):
+    headers = get_auth_headers(UserRole.PROCUREMENT_OFFICER)
+    provider = get_storage_provider()
+
+    with TestClient(app) as client:
+        t_res = client.post(
+            "/api/v1/tenders",
+            json={"tender_number": "GEM/2026/DOC/010", "title": "Refresh Failure Test"},
+            headers=headers,
+        )
+        tender_id = t_res.json()["id"]
+
+        pdf_content = b"%PDF-1.4 Post Commit Refresh Test Content"
+
+        # Patch Session.refresh to raise exception AFTER commit
+        def failing_refresh(self_session, instance):
+            raise Exception("Simulated Post-Commit Session Refresh Error")
+
+        monkeypatch.setattr(Session, "refresh", failing_refresh)
+
+        up_res = client.post(
+            f"/api/v1/tenders/{tender_id}/documents",
+            headers=headers,
+            files={"file": ("committed.pdf", pdf_content, "application/pdf")},
+            data={"document_type": DocumentType.TENDER.value},
+        )
+        assert up_res.status_code == 201
+        doc_json = up_res.json()
+        doc_uri = doc_json["storage_uri"]
+
+        # Committed document file MUST remain on storage and must not be deleted by error cleanup
+        assert provider.file_exists(doc_uri) is True
+        assert provider.read_file(doc_uri) == pdf_content
 
 
 # ---------------------------------------------------------------------------

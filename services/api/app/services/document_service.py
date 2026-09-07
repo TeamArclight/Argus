@@ -101,9 +101,12 @@ class DocumentService:
         )
         tender.raw_document_uri = storage_uri
 
+        staged_uri = storage_uri
+        committed = False
+
         try:
             db.add(doc)
-            AuditLogger.log(
+            AuditLogger.create_entry(
                 db,
                 action="DOCUMENT_UPLOADED",
                 entity_type="DOCUMENT",
@@ -120,11 +123,12 @@ class DocumentService:
                 },
             )
             db.commit()
-            db.refresh(doc)
+            committed = True
         except Exception as exc:
             db.rollback()
             logger.exception("Metadata persistence failure for doc_id %s: %s", doc_id, str(exc))
-            provider.delete_file(storage_uri)
+            if not committed:
+                provider.delete_file(staged_uri)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={
@@ -133,6 +137,11 @@ class DocumentService:
                     "details": {},
                 },
             )
+
+        try:
+            db.refresh(doc)
+        except Exception as exc:
+            logger.warning("Failed to refresh doc %s after commit: %s", doc_id, str(exc))
 
         return doc
 
@@ -220,9 +229,12 @@ class DocumentService:
             metadata_json={"original_filename": file.filename},
         )
 
+        staged_uri = storage_uri
+        committed = False
+
         try:
             db.add(doc)
-            AuditLogger.log(
+            AuditLogger.create_entry(
                 db,
                 action="DOCUMENT_UPLOADED",
                 entity_type="DOCUMENT",
@@ -239,11 +251,12 @@ class DocumentService:
                 },
             )
             db.commit()
-            db.refresh(doc)
+            committed = True
         except Exception as exc:
             db.rollback()
             logger.exception("Metadata persistence failure for doc_id %s: %s", doc_id, str(exc))
-            provider.delete_file(storage_uri)
+            if not committed:
+                provider.delete_file(staged_uri)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={
@@ -252,6 +265,11 @@ class DocumentService:
                     "details": {},
                 },
             )
+
+        try:
+            db.refresh(doc)
+        except Exception as exc:
+            logger.warning("Failed to refresh doc %s after commit: %s", doc_id, str(exc))
 
         return doc
 

@@ -4,6 +4,13 @@ from typing import Any
 from app.storage.base import StorageProvider
 
 
+def _normalize_path(p: Path) -> Path:
+    s = str(p)
+    if s.startswith("\\\\?\\"):
+        s = s[4:]
+    return Path(s)
+
+
 class LocalStorageProvider(StorageProvider):
     """Local filesystem storage provider with path traversal containment checks."""
 
@@ -25,36 +32,41 @@ class LocalStorageProvider(StorageProvider):
         
         resolved = (self.root_path / clean_key).resolve()
         
+        norm_resolved = _normalize_path(resolved)
+        norm_root = _normalize_path(self.root_path)
+
         # Strict containment check using is_relative_to
-        if not resolved.is_relative_to(self.root_path):
+        if not norm_resolved.is_relative_to(norm_root):
             raise ValueError(f"Path traversal security violation: '{storage_key}' attempts to escape storage root.")
             
-        return resolved
+        return norm_resolved
 
     def store_file(self, file_bytes: bytes, target_key: str) -> str:
         import uuid
         target_path = self._resolve_safe_path(target_key)
-        if target_path.exists():
-            raise FileExistsError(f"Storage key already exists: '{target_key}'")
-
         target_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Atomic write via unique temporary file in target directory
+        # Unique temporary file per upload in target directory
         temp_name = f".tmp_{uuid.uuid4().hex}_{target_path.name}"
         temp_path = target_path.parent / temp_name
+
         try:
             with open(temp_path, "wb") as f:
                 f.write(file_bytes)
-            os.replace(temp_path, target_path)
-        except Exception:
+            
+            try:
+                os.link(temp_path, target_path)
+            except (FileExistsError, OSError) as exc:
+                if target_path.exists():
+                    raise FileExistsError(f"Storage key already exists: '{target_key}'") from exc
+                raise
+        finally:
             if temp_path.exists():
                 try:
                     temp_path.unlink()
                 except OSError:
                     pass
-            raise
 
-        # Return clean relative storage key string
         return target_key.replace("\\", "/").lstrip("/")
 
     def delete_file(self, storage_key: str) -> bool:
