@@ -613,4 +613,62 @@ def test_ambiguous_lock_recovery_fails_closed():
         db.commit()
 
 
+def test_scoped_lock_release_enforcement():
+    """Verifies that release_lock requires job_id, rejects wrong job IDs, and releases only its own lock."""
+    res_id_1 = f"b-scoped-1-{uuid.uuid4()}"
+    res_id_2 = f"b-scoped-2-{uuid.uuid4()}"
+    job_id_1 = f"job-scoped-1-{uuid.uuid4()}"
+    job_id_2 = f"job-scoped-2-{uuid.uuid4()}"
+
+    with SessionLocal() as db:
+        # Create two distinct active locks
+        lock1 = ActiveOperationLock(
+            resource_type="BIDDER",
+            resource_id=res_id_1,
+            operation="VERIFY_BIDDER",
+            job_id=job_id_1,
+            owner_principal_id="user-1",
+        )
+        lock2 = ActiveOperationLock(
+            resource_type="BIDDER",
+            resource_id=res_id_2,
+            operation="VERIFY_BIDDER",
+            job_id=job_id_2,
+            owner_principal_id="user-2",
+        )
+        db.add(lock1)
+        db.add(lock2)
+        db.commit()
+
+        # 1. Missing or empty job_id is rejected with ValueError
+        with pytest.raises(ValueError):
+            OperationLockService.release_lock(db, "BIDDER", res_id_1, "VERIFY_BIDDER", job_id="")
+
+        with pytest.raises(ValueError):
+            OperationLockService.release_lock(db, "BIDDER", res_id_1, "VERIFY_BIDDER", job_id="   ")
+
+        # 2. Wrong job_id cannot release lock
+        released_wrong = OperationLockService.release_lock(
+            db, "BIDDER", res_id_1, "VERIFY_BIDDER", job_id="wrong-job-id-999"
+        )
+        assert released_wrong is False
+        assert db.query(ActiveOperationLock).filter_by(resource_id=res_id_1).first() is not None
+
+        # 3. Correct job_id releases only its own lock
+        released_correct = OperationLockService.release_lock(
+            db, "BIDDER", res_id_1, "VERIFY_BIDDER", job_id=job_id_1
+        )
+        assert released_correct is True
+        assert db.query(ActiveOperationLock).filter_by(resource_id=res_id_1).first() is None
+        # Other lock remains intact
+        assert db.query(ActiveOperationLock).filter_by(resource_id=res_id_2).first() is not None
+
+        # Clean up second lock
+        released_2 = OperationLockService.release_lock(
+            db, "BIDDER", res_id_2, "VERIFY_BIDDER", job_id=job_id_2
+        )
+        assert released_2 is True
+        assert db.query(ActiveOperationLock).filter_by(resource_id=res_id_2).first() is None
+
+
 

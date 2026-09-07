@@ -80,31 +80,62 @@ def test_alembic_postgresql_dialect_migration_check():
     assert head_rev == "9f5627b30055"
 
 
-def _get_live_postgres_engine():
-    from app.core.config import settings
-    pg_url = os.environ.get("TEST_POSTGRES_URL") or os.environ.get("DATABASE_URL") or settings.DATABASE_URL
-    if not pg_url or not ("postgres" in pg_url or "psycopg" in pg_url):
+def _get_live_postgres_url():
+    pg_url = os.environ.get("TEST_POSTGRES_URL")
+    if not pg_url or not pg_url.strip():
+        if os.environ.get("REQUIRE_POSTGRES_TEST") == "1":
+            pytest.fail("TEST_POSTGRES_URL is required for live PostgreSQL test execution in CI / gating environment.")
         return None
+
+    # Strictly require postgresql:// scheme
+    if not (pg_url.startswith("postgresql://") or pg_url.startswith("postgresql+")):
+        pytest.fail(f"TEST_POSTGRES_URL must use a postgresql:// scheme, got: {pg_url}")
+
+    # Reject dev / prod default SQLite URLs
+    if "argus_dev.db" in pg_url or "sqlite" in pg_url:
+        pytest.fail(f"TEST_POSTGRES_URL must not point to a SQLite database: {pg_url}")
+
+    return pg_url
+
+
+def _get_live_postgres_engine():
+    pg_url = _get_live_postgres_url()
+    if pg_url is None:
+        return None, None
     try:
         engine = create_engine(pg_url)
-        db_name = engine.url.database or ""
-        # Safety guard: ensure database is a disposable test database
-        if "test" not in db_name.lower() and os.environ.get("ALLOW_POSTGRES_TEST") != "1":
-            raise RuntimeError(f"Refusing to run live PostgreSQL tests against non-test database: {db_name}")
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return engine
-    except Exception:
-        return None
+        return engine, pg_url
+    except Exception as exc:
+        if os.environ.get("REQUIRE_POSTGRES_TEST") == "1":
+            pytest.fail(f"Failed to connect to TEST_POSTGRES_URL ({pg_url}): {exc}")
+        return None, None
 
 
 @pytest.fixture(scope="module")
 def pg_session_factory():
-    engine = _get_live_postgres_engine()
+    engine, pg_url = _get_live_postgres_engine()
     if engine is None:
-        pytest.skip("No live PostgreSQL test service reachable. Skipping live PG concurrency suite.")
-    from app.db.session import Base
-    Base.metadata.create_all(bind=engine)
+        pytest.skip("No TEST_POSTGRES_URL provided. Skipping live PostgreSQL concurrency suite.")
+
+    # Use Alembic to prepare the disposable test schema
+    import pathlib
+    from alembic import command
+    from alembic.config import Config
+
+    api_dir = pathlib.Path(__file__).resolve().parent.parent
+    ini_path = api_dir / "alembic.ini"
+    alembic_cfg = Config(str(ini_path))
+    alembic_cfg.set_main_option("script_location", str(api_dir / "alembic"))
+    alembic_cfg.set_main_option("sqlalchemy.url", pg_url.replace("%", "%%"))
+
+    try:
+        command.downgrade(alembic_cfg, "base")
+    except Exception:
+        pass
+    command.upgrade(alembic_cfg, "head")
+
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -204,13 +235,15 @@ def test_pg_different_key_concurrent_requests_same_bidder(pg_session_factory):
     assert statuses.count("SUCCESS") == 1
     assert statuses.count("BLOCKED") == 1
 
+    winner_job_id = job_id_1 if r1[0] == "SUCCESS" else job_id_2
     blocked_res = r1 if r1[0] == "BLOCKED" else r2
     assert blocked_res[1] == 409
     assert blocked_res[2]["code"] == "OPERATION_IN_PROGRESS"
 
-    # Cleanup
+    # Cleanup with matching job_id
     with pg_session_factory() as session:
-        OperationLockService.release_lock(session, "BIDDER", bidder_id, "VERIFY_BIDDER")
+        released = OperationLockService.release_lock(session, "BIDDER", bidder_id, "VERIFY_BIDDER", job_id=winner_job_id)
+        assert released is True
 
 
 def test_pg_one_active_operation_enforced_by_database(pg_session_factory):

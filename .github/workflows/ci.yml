@@ -73,11 +73,11 @@ jobs:
         run: |
           python -m alembic upgrade head
           python -m alembic check
-      - name: Run Backend Pytest Suite (PostgreSQL)
+      - name: Run Backend Pytest Suite (PostgreSQL Concurrency & SQLite)
         env:
           ARGUS_JWT_SECRET: "12345678901234567890123456789012"
-          DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/argus_test"
           TEST_POSTGRES_URL: "postgresql://postgres:postgres@127.0.0.1:5432/argus_test"
+          REQUIRE_POSTGRES_TEST: "1"
         run: pytest
       - name: Run Backend Pytest Suite (SQLite Fallback)
         env:

@@ -171,19 +171,24 @@ class OperationLockService:
         resource_type: str,
         resource_id: str,
         operation: str,
-        job_id: str | None = None,
+        job_id: str,
         run_id: str | None = None,
     ) -> bool:
-        """Releases the active operation lock only if it matches the expected job_id / run_id."""
+        """Releases the active operation lock only if it matches the expected job_id / run_id.
+        
+        A missing or mismatched job_id is strictly rejected and will not release any locks.
+        """
+        if not job_id or not job_id.strip():
+            raise ValueError("job_id is required to release an active operation lock.")
+
         query = db.query(ActiveOperationLock).filter(
             ActiveOperationLock.resource_type == resource_type,
             ActiveOperationLock.resource_id == resource_id,
             ActiveOperationLock.operation == operation,
+            ActiveOperationLock.job_id == job_id.strip(),
         )
-        if job_id is not None:
-            query = query.filter(ActiveOperationLock.job_id == job_id)
-        if run_id is not None:
-            query = query.filter(ActiveOperationLock.run_id == run_id)
+        if run_id is not None and run_id.strip():
+            query = query.filter(ActiveOperationLock.run_id == run_id.strip())
 
         bind = db.get_bind()
         if bind is not None and bind.dialect.name == "postgresql":
