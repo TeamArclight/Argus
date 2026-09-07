@@ -45,7 +45,7 @@ class AuditLogger:
     """Audit logger service for ARGUS platform."""
 
     @staticmethod
-    def log(
+    def create_entry(
         db: Session,
         action: str,
         entity_type: str,
@@ -54,6 +54,7 @@ class AuditLogger:
         actor_role: str = "SYSTEM",
         payload: dict[str, Any] | None = None,
     ) -> AuditEvent:
+        """Adds an AuditEvent to the session without calling commit(), enabling single-transaction persistence."""
         payload = payload or {}
         sanitized = sanitize_payload(payload)
 
@@ -66,6 +67,27 @@ class AuditLogger:
             payload_json=sanitized,
         )
         db.add(audit_entry)
+        return audit_entry
+
+    @staticmethod
+    def log(
+        db: Session,
+        action: str,
+        entity_type: str,
+        entity_id: str,
+        actor_id: str = "SYSTEM",
+        actor_role: str = "SYSTEM",
+        payload: dict[str, Any] | None = None,
+    ) -> AuditEvent:
+        audit_entry = AuditLogger.create_entry(
+            db,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            actor_id=actor_id,
+            actor_role=actor_role,
+            payload=payload,
+        )
         db.commit()
         db.refresh(audit_entry)
         return audit_entry

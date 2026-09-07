@@ -4,6 +4,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -54,6 +55,7 @@ class Tender(Base):
 
     requirements: Mapped[list["TenderRequirement"]] = relationship("TenderRequirement", back_populates="tender", cascade="all, delete-orphan")
     bidders: Mapped[list["Bidder"]] = relationship("Bidder", back_populates="tender", cascade="all, delete-orphan")
+    documents: Mapped[list["Document"]] = relationship("Document", back_populates="tender", cascade="all, delete-orphan")
 
 
 class TenderRequirement(Base):
@@ -127,17 +129,27 @@ class ComplianceRun(Base):
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        CheckConstraint(
+            "(tender_id IS NOT NULL AND bidder_id IS NULL) OR (tender_id IS NULL AND bidder_id IS NOT NULL)",
+            name="ck_documents_single_owner",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
-    bidder_id: Mapped[str] = mapped_column(String, ForeignKey("bidders.id"), nullable=False, index=True)
+    tender_id: Mapped[str | None] = mapped_column(String, ForeignKey("tenders.id"), nullable=True, index=True)
+    bidder_id: Mapped[str | None] = mapped_column(String, ForeignKey("bidders.id"), nullable=True, index=True)
     document_type: Mapped[DocumentType] = mapped_column(String, nullable=False)
     storage_uri: Mapped[str] = mapped_column(String, nullable=False)
     filename: Mapped[str] = mapped_column(String, nullable=False)
-    sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
 
-    bidder: Mapped["Bidder"] = relationship("Bidder", back_populates="documents")
+    tender: Mapped["Tender | None"] = relationship("Tender", back_populates="documents")
+    bidder: Mapped["Bidder | None"] = relationship("Bidder", back_populates="documents")
     facts: Mapped[list["ExtractedFact"]] = relationship("ExtractedFact", back_populates="document", cascade="all, delete-orphan")
 
 

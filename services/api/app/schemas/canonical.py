@@ -73,7 +73,8 @@ class RequirementType(str, Enum):
 
 
 class DocumentType(str, Enum):
-    """Bidder document categories."""
+    """Document categories for tenders and bidders."""
+    TENDER = "TENDER"
     TURNOVER_CERT = "TURNOVER_CERT"
     GST_CERT = "GST_CERT"
     UDYAM_CERT = "UDYAM_CERT"
@@ -81,6 +82,10 @@ class DocumentType(str, Enum):
     EPFO_CHALLAN = "EPFO_CHALLAN"
     ESIC_CHALLAN = "ESIC_CHALLAN"
     PAN_CERT = "PAN_CERT"
+    FINANCIAL_STATEMENT = "FINANCIAL_STATEMENT"
+    MCA_DOCUMENT = "MCA_DOCUMENT"
+    OEM_AUTHORIZATION = "OEM_AUTHORIZATION"
+    LOCAL_CONTENT_CERTIFICATE = "LOCAL_CONTENT_CERTIFICATE"
     OTHER = "OTHER"
 
 
@@ -256,6 +261,10 @@ class DocumentCreate(BaseModel):
     document_type: DocumentType
     storage_uri: str
     filename: str
+    tender_id: str | None = None
+    bidder_id: str | None = None
+    content_type: str | None = None
+    size_bytes: int | None = None
     sha256: str | None = None
     metadata_json: dict[str, Any] | None = Field(default_factory=dict)
 
@@ -268,7 +277,11 @@ class DocumentCreate(BaseModel):
 class DocumentRead(DocumentCreate):
     model_config = ConfigDict(from_attributes=True)
     id: str
-    bidder_id: str
+    tender_id: str | None = None
+    bidder_id: str | None = None
+    content_type: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
     facts: list[FactRead] = Field(default_factory=list)
     created_at: datetime
 

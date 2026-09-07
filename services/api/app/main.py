@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.bidders import router as bidders_router
+from app.api.v1.documents import router as documents_router
 from app.api.v1.evaluations import router as evaluations_router
 from app.api.v1.jobs import router as jobs_router
 from app.api.v1.rag import router as rag_router
@@ -40,6 +41,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(tenders_router, prefix="/api/v1")
 app.include_router(bidders_router, prefix="/api/v1")
+app.include_router(documents_router, prefix="/api/v1")
 app.include_router(evaluations_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
@@ -124,6 +126,20 @@ def health_integrations() -> IntegrationsHealthResponse:
 # Global Machine-Readable Error Handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    if isinstance(exc.detail, dict):
+        code = exc.detail.get("code", f"HTTP_{exc.status_code}")
+        message = exc.detail.get("message", str(exc.detail))
+        details = exc.detail.get("details", {})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": code,
+                    "message": message,
+                    "details": details,
+                }
+            },
+        )
     return JSONResponse(
         status_code=exc.status_code,
         content={

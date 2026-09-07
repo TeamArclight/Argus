@@ -1,13 +1,15 @@
 from datetime import datetime, timezone
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 from app.audit.logger import AuditLogger
 from app.auth.dependencies import get_current_principal, require_roles
 from app.db.session import get_db
-from app.models.domain import ProcessingJob, Tender, TenderRequirement
+from app.models.domain import Document, ProcessingJob, Tender, TenderRequirement
 from app.schemas.canonical import (
     AuthenticatedPrincipal,
+    DocumentRead,
+    DocumentType,
     JobRead,
     JobStage,
     JobStatus,
@@ -18,6 +20,7 @@ from app.schemas.canonical import (
     UserRole,
 )
 from app.services.ai_adapter import AIServiceAdapter
+from app.services.document_service import DocumentService
 
 router = APIRouter(prefix="/tenders", tags=["Tenders"])
 ai_adapter = AIServiceAdapter()
@@ -223,4 +226,39 @@ def get_tender_requirements(
 
     requirements = db.query(TenderRequirement).filter(TenderRequirement.tender_id == id).all()
     return requirements
+
+
+@router.post("/{tender_id}/documents", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
+async def upload_tender_document(
+    tender_id: str,
+    file: UploadFile = File(...),
+    document_type: DocumentType = Form(DocumentType.TENDER),
+    principal: AuthenticatedPrincipal = Depends(
+        require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)
+    ),
+    db: Session = Depends(get_db),
+):
+    """Upload a raw document for a tender."""
+    return await DocumentService.upload_tender_document(
+        db, tender_id=tender_id, file=file, document_type=document_type, principal=principal
+    )
+
+
+@router.get("/{tender_id}/documents", response_model=list[DocumentRead])
+def list_tender_documents(
+    tender_id: str,
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+    """List all documents associated with a tender."""
+    tender = db.query(Tender).filter(Tender.id == tender_id).first()
+    if not tender:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tender with ID {tender_id} not found.",
+        )
+
+    documents = db.query(Document).filter(Document.tender_id == tender_id).all()
+    return documents
+
 
