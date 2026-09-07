@@ -134,9 +134,16 @@ class Settings(BaseSettings):
 
     def get_cors_origins(self) -> list[str]:
         """Returns list of allowed origins parsed from string or list."""
+        origins = []
         if isinstance(self.CORS_ALLOWED_ORIGINS, str):
-            return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
-        return self.CORS_ALLOWED_ORIGINS
+            origins = [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
+        elif isinstance(self.CORS_ALLOWED_ORIGINS, list):
+            origins = self.CORS_ALLOWED_ORIGINS
+
+        if self.APP_ENV.lower() == "production" and "*" in origins:
+            raise ValueError("Wildcard CORS origins (*) are strictly forbidden when APP_ENV=production.")
+        return origins
+
 
     def get_mode_for_domain(self, domain: str) -> VerificationMode:
         """Resolves active verification mode for a given domain (e.g. 'gst', 'udyam')."""

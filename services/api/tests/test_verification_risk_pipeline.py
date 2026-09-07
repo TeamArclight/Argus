@@ -979,6 +979,29 @@ def test_persisted_typed_risk_input_references(db_session: Session):
         RiskInputRef(ref_type=RiskInputType.EVIDENCE, id="ev-ref-300", metadata={}),
     ]
 
+    tender = Tender(
+        id="t-persist",
+        tender_number="GEM/2026/PERSIST",
+        title="Persist Test Tender",
+    )
+    bidder = Bidder(
+        id="b-persist",
+        tender_id="t-persist",
+        bidder_name="Persist Bidder",
+    )
+    run = ComplianceRun(
+        id="run-persist",
+        bidder_id="b-persist",
+        tender_id="t-persist",
+        execution_status=JobStatus.COMPLETED,
+        started_at=eval_ts,
+        created_at=eval_ts,
+    )
+    db_session.add(tender)
+    db_session.add(bidder)
+    db_session.add(run)
+    db_session.commit()
+
     db_signal = RiskSignal(
         id="sig-typed-persist-1",
         bidder_id="b-persist",

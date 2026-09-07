@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, status
+import os
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.bidders import router as bidders_router
@@ -12,14 +14,22 @@ from app.api.v1.jobs import router as jobs_router
 from app.api.v1.providers import router as providers_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.tenders import router as tenders_router
+from app.auth.dependencies import require_roles
 from app.core.config import settings
-from app.schemas.canonical import IntegrationServiceStatus, IntegrationsHealthResponse, VerificationMode
+from app.core.logging import get_logger
+from app.core.metrics import metrics_collector
+from app.core.middleware import RequestCorrelationMiddleware, get_request_id
+from app.db.session import SessionLocal
+from app.schemas.canonical import AuthenticatedPrincipal, IntegrationServiceStatus, IntegrationsHealthResponse, UserRole, VerificationMode
+
+logger = get_logger("argus.main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("ARGUS API backend initializing...")
     yield
-
+    logger.info("ARGUS API backend shutting down...")
 
 
 app = FastAPI(
@@ -29,6 +39,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register Request Correlation Middleware first
+app.add_middleware(RequestCorrelationMiddleware)
+
 # Register CORS Middleware
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +50,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Metrics tracking middleware
+@app.middleware("http")
+async def track_metrics_middleware(request: Request, call_next):
+    response = await call_next(request)
+    metrics_collector.record_request(response.status_code)
+    return response
+
 
 # Register API v1 Routers under /api/v1 prefix
 app.include_router(auth_router, prefix="/api/v1")
@@ -50,10 +71,52 @@ app.include_router(audit_router, prefix="/api/v1")
 app.include_router(providers_router, prefix="/api/v1")
 
 
-
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "argus-api"}
+
+
+@app.get("/health/readiness")
+def health_readiness() -> JSONResponse:
+    """Readiness probe checking database connectivity and storage availability."""
+    db_connected = False
+    storage_writable = False
+    req_id = get_request_id()
+
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+            db_connected = True
+    except Exception as e:
+        logger.error(f"Readiness DB probe failed: {e}")
+
+    try:
+        storage_path = settings.ARGUS_STORAGE_LOCAL_PATH
+        os.makedirs(storage_path, exist_ok=True)
+        test_file = os.path.join(storage_path, ".health_check_test")
+        with open(test_file, "w") as f:
+            f.write("ready")
+        if os.path.exists(test_file):
+            os.remove(test_file)
+            storage_writable = True
+    except Exception as e:
+        logger.error(f"Readiness storage probe failed: {e}")
+
+    is_ready = db_connected and storage_writable
+    status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
+
+    return JSONResponse(
+        status_code=status_code,
+        headers={"X-Request-ID": req_id},
+        content={
+            "status": "ready" if is_ready else "degraded",
+            "request_id": req_id,
+            "components": {
+                "database": "connected" if db_connected else "disconnected",
+                "storage": "writable" if storage_writable else "unwritable",
+            },
+        },
+    )
 
 
 @app.get("/health/integrations", response_model=IntegrationsHealthResponse)
@@ -125,30 +188,36 @@ def health_integrations() -> IntegrationsHealthResponse:
     )
 
 
+@app.get("/api/v1/metrics")
+def get_metrics(
+    principal: AuthenticatedPrincipal = Depends(require_roles(UserRole.ADMIN)),
+) -> dict:
+    """Returns operational metrics (protected: ADMIN role required)."""
+    return metrics_collector.get_metrics()
+
+
 # Global Machine-Readable Error Handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    req_id = getattr(request.state, "request_id", get_request_id())
     if isinstance(exc.detail, dict):
         code = exc.detail.get("code", f"HTTP_{exc.status_code}")
         message = exc.detail.get("message", str(exc.detail))
         details = exc.detail.get("details", {})
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={
-                "error": {
-                    "code": code,
-                    "message": message,
-                    "details": details,
-                }
-            },
-        )
+    else:
+        code = f"HTTP_{exc.status_code}"
+        message = str(exc.detail)
+        details = {}
+
     return JSONResponse(
         status_code=exc.status_code,
+        headers={"X-Request-ID": req_id},
         content={
             "error": {
-                "code": f"HTTP_{exc.status_code}",
-                "message": str(exc.detail),
-                "details": {},
+                "code": code,
+                "message": message,
+                "request_id": req_id,
+                "details": details,
             }
         },
     )
@@ -156,13 +225,34 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    req_id = getattr(request.state, "request_id", get_request_id())
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        headers={"X-Request-ID": req_id},
         content={
             "error": {
                 "code": "VALIDATION_ERROR",
                 "message": "Invalid request payload or path parameter format.",
+                "request_id": req_id,
                 "details": {"errors": exc.errors()},
+            }
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(request.state, "request_id", get_request_id())
+    logger.error(f"Unhandled server error on path {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        headers={"X-Request-ID": req_id},
+        content={
+            "error": {
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An internal server error occurred.",
+                "request_id": req_id,
+                "details": {},
             }
         },
     )

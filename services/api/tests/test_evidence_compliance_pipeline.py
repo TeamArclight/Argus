@@ -791,6 +791,17 @@ def test_fail_closed_ownership_missing_entities_and_cross_run(db_session, sample
     db_session.add(run1)
     db_session.commit()
 
+    run2 = ComplianceRun(
+        id="other-run-id-999",
+        bidder_id=sample_bidder.id,
+        tender_id=sample_tender.id,
+        execution_status=JobStatus.RUNNING,
+        started_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run2)
+    db_session.commit()
+
     ver_other_run = VerificationResult(
         id=str(uuid.uuid4()),
         bidder_id=sample_bidder.id,

@@ -28,7 +28,10 @@ dist/
 build/
 *.log
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
 services/api/data/
+candidate_openapi.json
+services/api/candidate_openapi.json
 

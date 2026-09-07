@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
@@ -262,7 +263,7 @@ class Evidence(Base):
     verification_mode: Mapped[VerificationMode | None] = mapped_column(String, nullable=True)
     verification_status: Mapped[VerificationStatus | None] = mapped_column(String, nullable=True)
     provider_identifier: Mapped[str | None] = mapped_column(String, nullable=True)
-    observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     compliance_run: Mapped["ComplianceRun | None"] = relationship("ComplianceRun", back_populates="evidence")
     bidder: Mapped["Bidder | None"] = relationship("Bidder")
@@ -289,8 +290,12 @@ class ProcessingJob(Base):
 
 class JobEvent(Base):
     __tablename__ = "job_events"
+    __table_args__ = (
+        UniqueConstraint("job_id", "seq", name="uq_job_events_job_seq"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     job_id: Mapped[str] = mapped_column(String, ForeignKey("processing_jobs.id"), nullable=False, index=True)
     stage: Mapped[JobStage] = mapped_column(String, nullable=False)
     status: Mapped[JobStatus] = mapped_column(String, nullable=False)
@@ -328,3 +333,56 @@ class AuditEvent(Base):
     actor_role: Mapped[str] = mapped_column(String, nullable=False)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "principal_id",
+            "resource_type",
+            "resource_id",
+            "operation",
+            "key",
+            name="uq_idempotency_records_scope",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    key: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    principal_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False)
+    operation: Mapped[str] = mapped_column(String, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="PROCESSING", nullable=False)
+    response_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ActiveOperationLock(Base):
+    __tablename__ = "active_operation_locks"
+    __table_args__ = (
+        UniqueConstraint(
+            "resource_type",
+            "resource_id",
+            "operation",
+            name="uq_active_operation_locks_resource",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String, nullable=False)
+    job_id: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    owner_principal_id: Mapped[str] = mapped_column(String, nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+
+
+

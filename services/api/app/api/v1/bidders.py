@@ -1,11 +1,16 @@
 from datetime import datetime, timezone
 import hashlib
+from typing import Any
 import uuid
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from app.audit.logger import AuditLogger
 from app.auth.dependencies import get_current_principal, require_roles
 from app.db.session import get_db
+from app.services.idempotency_service import IdempotencyService
+from app.services.operation_lock_service import OperationLockService
+
 from app.models.domain import (
     AuditEvent,
     Bidder,
@@ -137,6 +142,7 @@ def get_bidder(
 @router.post("/bidders/{id}/verify", response_model=JobRead)
 async def verify_bidder(
     id: str,
+    idempotency_key: str | None = Header(None, alias="X-Idempotency-Key"),
     principal: AuthenticatedPrincipal = Depends(require_roles(UserRole.ADMIN, UserRole.PROCUREMENT_OFFICER)),
     db: Session = Depends(get_db),
 ):
@@ -147,67 +153,88 @@ async def verify_bidder(
             detail=f"Bidder with ID {id} not found.",
         )
 
-    # 1. Check for an existing RUNNING ComplianceRun for bidder_id
-    existing_run = (
-        db.query(ComplianceRun)
-        .filter(
-            ComplianceRun.bidder_id == id,
-            ComplianceRun.execution_status == JobStatus.RUNNING,
-        )
-        .first()
+    cached_json, cached_code, record = IdempotencyService.check_or_start(
+        db, idempotency_key, principal.user_id, "BIDDER", id, "VERIFY_BIDDER"
     )
-    if existing_run:
-        if existing_run.job_id:
-            active_job = (
-                db.query(ProcessingJob)
-                .filter(
-                    ProcessingJob.id == existing_run.job_id,
-                    ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
-                )
-                .first()
+    if cached_json is not None:
+        return JSONResponse(status_code=cached_code, content=cached_json)
+
+    try:
+        # Check for stale/orphaned active run without an active job -> mark FAILED and log audit event
+        existing_run = (
+            db.query(ComplianceRun)
+            .filter(
+                ComplianceRun.bidder_id == id,
+                ComplianceRun.execution_status == JobStatus.RUNNING,
             )
-            if active_job:
-                return active_job
-
-        # Stale/orphaned active run without an active job -> mark FAILED and log audit event
-        BidVerificationService.close_orphaned_run(db, existing_run, id)
-
-    # 2. Check for existing active verification job
-    existing_job = (
-        db.query(ProcessingJob)
-        .filter(
-            ProcessingJob.target_id == id,
-            ProcessingJob.job_type == "VERIFY_BIDDER",
-            ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+            .first()
         )
-        .first()
-    )
-    if existing_job:
-        return existing_job
+        if existing_run:
+            active_job = None
+            if existing_run.job_id:
+                active_job = (
+                    db.query(ProcessingJob)
+                    .filter(
+                        ProcessingJob.id == existing_run.job_id,
+                        ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+                    )
+                    .first()
+                )
+            if not active_job:
+                BidVerificationService.close_orphaned_run(db, existing_run, id)
 
-    job = ProcessingJob(
-        target_type="BIDDER",
-        target_id=id,
-        job_type="VERIFY_BIDDER",
-        status=JobStatus.RUNNING,
-        current_stage=JobStage.VERIFICATION,
-        progress=10,
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
+        job = ProcessingJob(
+            target_type="BIDDER",
+            target_id=id,
+            job_type="VERIFY_BIDDER",
+            status=JobStatus.RUNNING,
+            current_stage=JobStage.VERIFICATION,
+            progress=10,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        IdempotencyService.attach_job(db, record, job.id)
 
-    service = BidVerificationService(db)
-    await service.run_verification_workflow(
-        bidder_id=id,
-        job_id=job.id,
-        triggered_by=principal.user_id,
-        actor_id=principal.user_id,
-        actor_role=principal.role.value,
-    )
+        # Acquire resource-level active operation lock
+        try:
+            OperationLockService.acquire_lock(
+                db=db,
+                resource_type="BIDDER",
+                resource_id=id,
+                operation="VERIFY_BIDDER",
+                job_id=job.id,
+                principal_id=principal.user_id,
+            )
+        except HTTPException:
+            db.delete(job)
+            if record:
+                db.delete(record)
+            db.commit()
+            raise
 
-    db.refresh(job)
-    return job
+        try:
+            service = BidVerificationService(db)
+            await service.run_verification_workflow(
+                bidder_id=id,
+                job_id=job.id,
+                triggered_by=principal.user_id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+            )
+
+            db.refresh(job)
+            res_payload = JobRead.model_validate(job).model_dump(mode="json")
+            IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
+            return job
+        finally:
+            OperationLockService.release_lock(db, "BIDDER", id, "VERIFY_BIDDER", job.id)
+    except HTTPException:
+        raise
+    except Exception:
+        IdempotencyService.fail(db, record)
+        raise
+
 
 
 @router.get("/bidders/{id}/compliance", response_model=ComplianceOverviewRead)
