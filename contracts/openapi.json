@@ -1444,7 +1444,7 @@
           "Jobs & SSE"
         ],
         "summary": "Stream Job Events",
-        "description": "Streams real-time Server-Sent Events (SSE) for job progress with monotonic integer sequence reconnection support.",
+        "description": "Streams real-time Server-Sent Events (SSE) for job progress with reconnection support.",
         "operationId": "stream_job_events_api_v1_jobs__id__events_get",
         "security": [
           {

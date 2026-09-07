@@ -270,5 +270,49 @@ def test_alembic_migration_upgrade_from_phase8_with_populated_evidence_data():
             test_db_path.unlink()
 
 
+def test_alembic_migration_upgrade_to_phase11_idempotency_and_job_events():
+    """Verifies upgrading from Phase 10 (7f3416a29033) to Phase 11 head (9f5627b30055) adds idempotency_records and job_events.seq."""
+    api_dir = Path(__file__).resolve().parent.parent
+    ini_path = api_dir / "alembic.ini"
+    test_db_path = api_dir / "test_migration_phase11.db"
+
+    if test_db_path.exists():
+        test_db_path.unlink()
+
+    db_url = f"sqlite:///{test_db_path}"
+    alembic_cfg = Config(str(ini_path))
+    alembic_cfg.set_main_option("script_location", str(api_dir / "alembic"))
+    alembic_cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
+
+    test_engine = None
+    try:
+        # Step 1: Upgrade to Phase 10 baseline 7f3416a29033
+        command.upgrade(alembic_cfg, "7f3416a29033")
+
+        # Step 2: Upgrade to head (9f5627b30055)
+        command.upgrade(alembic_cfg, "head")
+
+        test_engine = create_engine(db_url)
+        inspector = inspect(test_engine)
+        tables = set(inspector.get_table_names())
+        assert "idempotency_records" in tables
+
+        # Verify columns on idempotency_records
+        columns = {col["name"] for col in inspector.get_columns("idempotency_records")}
+        expected_cols = {"id", "key", "principal_id", "resource_type", "resource_id", "operation", "request_hash", "status", "response_code", "response_json", "job_id", "run_id", "created_at", "expires_at"}
+        assert expected_cols.issubset(columns)
+
+        # Verify job_events.seq
+        job_event_cols = {col["name"] for col in inspector.get_columns("job_events")}
+        assert "seq" in job_event_cols
+
+    finally:
+        if test_engine is not None:
+            test_engine.dispose()
+        if test_db_path.exists():
+            test_db_path.unlink()
+
+
+
 
 

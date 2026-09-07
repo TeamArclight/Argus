@@ -292,7 +292,7 @@ class JobEvent(Base):
     __tablename__ = "job_events"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
-    seq: Mapped[int | None] = mapped_column(Integer, autoincrement=True, index=True, nullable=True)
+    seq: Mapped[int] = mapped_column(Integer, default=1, nullable=False, index=True)
     job_id: Mapped[str] = mapped_column(String, ForeignKey("processing_jobs.id"), nullable=False, index=True)
     stage: Mapped[JobStage] = mapped_column(String, nullable=False)
     status: Mapped[JobStatus] = mapped_column(String, nullable=False)
@@ -335,7 +335,14 @@ class AuditEvent(Base):
 class IdempotencyRecord(Base):
     __tablename__ = "idempotency_records"
     __table_args__ = (
-        UniqueConstraint("principal_id", "resource_type", "resource_id", "operation", "key", name="uq_idempotency_scope_key"),
+        UniqueConstraint(
+            "principal_id",
+            "resource_type",
+            "resource_id",
+            "operation",
+            "key",
+            name="uq_idempotency_records_scope",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
@@ -345,12 +352,12 @@ class IdempotencyRecord(Base):
     resource_id: Mapped[str] = mapped_column(String, nullable=False)
     operation: Mapped[str] = mapped_column(String, nullable=False)
     request_hash: Mapped[str] = mapped_column(String, nullable=False)
-    job_id: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="PROCESSING", nullable=False)
     response_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     response_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
