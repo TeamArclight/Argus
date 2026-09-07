@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 import math
 import re
 from typing import Any
@@ -306,10 +307,16 @@ class RiskEngine:
             val_to_parse = clean_s
 
         raw_num = ComplianceEngine._normalize_number(val_to_parse)
-        if raw_num is None or math.isnan(raw_num) or math.isinf(raw_num):
+        if raw_num is None:
+            return currency, resolved_unit, None, is_explicit
+        try:
+            f_num = float(raw_num)
+            if math.isnan(f_num) or math.isinf(f_num):
+                return currency, resolved_unit, None, is_explicit
+        except (ValueError, TypeError, OverflowError):
             return currency, resolved_unit, None, is_explicit
 
-        scaled_val = float(raw_num * scale)
+        scaled_val = float(Decimal(str(raw_num)) * Decimal(str(scale)))
         return currency, resolved_unit, scaled_val, is_explicit
 
     @classmethod

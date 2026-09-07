@@ -317,7 +317,10 @@ class BidVerificationService:
                 .all()
             )
             requirements_schema = [TenderRequirementRead.model_validate(r) for r in requirements_db]
+            rules_hash = ComplianceEngine.compute_rules_hash(requirements_schema)
+            run.rule_version = f"{ComplianceEngine.ENGINE_VERSION}:{rules_hash[:8]}"
 
+            eval_ts = datetime.now(timezone.utc)
             evaluations_schema: list[RuleEvaluationRead] = []
             risk_signals_schema: list[RiskSignalRead] = []
 
@@ -326,7 +329,8 @@ class BidVerificationService:
                     rule=req,
                     facts=facts_schema,
                     verification_results=verifications_schema,
-                    context={"bidder_id": bidder.id, "tender_id": tender.id, "run_id": run.id},
+                    context={"bidder_id": bidder.id, "tender_id": tender.id, "run_id": run.id, "evaluation_timestamp": eval_ts},
+                    evaluation_timestamp=eval_ts,
                 )
                 eval_res.run_id = run.id
 
@@ -380,7 +384,6 @@ class BidVerificationService:
                 )
                 .all()
             )
-            eval_ts = datetime.now(timezone.utc)
 
             comparison_metadata = [
                 {
@@ -586,10 +589,15 @@ class BidVerificationService:
 
             # 6. Build explicit run input snapshot
             input_snapshot = {
-                "snapshot_version": "1.0",
+                "snapshot_version": "1.2.0",
+                "engine_version": ComplianceEngine.ENGINE_VERSION,
+                "normalization_policy_version": ComplianceEngine.NORMALIZATION_POLICY_VERSION,
+                "operator_semantics_version": ComplianceEngine.OPERATOR_SEMANTICS_VERSION,
+                "rules_hash": rules_hash,
                 "risk_engine_version": "1.0",
                 "risk_policy_version": "1.0",
                 "risk_evaluation_timestamp": eval_ts.isoformat(),
+                "evaluation_timestamp": eval_ts.isoformat(),
                 "evaluated_at": eval_ts.isoformat(),
                 "freshness_policy": RiskEngine.DEFAULT_FRESHNESS_DAYS,
                 "approved_requirements": [r.model_dump(mode="json") for r in requirements_schema],
