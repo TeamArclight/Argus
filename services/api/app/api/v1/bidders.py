@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
@@ -628,6 +629,21 @@ async def process_bidder_documents(
                 file_bytes = storage.read_file(doc.storage_uri)
             except Exception:
                 file_bytes = None
+
+        if file_bytes is not None:
+            computed_sha256 = hashlib.sha256(file_bytes).hexdigest()
+            if doc.sha256 and computed_sha256 != doc.sha256:
+                failed_docs += 1
+                AuditLogger.log(
+                    db,
+                    action="DOCUMENT_EXTRACTION_FAILED",
+                    entity_type="DOCUMENT",
+                    entity_id=doc.id,
+                    actor_id=principal.user_id,
+                    actor_role=principal.role.value,
+                    payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "error_code": "DOCUMENT_INTEGRITY_MISMATCH"},
+                )
+                continue
 
         doc_type_val = doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type)
 

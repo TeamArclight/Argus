@@ -555,6 +555,24 @@ class AIServiceResult(BaseModel):
     message: str | None = None
 
 
+class AIResponseEnvelope(BaseModel):
+    """Strict schema envelope for intelligence service HTTP responses."""
+    model_config = ConfigDict(extra="ignore")
+
+    contract_version: str = "1.0"
+    request_id: str | None = None
+    document_id: str | None = None
+    document_sha256: str | None = None
+    bidder_id: str | None = None
+    status: str = "SUCCESS"
+    requirements: list[dict[str, Any]] | None = None
+    facts: list[dict[str, Any]] | None = None
+    provider_model: str | None = None
+    error: str | None = None
+    message: str | None = None
+
+
+
 # ---------------------------------------------------------------------------
 # STANDARDIZED API ERROR SCHEMAS
 # ---------------------------------------------------------------------------

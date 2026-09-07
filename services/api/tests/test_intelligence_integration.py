@@ -657,3 +657,225 @@ def test_extraction_rbac_enforcement():
     # Anonymous request rejected
     res4 = client.post("/api/v1/tenders/dummy_id/process")
     assert res4.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 5. FINAL BOUNDARY HARDENING & REGRESSION TESTS
+# ---------------------------------------------------------------------------
+
+def test_rule_validator_semantics():
+    from app.services.rule_validator import RuleValidator, RuleValidationError
+
+    # 1. Valid EXISTS rule with boolean
+    val1 = RuleValidator.validate({
+        "clause": "1.1",
+        "requirement_type": "GST",
+        "field": "general.gstin",
+        "operator": "EXISTS",
+        "expected_value": True,
+        "confidence": 0.95,
+    })
+    assert val1["clause"] == "1.1"
+    assert val1["operator"] == OperatorEnum.EXISTS
+
+    # 2. Valid GTE rule with float
+    val2 = RuleValidator.validate({
+        "clause": "2.1",
+        "requirement_type": "TURNOVER",
+        "field": "financial.turnover",
+        "operator": "GTE",
+        "expected_value": 5000000.0,
+        "confidence": 1.0,
+    })
+    assert val2["expected_value"] == 5000000.0
+
+    # 3. Invalid GTE rule with None expected_value -> raises RuleValidationError
+    with pytest.raises(RuleValidationError, match="requires a non-null numeric threshold"):
+        RuleValidator.validate({
+            "clause": "2.1",
+            "requirement_type": "TURNOVER",
+            "field": "financial.turnover",
+            "operator": "GTE",
+            "expected_value": None,
+        })
+
+    # 4. Invalid expected_value NaN / Infinity
+    with pytest.raises(RuleValidationError, match="cannot be NaN or Infinity"):
+        RuleValidator.validate({
+            "clause": "2.1",
+            "requirement_type": "TURNOVER",
+            "field": "financial.turnover",
+            "operator": "GTE",
+            "expected_value": float("nan"),
+        })
+
+    # 5. Invalid confidence out of bounds
+    with pytest.raises(RuleValidationError, match="confidence must be a finite number between 0.0 and 1.0"):
+        RuleValidator.validate({
+            "clause": "2.1",
+            "requirement_type": "TURNOVER",
+            "field": "financial.turnover",
+            "operator": "GTE",
+            "expected_value": 100.0,
+            "confidence": 1.5,
+        })
+
+
+@pytest.mark.asyncio
+async def test_ai_adapter_envelope_mismatches(monkeypatch):
+    adapter = AIServiceAdapter()
+
+    # Case 1: Contract version mismatch ("2.0")
+    async def mock_post_bad_contract(self, url, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "2.0",
+                "request_id": json["request_id"],
+                "document_id": json["document_id"],
+                "status": "SUCCESS",
+                "requirements": [],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_contract)
+    res1 = await adapter.extract_tender(tender_id="t1", document_id="doc1", request_id="req123")
+    assert res1.success is False
+    assert res1.error_code == "CONTRACT_MISMATCH"
+
+    # Case 2: Request ID mismatch
+    async def mock_post_bad_req_id(self, url, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1.0",
+                "request_id": "WRONG_REQ_ID",
+                "document_id": json["document_id"],
+                "status": "SUCCESS",
+                "requirements": [],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_req_id)
+    res2 = await adapter.extract_tender(tender_id="t1", document_id="doc1", request_id="req123")
+    assert res2.success is False
+    assert res2.error_code == "REQUEST_ID_MISMATCH"
+
+    # Case 3: Document ID mismatch
+    async def mock_post_bad_doc_id(self, url, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1.0",
+                "request_id": json["request_id"],
+                "document_id": "WRONG_DOC_ID",
+                "status": "SUCCESS",
+                "requirements": [],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_bad_doc_id)
+    res3 = await adapter.extract_tender(tender_id="t1", document_id="doc1", request_id="req123")
+    assert res3.success is False
+    assert res3.error_code == "DOCUMENT_ID_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_ai_adapter_read_timeout_not_retried(monkeypatch):
+    adapter = AIServiceAdapter()
+    call_attempts = {"count": 0}
+
+    async def mock_post_read_timeout(self, url, headers=None, json=None):
+        call_attempts["count"] += 1
+        raise httpx.ReadTimeout("Read timed out after 15s")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_read_timeout)
+    res = await adapter.extract_tender(tender_id="t1", document_id="doc1")
+    assert res.success is False
+    assert res.error_code == "AI_SERVICE_UNAVAILABLE"
+    assert res.retryable is False
+    assert call_attempts["count"] == 1  # Read timeout is NOT retried!
+
+
+def test_process_tender_missing_document_fails():
+    headers = get_auth_headers(UserRole.PROCUREMENT_OFFICER)
+    client = TestClient(app)
+
+    t_res = client.post("/api/v1/tenders", json={"tender_number": "GEM/2026/NO_DOC_ROW/001", "title": "No Doc Row Tender"}, headers=headers)
+    tender_id = t_res.json()["id"]
+
+    proc_res = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers)
+    assert proc_res.status_code == 200
+    job = proc_res.json()
+    assert job["status"] == JobStatus.FAILED.value
+    assert "Missing tender raw_document_uri" in job["error_message"]
+
+
+def test_process_tender_document_sha256_mismatch_fails(monkeypatch):
+    headers = get_auth_headers(UserRole.PROCUREMENT_OFFICER)
+    client = TestClient(app)
+
+    t_res = client.post("/api/v1/tenders", json={"tender_number": "GEM/2026/TAMPER/001", "title": "Tampered Document Tender"}, headers=headers)
+    tender_id = t_res.json()["id"]
+
+    pdf_bytes = b"%PDF-1.4 Clean Document Bytes"
+    up_res = client.post(
+        f"/api/v1/tenders/{tender_id}/documents",
+        headers=headers,
+        files={"file": ("tender.pdf", pdf_bytes, "application/pdf")},
+        data={"document_type": DocumentType.TENDER.value},
+    )
+    doc_id = up_res.json()["id"]
+
+    # Tamper with recorded doc.sha256 in DB
+    db: Session = next(get_db())
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    doc.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+    db.commit()
+    db.close()
+
+    proc_res = client.post(f"/api/v1/tenders/{tender_id}/process", headers=headers)
+    assert proc_res.status_code == 200
+    job = proc_res.json()
+    assert job["status"] == JobStatus.FAILED.value
+    assert "hash mismatch" in job["error_message"].lower()
+
+
+def test_create_manual_requirement_cross_tender_document_rejected():
+    headers = get_auth_headers(UserRole.PROCUREMENT_OFFICER)
+    client = TestClient(app)
+
+    # Tender 1 & Tender 2
+    t1_res = client.post("/api/v1/tenders", json={"tender_number": "GEM/2026/T1/001", "title": "Tender 1"}, headers=headers)
+    t1_id = t1_res.json()["id"]
+
+    t2_res = client.post("/api/v1/tenders", json={"tender_number": "GEM/2026/T2/001", "title": "Tender 2"}, headers=headers)
+    t2_id = t2_res.json()["id"]
+
+    # Upload doc to Tender 2
+    up_res = client.post(
+        f"/api/v1/tenders/{t2_id}/documents",
+        headers=headers,
+        files={"file": ("t2_doc.pdf", b"%PDF-1.4 T2 Doc Content", "application/pdf")},
+        data={"document_type": DocumentType.TENDER.value},
+    )
+    t2_doc_id = up_res.json()["id"]
+
+    # Try creating requirement on Tender 1 referencing Tender 2's document_id
+    req_res = client.post(
+        f"/api/v1/tenders/{t1_id}/requirements",
+        json={
+            "clause": "1.1",
+            "requirement_type": "GST",
+            "field": "general.gstin",
+            "operator": "EXISTS",
+            "expected_value": True,
+            "document_id": t2_doc_id,
+        },
+        headers=headers,
+    )
+    assert req_res.status_code == 422
+    res_json = req_res.json()
+    err_text = str(res_json.get("detail") or res_json.get("error", {}).get("message", ""))
+    assert "document does not belong to tender" in err_text
+

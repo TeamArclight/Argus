@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
+import hashlib
 import uuid
+from typing import Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 from app.audit.logger import AuditLogger
@@ -21,6 +23,7 @@ from app.schemas.canonical import (
 )
 from app.services.ai_adapter import AIServiceAdapter
 from app.services.document_service import DocumentService
+from app.services.rule_validator import RuleValidator
 from app.storage.factory import get_storage_provider
 
 router = APIRouter(prefix="/tenders", tags=["Tenders"])
@@ -141,21 +144,8 @@ async def process_tender(
         payload={"job_id": job.id},
     )
 
-    # Select tender document from DB (or raw_document_uri)
+    # Select tender document from DB or raw_document_uri
     doc = db.query(Document).filter(Document.tender_id == id).order_by(Document.created_at.desc()).first()
-
-    document_id = doc.id if doc else f"doc_tender_{id}"
-    document_sha256 = doc.sha256 if doc else None
-    filename = doc.filename if doc else None
-    content_type = doc.content_type if doc else None
-    file_bytes = None
-
-    storage = get_storage_provider()
-    if doc and doc.storage_uri and storage.file_exists(doc.storage_uri):
-        try:
-            file_bytes = storage.read_file(doc.storage_uri)
-        except Exception:
-            file_bytes = None
 
     if not doc and not tender.raw_document_uri:
         job.status = JobStatus.FAILED
@@ -176,6 +166,75 @@ async def process_tender(
         )
         return job
 
+    document_id = doc.id if doc else f"doc_tender_{id}"
+    document_uri = doc.storage_uri if doc else (tender.raw_document_uri or "")
+    document_sha256 = doc.sha256 if doc else None
+    filename = doc.filename if doc else None
+    content_type = doc.content_type if doc else None
+    file_bytes = None
+
+    storage = get_storage_provider()
+    if doc and doc.storage_uri:
+        if not storage.file_exists(doc.storage_uri):
+            job.status = JobStatus.FAILED
+            job.error_message = "Tender document file not found in storage."
+            job.progress = 100
+            job.completed_at = datetime.now(timezone.utc)
+            tender.status = JobStatus.FAILED
+            db.commit()
+
+            AuditLogger.log(
+                db,
+                action="TENDER_EXTRACTION_FAILED",
+                entity_type="TENDER",
+                entity_id=id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "error_code": "DOCUMENT_FILE_NOT_FOUND"},
+            )
+            return job
+
+        try:
+            file_bytes = storage.read_file(doc.storage_uri)
+        except Exception as e:
+            job.status = JobStatus.FAILED
+            job.error_message = f"Failed to read tender document from storage: {e}"
+            job.progress = 100
+            job.completed_at = datetime.now(timezone.utc)
+            tender.status = JobStatus.FAILED
+            db.commit()
+
+            AuditLogger.log(
+                db,
+                action="TENDER_EXTRACTION_FAILED",
+                entity_type="TENDER",
+                entity_id=id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "error_code": "STORAGE_READ_ERROR"},
+            )
+            return job
+
+        computed_sha256 = hashlib.sha256(file_bytes).hexdigest()
+        if doc.sha256 and computed_sha256 != doc.sha256:
+            job.status = JobStatus.FAILED
+            job.error_message = f"Document SHA-256 hash mismatch: expected {doc.sha256}, got {computed_sha256}."
+            job.progress = 100
+            job.completed_at = datetime.now(timezone.utc)
+            tender.status = JobStatus.FAILED
+            db.commit()
+
+            AuditLogger.log(
+                db,
+                action="TENDER_EXTRACTION_FAILED",
+                entity_type="TENDER",
+                entity_id=id,
+                actor_id=principal.user_id,
+                actor_role=principal.role.value,
+                payload={"job_id": job.id, "error_code": "DOCUMENT_INTEGRITY_MISMATCH"},
+            )
+            return job
+
     req_id = str(uuid.uuid4())
     AuditLogger.log(
         db,
@@ -189,7 +248,7 @@ async def process_tender(
 
     ai_result = await ai_adapter.extract_tender(
         tender_id=id,
-        document_uri=tender.raw_document_uri or doc.storage_uri if doc else "",
+        document_uri=document_uri,
         document_id=document_id,
         document_sha256=document_sha256,
         file_bytes=file_bytes,
@@ -229,25 +288,39 @@ async def process_tender(
             return str(float(v))
         return str(v)
 
-    # Build lookup for deduplication
+    # Build comprehensive lookup key for deduplication
     existing_keys = {
         (
             r.clause,
+            r.requirement_type.value if hasattr(r.requirement_type, "value") else str(r.requirement_type),
             r.field,
-            str(r.operator.value if hasattr(r.operator, "value") else r.operator),
+            r.operator.value if hasattr(r.operator, "value") else str(r.operator),
             _norm_val(r.expected_value),
+            r.unit or "",
+            bool(r.mandatory),
             r.document_id,
         )
         for r in existing_reqs
     }
 
+    doc_id_val = doc.id if doc else None
+
     new_count = 0
     for item in ai_result.data:
         req_obj = TenderRequirementCreate.model_validate(item)
         
-        doc_id_val = doc.id if doc else None
-        op_str = str(req_obj.operator.value if hasattr(req_obj.operator, "value") else req_obj.operator)
-        item_key = (req_obj.clause, req_obj.field, op_str, _norm_val(req_obj.expected_value), doc_id_val)
+        req_type_str = req_obj.requirement_type.value if hasattr(req_obj.requirement_type, "value") else str(req_obj.requirement_type)
+        op_str = req_obj.operator.value if hasattr(req_obj.operator, "value") else str(req_obj.operator)
+        item_key = (
+            req_obj.clause,
+            req_type_str,
+            req_obj.field,
+            op_str,
+            _norm_val(req_obj.expected_value),
+            req_obj.unit or "",
+            bool(req_obj.mandatory),
+            doc_id_val,
+        )
 
         if item_key in existing_keys:
             continue
@@ -330,12 +403,17 @@ def create_manual_tender_requirement(
             detail=f"Tender with ID {tender_id} not found.",
         )
 
-    if not payload.clause or not payload.clause.strip():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Requirement clause must be non-empty.")
-    if not payload.field or not payload.field.strip():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Requirement field must be non-empty.")
-    if payload.expected_value is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Requirement expected_value cannot be None.")
+    # Executable rule validation via RuleValidator
+    RuleValidator.validate_or_raise_http(payload)
+
+    # Document ownership validation
+    if payload.document_id:
+        doc_row = db.query(Document).filter(Document.id == payload.document_id).first()
+        if not doc_row or doc_row.tender_id != tender_id or doc_row.bidder_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Invalid document_id '{payload.document_id}': document does not belong to tender {tender_id}.",
+            )
 
     now_iso = datetime.now(timezone.utc).isoformat()
     meta = dict(payload.metadata_json or {})
@@ -362,10 +440,10 @@ def create_manual_tender_requirement(
         metadata_json=meta,
     )
     db.add(req)
-    db.commit()
-    db.refresh(req)
+    db.flush()
 
-    AuditLogger.log(
+    # Single-transaction audit entry staging
+    AuditLogger.create_entry(
         db,
         action="TENDER_REQUIREMENT_CREATED",
         entity_type="TENDER_REQUIREMENT",
@@ -379,6 +457,8 @@ def create_manual_tender_requirement(
             "is_approved": True,
         },
     )
+    db.commit()
+    db.refresh(req)
 
     return req
 
@@ -414,15 +494,8 @@ def approve_tender_requirement(
             detail=f"Requirement with ID {requirement_id} not found for tender {tender_id}.",
         )
 
-    # Executable rule validation
-    if not req.clause or not req.clause.strip():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Requirement clause must be non-empty.")
-    if not req.field or not req.field.strip():
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Requirement field must be non-empty.")
-    if req.expected_value is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Requirement expected_value cannot be None.")
-    if req.confidence < 0.0 or req.confidence > 1.0:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Requirement confidence must be between 0.0 and 1.0.")
+    # Executable rule validation via RuleValidator
+    RuleValidator.validate_or_raise_http(req)
 
     meta = dict(req.metadata_json or {})
 
@@ -435,7 +508,8 @@ def approve_tender_requirement(
         meta["approval_status"] = "APPROVED"
         req.metadata_json = meta
 
-        AuditLogger.log(
+        # Single-transaction audit entry staging
+        AuditLogger.create_entry(
             db,
             action="TENDER_REQUIREMENT_APPROVED",
             entity_type="TENDER_REQUIREMENT",
@@ -488,5 +562,3 @@ def list_tender_documents(
 
     documents = db.query(Document).filter(Document.tender_id == tender_id).all()
     return documents
-
-

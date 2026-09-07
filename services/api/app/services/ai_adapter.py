@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.schemas.canonical import (
+    AIResponseEnvelope,
     AIServiceResult,
     ExtractedFactCreate,
     TenderRequirementCreate,
@@ -71,7 +72,7 @@ class AIServiceAdapter:
         if settings.ARGUS_INTELLIGENCE_API_KEY:
             headers["Authorization"] = f"Bearer {settings.ARGUS_INTELLIGENCE_API_KEY}"
 
-        timeout = httpx.Timeout(settings.REQUEST_TIMEOUT_SECONDS)
+        timeout = httpx.Timeout(connect=3.0, read=15.0, write=5.0, pool=5.0)
         max_attempts = 3
 
         for attempt in range(1, max_attempts + 1):
@@ -104,8 +105,6 @@ class AIServiceAdapter:
                             message="Intelligence service endpoint not found (HTTP 404).",
                         )
                     elif resp.status_code in (408, 429):
-                        if attempt < max_attempts:
-                            continue
                         return AIServiceResult(
                             success=False,
                             data=None,
@@ -122,8 +121,6 @@ class AIServiceAdapter:
                             message=f"Intelligence service rejected request (HTTP {resp.status_code}).",
                         )
                     elif resp.status_code >= 500:
-                        if attempt < max_attempts:
-                            continue
                         return AIServiceResult(
                             success=False,
                             data=None,
@@ -152,8 +149,55 @@ class AIServiceAdapter:
                             message="Intelligence service response must be a JSON object.",
                         )
 
-                    if resp_data.get("status") in ("FAILED", "ERROR"):
-                        err_msg = resp_data.get("error") or resp_data.get("message") or "Extraction failed on service."
+                    try:
+                        envelope = AIResponseEnvelope.model_validate(resp_data)
+                    except ValidationError as val_err:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="SCHEMA_VALIDATION_FAILED",
+                            retryable=False,
+                            message=f"Failed to validate response envelope: {val_err}",
+                        )
+
+                    if envelope.contract_version != "1.0":
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="CONTRACT_MISMATCH",
+                            retryable=False,
+                            message=f"Contract version mismatch: expected '1.0', got '{envelope.contract_version}'.",
+                        )
+
+                    if envelope.request_id and envelope.request_id != req_id:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="REQUEST_ID_MISMATCH",
+                            retryable=False,
+                            message=f"Request ID mismatch: expected '{req_id}', got '{envelope.request_id}'.",
+                        )
+
+                    if envelope.document_id and envelope.document_id != doc_id:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="DOCUMENT_ID_MISMATCH",
+                            retryable=False,
+                            message=f"Document ID mismatch: expected '{doc_id}', got '{envelope.document_id}'.",
+                        )
+
+                    if envelope.document_sha256 and document_sha256 and envelope.document_sha256 != document_sha256:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="DOCUMENT_SHA256_MISMATCH",
+                            retryable=False,
+                            message="Document SHA-256 mismatch in intelligence response envelope.",
+                        )
+
+                    if envelope.status in ("FAILED", "ERROR"):
+                        err_msg = envelope.error or envelope.message or "Extraction failed on service."
                         return AIServiceResult(
                             success=False,
                             data=None,
@@ -162,7 +206,7 @@ class AIServiceAdapter:
                             message=f"Intelligence processing failure: {err_msg}",
                         )
 
-                    raw_items = resp_data.get("requirements") if "requirements" in resp_data else resp_data.get("data")
+                    raw_items = envelope.requirements if envelope.requirements is not None else resp_data.get("requirements", resp_data.get("data"))
                     if not isinstance(raw_items, list):
                         return AIServiceResult(
                             success=False,
@@ -194,7 +238,9 @@ class AIServiceAdapter:
                             item_meta.setdefault("document_id", doc_id)
                             if document_sha256:
                                 item_meta.setdefault("document_sha256", document_sha256)
-                            if "provider_model" in resp_data:
+                            if envelope.provider_model:
+                                item_meta.setdefault("provider_model", envelope.provider_model)
+                            elif "provider_model" in resp_data:
                                 item_meta.setdefault("provider_model", resp_data["provider_model"])
 
                             item["metadata_json"] = item_meta
@@ -220,7 +266,7 @@ class AIServiceAdapter:
                         message=f"Successfully extracted {len(validated_requirements)} requirement candidates.",
                     )
 
-            except httpx.TimeoutException:
+            except (httpx.ConnectError, httpx.ConnectTimeout) as conn_err:
                 if attempt < max_attempts:
                     continue
                 return AIServiceResult(
@@ -228,16 +274,30 @@ class AIServiceAdapter:
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=True,
-                    message=f"Intelligence service request timed out after {settings.REQUEST_TIMEOUT_SECONDS}s.",
+                    message=f"Intelligence service connection failed after {max_attempts} attempts: {conn_err}",
+                )
+            except httpx.ReadTimeout as read_err:
+                return AIServiceResult(
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
+                    retryable=False,
+                    message=f"Intelligence service read timed out after 15.0s: {read_err}",
+                )
+            except httpx.TimeoutException as time_err:
+                return AIServiceResult(
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
+                    retryable=False,
+                    message=f"Intelligence service request timed out: {time_err}",
                 )
             except httpx.RequestError as req_err:
-                if attempt < max_attempts:
-                    continue
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
-                    retryable=True,
+                    retryable=False,
                     message=f"Intelligence service transport failure: {req_err}",
                 )
             except Exception as exc:
@@ -310,7 +370,7 @@ class AIServiceAdapter:
         if settings.ARGUS_INTELLIGENCE_API_KEY:
             headers["Authorization"] = f"Bearer {settings.ARGUS_INTELLIGENCE_API_KEY}"
 
-        timeout = httpx.Timeout(settings.REQUEST_TIMEOUT_SECONDS)
+        timeout = httpx.Timeout(connect=3.0, read=15.0, write=5.0, pool=5.0)
         max_attempts = 3
 
         for attempt in range(1, max_attempts + 1):
@@ -343,8 +403,6 @@ class AIServiceAdapter:
                             message="Intelligence service endpoint not found (HTTP 404).",
                         )
                     elif resp.status_code in (408, 429):
-                        if attempt < max_attempts:
-                            continue
                         return AIServiceResult(
                             success=False,
                             data=None,
@@ -361,8 +419,6 @@ class AIServiceAdapter:
                             message=f"Intelligence service rejected request (HTTP {resp.status_code}).",
                         )
                     elif resp.status_code >= 500:
-                        if attempt < max_attempts:
-                            continue
                         return AIServiceResult(
                             success=False,
                             data=None,
@@ -391,8 +447,64 @@ class AIServiceAdapter:
                             message="Intelligence service response must be a JSON object.",
                         )
 
-                    if resp_data.get("status") in ("FAILED", "ERROR"):
-                        err_msg = resp_data.get("error") or resp_data.get("message") or "Extraction failed on service."
+                    try:
+                        envelope = AIResponseEnvelope.model_validate(resp_data)
+                    except ValidationError as val_err:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="SCHEMA_VALIDATION_FAILED",
+                            retryable=False,
+                            message=f"Failed to validate response envelope: {val_err}",
+                        )
+
+                    if envelope.contract_version != "1.0":
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="CONTRACT_MISMATCH",
+                            retryable=False,
+                            message=f"Contract version mismatch: expected '1.0', got '{envelope.contract_version}'.",
+                        )
+
+                    if envelope.request_id and envelope.request_id != req_id:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="REQUEST_ID_MISMATCH",
+                            retryable=False,
+                            message=f"Request ID mismatch: expected '{req_id}', got '{envelope.request_id}'.",
+                        )
+
+                    if envelope.document_id and envelope.document_id != document_id:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="DOCUMENT_ID_MISMATCH",
+                            retryable=False,
+                            message=f"Document ID mismatch: expected '{document_id}', got '{envelope.document_id}'.",
+                        )
+
+                    if bidder_id and envelope.bidder_id and envelope.bidder_id != bidder_id:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="BIDDER_ID_MISMATCH",
+                            retryable=False,
+                            message=f"Bidder ID mismatch: expected '{bidder_id}', got '{envelope.bidder_id}'.",
+                        )
+
+                    if envelope.document_sha256 and document_sha256 and envelope.document_sha256 != document_sha256:
+                        return AIServiceResult(
+                            success=False,
+                            data=None,
+                            error_code="DOCUMENT_SHA256_MISMATCH",
+                            retryable=False,
+                            message="Document SHA-256 mismatch in intelligence response envelope.",
+                        )
+
+                    if envelope.status in ("FAILED", "ERROR"):
+                        err_msg = envelope.error or envelope.message or "Extraction failed on service."
                         return AIServiceResult(
                             success=False,
                             data=None,
@@ -401,7 +513,7 @@ class AIServiceAdapter:
                             message=f"Intelligence processing failure: {err_msg}",
                         )
 
-                    raw_facts = resp_data.get("facts") if "facts" in resp_data else resp_data.get("data")
+                    raw_facts = envelope.facts if envelope.facts is not None else resp_data.get("facts", resp_data.get("data"))
                     if not isinstance(raw_facts, list):
                         return AIServiceResult(
                             success=False,
@@ -432,7 +544,9 @@ class AIServiceAdapter:
                             item_meta.setdefault("document_id", document_id)
                             if document_sha256:
                                 item_meta.setdefault("document_sha256", document_sha256)
-                            if "provider_model" in resp_data:
+                            if envelope.provider_model:
+                                item_meta.setdefault("provider_model", envelope.provider_model)
+                            elif "provider_model" in resp_data:
                                 item_meta.setdefault("provider_model", resp_data["provider_model"])
 
                             item["metadata_json"] = item_meta
@@ -456,7 +570,7 @@ class AIServiceAdapter:
                         message=f"Successfully extracted {len(validated_facts)} facts from bidder document.",
                     )
 
-            except httpx.TimeoutException:
+            except (httpx.ConnectError, httpx.ConnectTimeout) as conn_err:
                 if attempt < max_attempts:
                     continue
                 return AIServiceResult(
@@ -464,16 +578,30 @@ class AIServiceAdapter:
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
                     retryable=True,
-                    message=f"Intelligence service request timed out after {settings.REQUEST_TIMEOUT_SECONDS}s.",
+                    message=f"Intelligence service connection failed after {max_attempts} attempts: {conn_err}",
+                )
+            except httpx.ReadTimeout as read_err:
+                return AIServiceResult(
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
+                    retryable=False,
+                    message=f"Intelligence service read timed out after 15.0s: {read_err}",
+                )
+            except httpx.TimeoutException as time_err:
+                return AIServiceResult(
+                    success=False,
+                    data=None,
+                    error_code="AI_SERVICE_UNAVAILABLE",
+                    retryable=False,
+                    message=f"Intelligence service request timed out: {time_err}",
                 )
             except httpx.RequestError as req_err:
-                if attempt < max_attempts:
-                    continue
                 return AIServiceResult(
                     success=False,
                     data=None,
                     error_code="AI_SERVICE_UNAVAILABLE",
-                    retryable=True,
+                    retryable=False,
                     message=f"Intelligence service transport failure: {req_err}",
                 )
             except Exception as exc:
