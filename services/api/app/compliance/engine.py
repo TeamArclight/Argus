@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -20,17 +21,41 @@ from app.schemas.canonical import (
 )
 
 
+@dataclass(frozen=True)
+class FinancialContext:
+    """Typed financial and numeric context for exact, safe comparisons."""
+
+    raw_value: Any
+    base_decimal_value: Decimal | None
+    currency: str | None
+    scale_token: str | None
+    scale_multiplier: Decimal
+    metric: str | None
+    financial_year: str | None
+    averaging_period: str | None
+    is_base_unit: bool
+    is_valid: bool
+    error_reason: str | None = None
+
+
 class ComplianceEngine:
     """Pure deterministic compliance evaluation engine.
 
     Evaluates tender requirement rules against extracted facts and verification results.
     Prohibited from invoking LLMs, databases, network calls, or side effects.
     Uses exact Decimal arithmetic for numeric and financial comparisons.
+    Requires explicit clock context and enforces strict context compatibility.
     """
 
     ENGINE_VERSION = "1.2.0"
     NORMALIZATION_POLICY_VERSION = "1.2.0"
     OPERATOR_SEMANTICS_VERSION = "1.2.0"
+    FINANCIAL_CONTEXT_POLICY_VERSION = "1.2.0"
+    TEMPORAL_POLICY_VERSION = "1.2.0"
+
+    MAX_INPUT_STR_LENGTH = 100
+    MAX_DECIMAL_DIGITS = 38
+    MAX_DECIMAL_EXPONENT = 30
 
     UNIT_SCALE_MAP: dict[str, tuple[Decimal, str]] = {
         "crore": (Decimal("10000000"), "Crore"),
@@ -41,20 +66,23 @@ class ComplianceEngine:
         "lakhs": (Decimal("100000"), "Lakh"),
         "lac": (Decimal("100000"), "Lakh"),
         "lacs": (Decimal("100000"), "Lakh"),
+        "l": (Decimal("100000"), "Lakh"),
         "thousand": (Decimal("1000"), "Thousand"),
         "thousands": (Decimal("1000"), "Thousand"),
         "k": (Decimal("1000"), "Thousand"),
         "million": (Decimal("1000000"), "Million"),
         "millions": (Decimal("1000000"), "Million"),
+        "m": (Decimal("1000000"), "Million"),
         "mn": (Decimal("1000000"), "Million"),
         "billion": (Decimal("1000000000"), "Billion"),
         "billions": (Decimal("1000000000"), "Billion"),
+        "b": (Decimal("1000000000"), "Billion"),
         "bn": (Decimal("1000000000"), "Billion"),
     }
 
     @staticmethod
     def compute_rules_hash(rules: list[TenderRequirementRead | dict[str, Any]]) -> str:
-        """Computes a deterministic canonical SHA-256 hash of approved rule definitions."""
+        """Computes a deterministic canonical SHA-256 hash of approved rule definitions and policy metadata."""
         canonical_items = []
         for r in rules:
             if hasattr(r, "model_dump"):
@@ -63,14 +91,37 @@ class ComplianceEngine:
                 r_dict = r.__dict__
             else:
                 r_dict = dict(r)
+
+            # Extract semantic policy metadata while strictly excluding IDs and mutable timestamps
+            raw_meta = r_dict.get("metadata_json") or {}
+            policy_meta = {}
+            if isinstance(raw_meta, dict):
+                for k in (
+                    "applicability",
+                    "applicability_policy",
+                    "applicable",
+                    "is_applicable",
+                    "currency",
+                    "fy",
+                    "financial_year",
+                    "metric",
+                    "averaging_period",
+                    "is_base_unit",
+                    "applicable_bidder_types",
+                    "optional_missing_policy",
+                ):
+                    if k in raw_meta and raw_meta[k] is not None:
+                        policy_meta[k] = raw_meta[k]
+
             canonical_items.append({
-                "clause": str(r_dict.get("clause") or ""),
-                "field": str(r_dict.get("field") or ""),
-                "operator": str(r_dict.get("operator") or ""),
+                "clause": str(r_dict.get("clause") or "").strip(),
+                "field": str(r_dict.get("field") or "").strip(),
+                "operator": str(r_dict.get("operator") or "").strip(),
                 "expected_value": r_dict.get("expected_value"),
-                "unit": str(r_dict.get("unit") or ""),
+                "unit": str(r_dict.get("unit") or "").strip() if r_dict.get("unit") else None,
                 "mandatory": bool(r_dict.get("mandatory", True)),
-                "requirement_type": str(r_dict.get("requirement_type") or ""),
+                "requirement_type": str(r_dict.get("requirement_type") or "").strip(),
+                "policy_metadata": policy_meta,
             })
         canonical_items.sort(key=lambda x: (x["field"], x["operator"], str(x["expected_value"]), x["clause"]))
         serialized = json.dumps(canonical_items, sort_keys=True, separators=(",", ":"), default=str)
@@ -131,12 +182,14 @@ class ComplianceEngine:
         """Normalizes numeric representations to exact Decimal.
 
         Rejects NaN, Infinity, -Infinity, boolean types, corrupt commas, and malformed strings.
-        Converts finite float inputs through their string representation.
+        Enforces precision and input length bounds.
         """
         if val is None or isinstance(val, bool):
             return None
         if isinstance(val, Decimal):
             if val.is_nan() or val.is_infinite():
+                return None
+            if abs(val.as_tuple().exponent) > cls.MAX_DECIMAL_EXPONENT:
                 return None
             return val
         if isinstance(val, int):
@@ -147,7 +200,7 @@ class ComplianceEngine:
             return Decimal(str(val))
         if isinstance(val, str):
             s = val.strip()
-            if not s:
+            if not s or len(s) > cls.MAX_INPUT_STR_LENGTH:
                 return None
             s_lower = s.lower()
             if s_lower in ("nan", "inf", "-inf", "+inf", "infinity", "-infinity", "+infinity"):
@@ -159,7 +212,7 @@ class ComplianceEngine:
                 "INR", "inr", "Rs.", "rs.", "Rs", "rs", "USD", "usd", "EUR", "eur", "GBP", "gbp", "Rupees", "rupees"
             ]
             for token in tokens_to_remove:
-                s_clean = re.sub(r"\b" + re.escape(token) + r"\b", "", s_clean, flags=re.IGNORECASE)
+                s_clean = re.sub(r"" + re.escape(token) + r"", "", s_clean, flags=re.IGNORECASE)
             s_clean = s_clean.strip()
             if not s_clean:
                 return None
@@ -167,7 +220,7 @@ class ComplianceEngine:
             # Check scale words in string
             scale_mult = Decimal("1")
             for scale_token, (mult, _) in cls.UNIT_SCALE_MAP.items():
-                pattern = r"\b" + re.escape(scale_token) + r"\b"
+                pattern = r"" + re.escape(scale_token) + r""
                 if re.search(pattern, s_clean, flags=re.IGNORECASE):
                     scale_mult = mult
                     s_clean = re.sub(pattern, "", s_clean, flags=re.IGNORECASE).strip()
@@ -181,6 +234,10 @@ class ComplianceEngine:
                 dec = Decimal(s_clean)
                 if dec.is_nan() or dec.is_infinite():
                     return None
+                if abs(dec.as_tuple().exponent) > cls.MAX_DECIMAL_EXPONENT:
+                    return None
+                if len(dec.as_tuple().digits) > cls.MAX_DECIMAL_DIGITS:
+                    return None
                 return dec * scale_mult
             except (InvalidOperation, TypeError, ValueError):
                 return None
@@ -188,22 +245,91 @@ class ComplianceEngine:
         return None
 
     @classmethod
-    def _parse_currency_and_scale(
-        cls, val: Any, meta: dict[str, Any] | None = None, rule_unit: str | None = None
-    ) -> tuple[Decimal | None, str | None, str | None, bool]:
-        """Parses currency, unit/scale, and Decimal numeric base value from string or metadata.
+    def _parse_financial_context(
+        cls, val: Any, meta: dict[str, Any] | None = None, default_unit: str | None = None
+    ) -> FinancialContext:
+        """Parses a typed FinancialContext from a raw value and its metadata.
 
-        Applies scale exactly once. Requires explicit compatibility.
-        Returns: (scaled_decimal_value, currency, canonical_unit, is_valid)
+        Derives scale from explicit representation only. Never blindly applies default_unit to inputs.
+        Recognizes already-normalized base-unit values.
         """
         meta = meta or {}
-        currency = meta.get("currency")
-        meta_unit = meta.get("unit") or rule_unit
+        if val is None:
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=meta.get("currency"),
+                scale_token=None,
+                scale_multiplier=Decimal("1"),
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=False,
+                is_valid=False,
+                error_reason=ReasonCode.OBSERVED_VALUE_NULL,
+            )
 
-        val_str = str(val) if val is not None else ""
-        val_lower = val_str.lower().strip()
+        if isinstance(val, bool):
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=meta.get("currency"),
+                scale_token=None,
+                scale_multiplier=Decimal("1"),
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=False,
+                is_valid=False,
+                error_reason=ReasonCode.TYPE_CONVERSION_ERROR,
+            )
 
-        # Currency detection
+        val_str = str(val).strip()
+        if len(val_str) > cls.MAX_INPUT_STR_LENGTH:
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=meta.get("currency"),
+                scale_token=None,
+                scale_multiplier=Decimal("1"),
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=False,
+                is_valid=False,
+                error_reason=ReasonCode.MALFORMED_NUMBER,
+            )
+
+        val_lower = val_str.lower()
+        if val_lower in ("nan", "inf", "-inf", "+inf", "infinity", "-infinity", "+infinity"):
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=meta.get("currency"),
+                scale_token=None,
+                scale_multiplier=Decimal("1"),
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=False,
+                is_valid=False,
+                error_reason=ReasonCode.MALFORMED_NUMBER,
+            )
+
+        # 1. Currency resolution
+        meta_curr = meta.get("currency")
+        input_meta_unit = meta.get("unit") or default_unit
+        if not meta_curr and input_meta_unit and isinstance(input_meta_unit, str):
+            unit_u = input_meta_unit.upper()
+            if "INR" in unit_u or "RS" in unit_u or "₹" in input_meta_unit:
+                meta_curr = "INR"
+            elif "USD" in unit_u or "$" in input_meta_unit:
+                meta_curr = "USD"
+            elif "EUR" in unit_u or "€" in input_meta_unit:
+                meta_curr = "EUR"
+            elif "GBP" in unit_u or "£" in input_meta_unit:
+                meta_curr = "GBP"
+
         text_curr = None
         if "$" in val_str or re.search(r"\b(usd)\b", val_lower):
             text_curr = "USD"
@@ -215,58 +341,81 @@ class ComplianceEngine:
             text_curr = "GBP"
 
         # Check currency contradiction between metadata and text
-        if currency and text_curr and currency.upper() != text_curr.upper():
-            return None, currency, meta_unit, False
-
-        currency = currency or text_curr
-
-        # Scale resolution from metadata
-        meta_scale = Decimal("1")
-        canonical_meta_unit = None
-        if meta_unit and isinstance(meta_unit, str):
-            meta_unit_clean = meta_unit.lower().strip()
-            # Extract currency if embedded in unit (e.g. "INR Crore")
-            if "inr" in meta_unit_clean and not currency:
-                currency = "INR"
-            if "usd" in meta_unit_clean and not currency:
-                currency = "USD"
-            meta_unit_clean = (
-                meta_unit_clean.replace("inr", "")
-                .replace("usd", "")
-                .replace("eur", "")
-                .replace("₹", "")
-                .replace("$", "")
-                .strip()
+        if meta_curr and text_curr and meta_curr.upper() != text_curr.upper():
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=meta_curr,
+                scale_token=None,
+                scale_multiplier=Decimal("1"),
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=False,
+                is_valid=False,
+                error_reason=ReasonCode.CURRENCY_MISMATCH,
             )
 
-            if meta_unit_clean in cls.UNIT_SCALE_MAP:
-                meta_scale, canonical_meta_unit = cls.UNIT_SCALE_MAP[meta_unit_clean]
-            elif meta_unit_clean:
-                canonical_meta_unit = meta_unit.strip()
+        resolved_currency = (meta_curr or text_curr or "").upper() or None
 
-        # Scale resolution from text
+        # 2. Base-unit representation check
+        is_base_unit = bool(
+            meta.get("is_base_unit")
+            or meta.get("normalized")
+            or meta.get("is_normalized")
+            or (meta.get("unit") and str(meta.get("unit")).upper() in ("INR", "USD", "EUR", "GBP", "BASE", "UNITS"))
+        )
+
+        # 3. Scale resolution
+        meta_scale = Decimal("1")
+        canonical_meta_unit = None
+        input_meta_unit = meta.get("unit") or default_unit
+        if input_meta_unit and isinstance(input_meta_unit, str) and not is_base_unit:
+            unit_clean = input_meta_unit.lower().strip()
+            # Extract currency if embedded in unit
+            for c_token in ("inr", "usd", "eur", "gbp", "₹", "$", "€", "£"):
+                unit_clean = unit_clean.replace(c_token, "").strip()
+            if unit_clean in cls.UNIT_SCALE_MAP:
+                meta_scale, canonical_meta_unit = cls.UNIT_SCALE_MAP[unit_clean]
+            elif unit_clean:
+                canonical_meta_unit = input_meta_unit.strip()
+
         text_scale = Decimal("1")
         canonical_text_unit = None
         for scale_token, (scale_factor, canon_name) in cls.UNIT_SCALE_MAP.items():
-            if re.search(r"\b" + re.escape(scale_token) + r"\b", val_lower):
+            pattern = r"\b" + re.escape(scale_token) + r"\b"
+            if re.search(pattern, val_lower):
                 text_scale = scale_factor
                 canonical_text_unit = canon_name
                 break
 
-        # Check unit/scale contradiction between metadata and text
+        # Check scale contradiction between metadata and text
         if (
             canonical_meta_unit
             and canonical_text_unit
             and canonical_meta_unit.lower() != canonical_text_unit.lower()
         ):
-            return None, currency, canonical_meta_unit, False
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=resolved_currency,
+                scale_token=canonical_meta_unit,
+                scale_multiplier=Decimal("1"),
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=is_base_unit,
+                is_valid=False,
+                error_reason=ReasonCode.UNIT_MISMATCH,
+            )
 
-        resolved_unit = canonical_meta_unit or canonical_text_unit
-        # Apply scale exactly once: if both match, use the single resolved scale
-        scale = meta_scale if canonical_meta_unit else (text_scale if canonical_text_unit else Decimal("1"))
-        is_explicit = bool(resolved_unit or currency)
+        resolved_scale_token = canonical_meta_unit or canonical_text_unit
+        if is_base_unit:
+            scale_multiplier = Decimal("1")
+        else:
+            scale_multiplier = meta_scale if canonical_meta_unit else (text_scale if canonical_text_unit else Decimal("1"))
 
-        # Clean text tokens from value before numeric parse
+        # 4. Numeric base value extraction
         clean_s = val_str
         tokens_to_remove = [
             "USD", "usd", "$", "INR", "inr", "₹", "Rs.", "rs.", "Rs", "rs", "EUR", "eur", "GBP", "gbp", "Rupees", "rupees",
@@ -279,20 +428,156 @@ class ComplianceEngine:
                 clean_s = re.sub(r"\b" + re.escape(token) + r"\b", "", clean_s, flags=re.IGNORECASE)
 
         if not cls._validate_comma_formatting(clean_s.strip()):
-            return None, currency, resolved_unit, False
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=resolved_currency,
+                scale_token=resolved_scale_token,
+                scale_multiplier=scale_multiplier,
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=is_base_unit,
+                is_valid=False,
+                error_reason=ReasonCode.MALFORMED_NUMBER,
+            )
 
         clean_s = clean_s.replace(",", "").strip()
         if not clean_s:
-            return None, currency, resolved_unit, is_explicit
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=resolved_currency,
+                scale_token=resolved_scale_token,
+                scale_multiplier=scale_multiplier,
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=is_base_unit,
+                is_valid=False,
+                error_reason=ReasonCode.MALFORMED_NUMBER,
+            )
 
         try:
             base_dec = Decimal(clean_s)
             if base_dec.is_nan() or base_dec.is_infinite():
-                return None, currency, resolved_unit, False
-            scaled_val = base_dec * scale
-            return scaled_val, currency, resolved_unit, is_explicit
+                return FinancialContext(
+                    raw_value=val,
+                    base_decimal_value=None,
+                    currency=resolved_currency,
+                    scale_token=resolved_scale_token,
+                    scale_multiplier=scale_multiplier,
+                    metric=meta.get("metric"),
+                    financial_year=meta.get("financial_year") or meta.get("fy"),
+                    averaging_period=meta.get("averaging_period") or meta.get("period"),
+                    is_base_unit=is_base_unit,
+                    is_valid=False,
+                    error_reason=ReasonCode.MALFORMED_NUMBER,
+                )
+            if abs(base_dec.as_tuple().exponent) > cls.MAX_DECIMAL_EXPONENT or len(base_dec.as_tuple().digits) > cls.MAX_DECIMAL_DIGITS:
+                return FinancialContext(
+                    raw_value=val,
+                    base_decimal_value=None,
+                    currency=resolved_currency,
+                    scale_token=resolved_scale_token,
+                    scale_multiplier=scale_multiplier,
+                    metric=meta.get("metric"),
+                    financial_year=meta.get("financial_year") or meta.get("fy"),
+                    averaging_period=meta.get("averaging_period") or meta.get("period"),
+                    is_base_unit=is_base_unit,
+                    is_valid=False,
+                    error_reason=ReasonCode.MALFORMED_NUMBER,
+                )
+
+            scaled_base_value = base_dec * scale_multiplier
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=scaled_base_value,
+                currency=resolved_currency,
+                scale_token=resolved_scale_token,
+                scale_multiplier=scale_multiplier,
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=is_base_unit,
+                is_valid=True,
+                error_reason=None,
+            )
         except (InvalidOperation, TypeError, ValueError):
-            return None, currency, resolved_unit, False
+            return FinancialContext(
+                raw_value=val,
+                base_decimal_value=None,
+                currency=resolved_currency,
+                scale_token=resolved_scale_token,
+                scale_multiplier=scale_multiplier,
+                metric=meta.get("metric"),
+                financial_year=meta.get("financial_year") or meta.get("fy"),
+                averaging_period=meta.get("averaging_period") or meta.get("period"),
+                is_base_unit=is_base_unit,
+                is_valid=False,
+                error_reason=ReasonCode.MALFORMED_NUMBER,
+            )
+
+    @classmethod
+    def _parse_currency_and_scale(
+        cls, val: Any, meta: dict[str, Any] | None = None, rule_unit: str | None = None
+    ) -> tuple[Decimal | None, str | None, str | None, bool]:
+        """Legacy helper returning (scaled_decimal_value, currency, canonical_unit, is_valid)."""
+        ctx = cls._parse_financial_context(val, meta, default_unit=rule_unit)
+        if not ctx.is_valid:
+            return None, ctx.currency, ctx.scale_token, False
+        is_explicit = bool(ctx.currency or ctx.scale_token)
+        return ctx.base_decimal_value, ctx.currency, ctx.scale_token, is_explicit
+
+    @classmethod
+    def _check_financial_compatibility(
+        cls,
+        ctx_a: FinancialContext,
+        ctx_b: FinancialContext,
+        *,
+        require_financial_context: bool = False,
+    ) -> tuple[bool, str | None]:
+        """Checks whether two financial contexts are strictly compatible before comparison.
+
+        Does not invent FX conversion, units, periods, or metric equivalence.
+        """
+        if not ctx_a.is_valid:
+            return False, ctx_a.error_reason or ReasonCode.MALFORMED_NUMBER
+        if not ctx_b.is_valid:
+            return False, ctx_b.error_reason or ReasonCode.MALFORMED_NUMBER
+
+        # 1. Currency compatibility
+        if ctx_a.currency and ctx_b.currency:
+            if ctx_a.currency.upper() != ctx_b.currency.upper():
+                return False, ReasonCode.CURRENCY_MISMATCH
+        elif require_financial_context:
+            if (ctx_a.currency is None) != (ctx_b.currency is None):
+                return False, ReasonCode.MISSING_FINANCIAL_CONTEXT
+            if ctx_a.currency is None and ctx_b.currency is None:
+                return False, ReasonCode.MISSING_FINANCIAL_CONTEXT
+
+        # 2. Financial Year compatibility
+        if ctx_a.financial_year and ctx_b.financial_year:
+            if str(ctx_a.financial_year).strip().lower() != str(ctx_b.financial_year).strip().lower():
+                return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
+        elif require_financial_context and (ctx_a.financial_year is not None or ctx_b.financial_year is not None):
+            if (ctx_a.financial_year is None) != (ctx_b.financial_year is None):
+                return False, ReasonCode.MISSING_FINANCIAL_CONTEXT
+
+        # 3. Averaging period compatibility
+        if ctx_a.averaging_period and ctx_b.averaging_period:
+            if str(ctx_a.averaging_period).strip().lower() != str(ctx_b.averaging_period).strip().lower():
+                return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
+        elif require_financial_context and (ctx_a.averaging_period is not None or ctx_b.averaging_period is not None):
+            if (ctx_a.averaging_period is None) != (ctx_b.averaging_period is None):
+                return False, ReasonCode.MISSING_FINANCIAL_CONTEXT
+
+        # 4. Metric compatibility
+        if ctx_a.metric and ctx_b.metric:
+            if str(ctx_a.metric).strip().lower() != str(ctx_b.metric).strip().lower():
+                return False, ReasonCode.FINANCIAL_CONTEXT_MISMATCH
+
+        return True, None
 
     @staticmethod
     def _normalize_bool(val: Any) -> bool | None:
@@ -316,34 +601,40 @@ class ComplianceEngine:
             return None
         return None
 
-    @staticmethod
-    def _normalize_count(val: Any) -> int | None:
-        """Normalizes count to a non-negative integer. Rejects negative, fractional, or boolean values."""
+    @classmethod
+    def _normalize_count(cls, val: Any) -> int | None:
+        """Normalizes count to a non-negative bounded integer.
+
+        Uses exact Decimal/integer parsing. Rejects floats, negative numbers, fractional values, and booleans.
+        """
         if val is None or isinstance(val, bool):
             return None
         if isinstance(val, (list, tuple, set)):
             return len(val)
         if isinstance(val, int):
-            return val if val >= 0 else None
-        if isinstance(val, (float, Decimal)):
-            if val >= 0 and val == int(val):
+            return val if (0 <= val <= 1_000_000_000) else None
+        if isinstance(val, Decimal):
+            if val.is_nan() or val.is_infinite():
+                return None
+            if 0 <= val <= 1_000_000_000 and val % 1 == 0:
                 return int(val)
+            return None
+        if isinstance(val, float):
+            # Reject floats for exact count behavior to prevent rounding inaccuracies
             return None
         if isinstance(val, str):
             s = val.strip()
-            if not s:
+            if not s or len(s) > cls.MAX_INPUT_STR_LENGTH:
                 return None
             try:
-                num = int(s)
-                return num if num >= 0 else None
-            except ValueError:
-                try:
-                    f = float(s)
-                    if f >= 0 and f.is_integer():
-                        return int(f)
+                dec = Decimal(s)
+                if dec.is_nan() or dec.is_infinite():
                     return None
-                except ValueError:
-                    return None
+                if 0 <= dec <= 1_000_000_000 and dec % 1 == 0:
+                    return int(dec)
+                return None
+            except (InvalidOperation, ValueError, TypeError):
+                return None
         return None
 
     @staticmethod
@@ -356,33 +647,37 @@ class ComplianceEngine:
         return str(val).strip()
 
     @classmethod
-    def _parse_date_or_datetime(cls, val: Any) -> tuple[datetime | date | None, bool]:
-        """Parses timezone-aware datetime or date-only objects.
+    def _parse_date_or_datetime(cls, val: Any) -> tuple[datetime | date | None, str | None]:
+        """Parses date or datetime with strict temporal typing.
 
-        Returns: (parsed_object, is_datetime)
+        Returns: (parsed_obj, temporal_type)
+        where temporal_type is 'DATE_ONLY', 'AWARE_DATETIME', 'NAIVE_DATETIME', or None.
         """
         if val is None:
-            return None, False
+            return None, None
         if isinstance(val, datetime):
-            return val, True
+            return val, "AWARE_DATETIME" if val.tzinfo is not None else "NAIVE_DATETIME"
         if isinstance(val, date) and not isinstance(val, datetime):
-            return val, False
+            return val, "DATE_ONLY"
         if isinstance(val, str):
             s = val.strip()
-            if not s:
-                return None, False
+            if not s or len(s) > cls.MAX_INPUT_STR_LENGTH:
+                return None, None
 
-            # Try ISO 8601 with or without timezone
+            # Try ISO 8601 datetime with or without timezone
             try:
-                # Differentiate date-only from datetime
                 if "T" in s or (" " in s and ":" in s):
-                    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-                    return dt, True
+                    # Datetime string
+                    if s.endswith("Z"):
+                        dt = datetime.fromisoformat(s[:-1] + "+00:00")
+                        return dt, "AWARE_DATETIME"
+                    dt = datetime.fromisoformat(s)
+                    return dt, "AWARE_DATETIME" if dt.tzinfo is not None else "NAIVE_DATETIME"
                 else:
                     # Date-only ISO format YYYY-MM-DD
                     if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
                         d = date.fromisoformat(s)
-                        return d, False
+                        return d, "DATE_ONLY"
             except (ValueError, TypeError):
                 pass
 
@@ -390,23 +685,23 @@ class ComplianceEngine:
             for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
                 try:
                     dt = datetime.strptime(s, fmt)
-                    return dt.date(), False
+                    return dt.date(), "DATE_ONLY"
                 except ValueError:
                     continue
 
-        return None, False
+        return None, None
 
     @classmethod
     def _normalize_date(cls, val: Any) -> datetime | None:
-        """Legacy helper normalizing to timezone-aware datetime."""
-        obj, is_dt = cls._parse_date_or_datetime(val)
+        """Legacy helper normalizing to timezone-aware datetime when applicable."""
+        obj, t_type = cls._parse_date_or_datetime(val)
         if obj is None:
             return None
-        if is_dt and isinstance(obj, datetime):
-            if obj.tzinfo is None:
-                return obj.replace(tzinfo=timezone.utc)
+        if t_type == "AWARE_DATETIME" and isinstance(obj, datetime):
             return obj
-        if isinstance(obj, date):
+        if t_type == "NAIVE_DATETIME" and isinstance(obj, datetime):
+            return obj.replace(tzinfo=timezone.utc)
+        if t_type == "DATE_ONLY" and isinstance(obj, date):
             return datetime.combine(obj, datetime.min.time(), tzinfo=timezone.utc)
         return None
 
@@ -422,22 +717,23 @@ class ComplianceEngine:
         rule_unit: str | None = None,
         case_insensitive: bool = False,
     ) -> bool:
-        """Determines semantic equality across numeric, boolean, date, and string domains."""
+        """Determines semantic equality across numeric, boolean, date, and string domains with strict context."""
         if a is None or b is None:
             return a is b
-        if a == b:
+        if a == b and not meta_a and not meta_b:
             return True
 
         eff_unit = unit or rule_unit
 
-        # 1. Numeric / Financial comparison with Decimal and Scale
-        dec_a, curr_a, unit_a, valid_a = cls._parse_currency_and_scale(a, meta_a, rule_unit=eff_unit)
-        dec_b, curr_b, unit_b, valid_b = cls._parse_currency_and_scale(b, meta_b, rule_unit=eff_unit)
-        if dec_a is not None and dec_b is not None:
-            # If currencies are explicitly provided and differ, they are not equivalent (no implicit FX)
-            if curr_a and curr_b and curr_a.upper() != curr_b.upper():
+        # 1. Numeric / Financial comparison with FinancialContext
+        ctx_a = cls._parse_financial_context(a, meta_a, default_unit=None)
+        ctx_b = cls._parse_financial_context(b, meta_b, default_unit=eff_unit)
+
+        if ctx_a.is_valid and ctx_b.is_valid:
+            is_compat, _ = cls._check_financial_compatibility(ctx_a, ctx_b, require_financial_context=False)
+            if not is_compat:
                 return False
-            return dec_a == dec_b
+            return ctx_a.base_decimal_value == ctx_b.base_decimal_value
 
         # Fallback simple numeric comparison
         num_a = cls._normalize_number(a)
@@ -452,21 +748,21 @@ class ComplianceEngine:
             return bool_a == bool_b
 
         # 3. Date / Datetime comparison
-        obj_a, is_dt_a = cls._parse_date_or_datetime(a)
-        obj_b, is_dt_b = cls._parse_date_or_datetime(b)
+        obj_a, t_type_a = cls._parse_date_or_datetime(a)
+        obj_b, t_type_b = cls._parse_date_or_datetime(b)
         if obj_a is not None and obj_b is not None:
-            if not is_dt_a and not is_dt_b:
+            if t_type_a == "DATE_ONLY" and t_type_b == "DATE_ONLY":
                 return obj_a == obj_b
-            if is_dt_a and is_dt_b:
-                dt_a = obj_a.astimezone(timezone.utc) if obj_a.tzinfo else obj_a
-                dt_b = obj_b.astimezone(timezone.utc) if obj_b.tzinfo else obj_b
+            if t_type_a == "AWARE_DATETIME" and t_type_b == "AWARE_DATETIME":
+                dt_a = obj_a.astimezone(timezone.utc)
+                dt_b = obj_b.astimezone(timezone.utc)
                 return dt_a == dt_b
-            # Mixed date and datetime
-            d_a = obj_a.date() if isinstance(obj_a, datetime) else obj_a
-            d_b = obj_b.date() if isinstance(obj_b, datetime) else obj_b
-            return d_a == d_b
+            if t_type_a == "NAIVE_DATETIME" and t_type_b == "NAIVE_DATETIME":
+                return obj_a == obj_b
+            # Mixed date/datetime or naive/aware are not equivalent
+            return False
 
-        # 4. String comparison (case-insensitive only when explicitly justified)
+        # 4. String comparison
         str_a = cls._normalize_string(a)
         str_b = cls._normalize_string(b)
         if str_a is not None and str_b is not None:
@@ -484,7 +780,21 @@ class ComplianceEngine:
             meta = {
                 k: v
                 for k, v in val.items()
-                if k in ("unit", "currency", "source", "source_page", "source_text", "confidence", "location_metadata", "fy", "metric")
+                if k
+                in (
+                    "unit",
+                    "currency",
+                    "source",
+                    "source_page",
+                    "source_text",
+                    "confidence",
+                    "location_metadata",
+                    "fy",
+                    "financial_year",
+                    "metric",
+                    "averaging_period",
+                    "is_base_unit",
+                )
             }
             scalar_keys = [k for k in val if k in recognized_keys]
 
@@ -503,6 +813,56 @@ class ComplianceEngine:
         return val, True, {}
 
     @classmethod
+    def _determine_applicability(
+        cls, rule: TenderRequirementRead, context: dict[str, Any] | None = None
+    ) -> tuple[bool | None, str]:
+        """Evaluates requirement applicability from approved policy metadata and bidder context.
+
+        Returns (is_applicable, reason_code).
+        is_applicable is True (applicable), False (not applicable), or None (unknown).
+        """
+        context = context or {}
+        rule_meta = getattr(rule, "metadata_json", {}) or {}
+
+        # 1. Explicit boolean applicability in metadata
+        if "is_applicable" in rule_meta and rule_meta["is_applicable"] is not None:
+            is_app = bool(rule_meta["is_applicable"])
+            return is_app, ReasonCode.NOT_APPLICABLE_EXPLICIT if not is_app else "APPLICABLE"
+        if "applicable" in rule_meta and rule_meta["applicable"] is not None:
+            is_app = bool(rule_meta["applicable"])
+            return is_app, ReasonCode.NOT_APPLICABLE_EXPLICIT if not is_app else "APPLICABLE"
+
+        # 2. String policy in metadata
+        app_str = str(rule_meta.get("applicability", "")).strip().upper()
+        if app_str in ("NOT_APPLICABLE", "INAPPLICABLE", "EXEMPT"):
+            return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
+        if app_str in ("APPLICABLE", "MANDATORY"):
+            return True, "APPLICABLE"
+
+        # 3. Categorical bidder-type applicability
+        applicable_types = rule_meta.get("applicable_bidder_types") or rule_meta.get("applicable_categories")
+        if applicable_types and isinstance(applicable_types, (list, tuple, set)):
+            bidder_type = context.get("bidder_type") or context.get("bidder_category")
+            if bidder_type:
+                if bidder_type in applicable_types:
+                    return True, "APPLICABLE"
+                else:
+                    return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
+
+        return None, "UNKNOWN_APPLICABILITY"
+
+    @classmethod
+    def _is_time_dependent_rule(cls, rule: TenderRequirementRead) -> bool:
+        """Determines if a rule depends on the current evaluation clock."""
+        rule_meta = getattr(rule, "metadata_json", {}) or {}
+        if rule_meta.get("is_time_dependent") or rule_meta.get("relative_time"):
+            return True
+        exp_str = str(rule.expected_value).strip().lower()
+        if exp_str in ("now", "today", "current_date", "current_time"):
+            return True
+        return False
+
+    @classmethod
     def evaluate(
         cls,
         rule: TenderRequirementRead,
@@ -513,15 +873,46 @@ class ComplianceEngine:
     ) -> RuleEvaluationRead:
         context = context or {}
         if hasattr(rule, "is_approved") and rule.is_approved is False:
-            raise ValueError(f"ComplianceEngine cannot evaluate unapproved requirement candidate '{getattr(rule, 'id', 'UNKNOWN')}'.")
+            raise ValueError(
+                f"ComplianceEngine cannot evaluate unapproved requirement candidate '{getattr(rule, 'id', 'UNKNOWN')}'."
+            )
 
-        # Deterministic evaluation timestamp: accept explicit timestamp or context timestamp
+        # Deterministic evaluation timestamp: require explicit clock or recorded context
         eval_ts = evaluation_timestamp or context.get("evaluation_timestamp") or context.get("evaluated_at")
         if eval_ts is None:
-            eval_ts = datetime.now(timezone.utc)
+            if cls._is_time_dependent_rule(rule):
+                return RuleEvaluationRead(
+                    id=str(uuid.uuid4()),
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=ComplianceStatus.UNKNOWN,
+                    reason_code=ReasonCode.MISSING_EVALUATION_CLOCK,
+                    observed_value=None,
+                    expected_value=rule.expected_value,
+                    evidence_ids=[],
+                    rule_version=f"{cls.ENGINE_VERSION}",
+                    evaluated_at=datetime(1970, 1, 1, tzinfo=timezone.utc),
+                )
+            eval_ts = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
         eval_id = str(uuid.uuid4())
         is_ci = cls._is_status_or_enum_field(rule.field, rule.requirement_type)
+
+        # Check explicit applicability policy
+        is_applicable, app_reason = cls._determine_applicability(rule, context)
+        if is_applicable is False:
+            return RuleEvaluationRead(
+                id=eval_id,
+                bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                requirement_id=rule.id,
+                status=ComplianceStatus.NOT_APPLICABLE,
+                reason_code=app_reason or ReasonCode.NOT_APPLICABLE_EXPLICIT,
+                observed_value=None,
+                expected_value=rule.expected_value,
+                evidence_ids=[],
+                rule_version=f"{cls.ENGINE_VERSION}",
+                evaluated_at=eval_ts,
+            )
 
         matching_facts = [f for f in facts if f.field == rule.field]
         matching_verifications = [v for v in verification_results if v.field == rule.field]
@@ -542,7 +933,7 @@ class ComplianceEngine:
                 observed_value=None,
                 expected_value=rule.expected_value,
                 evidence_ids=[v.id for v in unhealthy_verifications],
-                rule_version="1.2.0",
+                rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
 
@@ -572,7 +963,7 @@ class ComplianceEngine:
                 observed_value=[v.verified_value for v in verified_with_val],
                 expected_value=rule.expected_value,
                 evidence_ids=[v.id for v in verified_with_val],
-                rule_version="1.2.0",
+                rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
 
@@ -592,21 +983,23 @@ class ComplianceEngine:
                 },
                 expected_value=rule.expected_value,
                 evidence_ids=[v.id for v in mismatch_verifications],
-                rule_version="1.2.0",
+                rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
 
-        # PRECEDENCE 4: Conflicting facts across documents
+        # PRECEDENCE 4: Conflicting facts across documents (context + value compatibility)
         facts_with_val = [f for f in matching_facts if f.value is not None]
         has_fact_conflict = False
         if len(facts_with_val) > 1:
             first_f = facts_with_val[0]
+            first_meta = getattr(first_f, "metadata_json", None) or {}
             for f in facts_with_val[1:]:
+                f_meta = getattr(f, "metadata_json", None) or {}
                 if not cls._values_equivalent(
                     first_f.value,
                     f.value,
-                    meta_a=getattr(first_f, "metadata_json", None),
-                    meta_b=getattr(f, "metadata_json", None),
+                    meta_a=first_meta,
+                    meta_b=f_meta,
                     unit=rule.unit,
                     case_insensitive=is_ci,
                 ):
@@ -623,7 +1016,7 @@ class ComplianceEngine:
                 observed_value=[f.value for f in facts_with_val],
                 expected_value=rule.expected_value,
                 evidence_ids=[f.id for f in facts_with_val],
-                rule_version="1.2.0",
+                rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
 
@@ -643,11 +1036,11 @@ class ComplianceEngine:
                     observed_value={"claimed": claimed_val, "verified": raw_verified_val},
                     expected_value=rule.expected_value,
                     evidence_ids=[facts_with_val[0].id, verified_with_val[0].id],
-                    rule_version="1.2.0",
+                    rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
 
-            fact_meta = getattr(facts_with_val[0], "metadata_json", {})
+            fact_meta = getattr(facts_with_val[0], "metadata_json", {}) or {}
             if not cls._values_equivalent(
                 claimed_val,
                 resolved_verified_val,
@@ -665,7 +1058,7 @@ class ComplianceEngine:
                     observed_value={"claimed": claimed_val, "verified": resolved_verified_val},
                     expected_value=rule.expected_value,
                     evidence_ids=[facts_with_val[0].id, verified_with_val[0].id],
-                    rule_version="1.2.0",
+                    rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
 
@@ -692,37 +1085,57 @@ class ComplianceEngine:
                     observed_value=resolved_obs_val if resolved_obs_val is not None else True,
                     expected_value=True,
                     evidence_ids=primary_input_ids,
-                    rule_version="1.2.0",
+                    rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
             else:
-                status = ComplianceStatus.UNKNOWN if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
+                rule_meta = getattr(rule, "metadata_json", {}) or {}
+                if rule.mandatory:
+                    status = ComplianceStatus.UNKNOWN
+                    reason = ReasonCode.MISSING_EVIDENCE
+                else:
+                    if rule_meta.get("optional_missing_policy") == "NOT_APPLICABLE" or rule_meta.get("optional_exemption") is True:
+                        status = ComplianceStatus.NOT_APPLICABLE
+                        reason = ReasonCode.NOT_APPLICABLE_OPTIONAL
+                    else:
+                        status = ComplianceStatus.UNKNOWN if is_applicable is not False else ComplianceStatus.NOT_APPLICABLE
+                        reason = ReasonCode.MISSING_EVIDENCE if status == ComplianceStatus.UNKNOWN else ReasonCode.NOT_APPLICABLE_OPTIONAL
                 return RuleEvaluationRead(
                     id=eval_id,
                     bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                     requirement_id=rule.id,
                     status=status,
-                    reason_code=ReasonCode.MISSING_EVIDENCE,
+                    reason_code=reason,
                     observed_value=None,
                     expected_value=True,
                     evidence_ids=[],
-                    rule_version="1.2.0",
+                    rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
 
         if rule.operator == OperatorEnum.NOT_EXISTS:
             if not has_usable_evidence:
-                status = ComplianceStatus.UNKNOWN if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
+                rule_meta = getattr(rule, "metadata_json", {}) or {}
+                if rule.mandatory:
+                    status = ComplianceStatus.UNKNOWN
+                    reason = ReasonCode.MISSING_EVIDENCE
+                else:
+                    if rule_meta.get("optional_missing_policy") == "NOT_APPLICABLE" or rule_meta.get("optional_exemption") is True:
+                        status = ComplianceStatus.NOT_APPLICABLE
+                        reason = ReasonCode.NOT_APPLICABLE_OPTIONAL
+                    else:
+                        status = ComplianceStatus.UNKNOWN if is_applicable is not False else ComplianceStatus.NOT_APPLICABLE
+                        reason = ReasonCode.MISSING_EVIDENCE if status == ComplianceStatus.UNKNOWN else ReasonCode.NOT_APPLICABLE_OPTIONAL
                 return RuleEvaluationRead(
                     id=eval_id,
                     bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                     requirement_id=rule.id,
                     status=status,
-                    reason_code=ReasonCode.MISSING_EVIDENCE,
+                    reason_code=reason,
                     observed_value=None,
                     expected_value=False,
                     evidence_ids=[],
-                    rule_version="1.2.0",
+                    rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
 
@@ -739,7 +1152,7 @@ class ComplianceEngine:
                     observed_value=raw_obs_val,
                     expected_value=False,
                     evidence_ids=primary_input_ids,
-                    rule_version="1.2.0",
+                    rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
 
@@ -756,7 +1169,7 @@ class ComplianceEngine:
                     observed_value=resolved_obs_val,
                     expected_value=False,
                     evidence_ids=primary_input_ids,
-                    rule_version="1.2.0",
+                    rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
 
@@ -772,7 +1185,7 @@ class ComplianceEngine:
                     observed_value=resolved_obs_val,
                     expected_value=False,
                     evidence_ids=primary_input_ids,
-                    rule_version="1.2.0",
+                    rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
 
@@ -785,23 +1198,33 @@ class ComplianceEngine:
                 observed_value=resolved_obs_val,
                 expected_value=False,
                 evidence_ids=primary_input_ids,
-                rule_version="1.2.0",
+                rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
 
         # PRECEDENCE 7: Handle missing evidence for standard operators
         if not has_usable_evidence:
-            status = ComplianceStatus.UNKNOWN if rule.mandatory else ComplianceStatus.NOT_APPLICABLE
+            rule_meta = getattr(rule, "metadata_json", {}) or {}
+            if rule.mandatory:
+                status = ComplianceStatus.UNKNOWN
+                reason = ReasonCode.MISSING_EVIDENCE
+            else:
+                if rule_meta.get("optional_missing_policy") == "NOT_APPLICABLE" or rule_meta.get("optional_exemption") is True:
+                    status = ComplianceStatus.NOT_APPLICABLE
+                    reason = ReasonCode.NOT_APPLICABLE_OPTIONAL
+                else:
+                    status = ComplianceStatus.UNKNOWN if is_applicable is not False else ComplianceStatus.NOT_APPLICABLE
+                    reason = ReasonCode.MISSING_EVIDENCE if status == ComplianceStatus.UNKNOWN else ReasonCode.NOT_APPLICABLE_OPTIONAL
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=status,
-                reason_code=ReasonCode.MISSING_EVIDENCE,
+                reason_code=reason,
                 observed_value=None,
                 expected_value=rule.expected_value,
                 evidence_ids=[],
-                rule_version="1.2.0",
+                rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
 
@@ -819,7 +1242,7 @@ class ComplianceEngine:
                 observed_value=raw_obs_val,
                 expected_value=rule.expected_value,
                 evidence_ids=primary_input_ids,
-                rule_version="1.2.0",
+                rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
 
@@ -838,7 +1261,7 @@ class ComplianceEngine:
             observed_value=resolved_obs_val,
             expected_value=rule.expected_value,
             evidence_ids=primary_input_ids,
-            rule_version="1.2.0",
+            rule_version=f"{cls.ENGINE_VERSION}",
             evaluated_at=eval_ts,
         )
 
@@ -876,35 +1299,55 @@ class ComplianceEngine:
                 else:
                     return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
-            # 2. Check if expected establishes financial / numeric requirement with Decimal
-            dec_exp, curr_exp, _, valid_exp = cls._parse_currency_and_scale(expected, rule_meta, rule_unit=rule.unit)
-            if dec_exp is not None and not isinstance(expected, bool) and not (
+            # 2. Check if expected establishes financial / numeric requirement with FinancialContext
+            ctx_exp = cls._parse_financial_context(expected, rule_meta, default_unit=rule.unit)
+            if ctx_exp.is_valid and not isinstance(expected, bool) and not (
                 isinstance(expected, str) and expected.strip().lower() in ("true", "false", "yes", "no")
             ):
-                dec_obs, curr_obs, _, valid_obs = cls._parse_currency_and_scale(observed, obs_meta, rule_unit=rule.unit)
-                if dec_obs is None:
-                    return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TYPE_CONVERSION_ERROR
-                # Strict currency check
-                if curr_exp and curr_obs and curr_exp.upper() != curr_obs.upper():
-                    return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.CURRENCY_MISMATCH
-                match = dec_obs == dec_exp
+                ctx_obs = cls._parse_financial_context(observed, obs_meta, default_unit=None)
+                if not ctx_obs.is_valid:
+                    return ComplianceStatus.REVIEW_REQUIRED, ctx_obs.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
+
+                # Check strict financial context compatibility
+                is_compat, compat_reason = cls._check_financial_compatibility(
+                    ctx_exp, ctx_obs, require_financial_context=bool(rule.unit or ctx_exp.currency)
+                )
+                if not is_compat:
+                    return ComplianceStatus.REVIEW_REQUIRED, compat_reason or ReasonCode.CURRENCY_MISMATCH
+
+                match = ctx_obs.base_decimal_value == ctx_exp.base_decimal_value
                 if operator == OperatorEnum.EQ:
                     return (ComplianceStatus.PASS, ReasonCode.EQUAL) if match else (ComplianceStatus.FAIL, ReasonCode.NOT_EQUAL)
                 else:
                     return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
             # 3. Check if expected establishes date / datetime requirement
-            dt_exp_obj, is_dt_exp = cls._parse_date_or_datetime(expected)
+            dt_exp_obj, t_exp_type = cls._parse_date_or_datetime(expected)
             if dt_exp_obj is not None and isinstance(expected, (datetime, date, str)) and (
                 isinstance(expected, (datetime, date))
                 or "/" in str(expected)
                 or "-" in str(expected)
                 or "date" in rule.field.lower()
             ):
-                dt_obs_obj, is_dt_obs = cls._parse_date_or_datetime(observed)
+                dt_obs_obj, t_obs_type = cls._parse_date_or_datetime(observed)
                 if dt_obs_obj is None:
                     return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.MALFORMED_DATE
-                match = cls._values_equivalent(observed, expected, case_insensitive=is_ci)
+
+                # Check temporal types
+                if t_obs_type == "DATE_ONLY" and t_exp_type == "DATE_ONLY":
+                    match = dt_obs_obj == dt_exp_obj
+                elif t_obs_type == "AWARE_DATETIME" and t_exp_type == "AWARE_DATETIME":
+                    match = dt_obs_obj.astimezone(timezone.utc) == dt_exp_obj.astimezone(timezone.utc)
+                elif t_obs_type == "NAIVE_DATETIME" and t_exp_type == "NAIVE_DATETIME":
+                    match = dt_obs_obj == dt_exp_obj
+                elif (t_obs_type == "AWARE_DATETIME" and t_exp_type == "NAIVE_DATETIME") or (
+                    t_obs_type == "NAIVE_DATETIME" and t_exp_type == "AWARE_DATETIME"
+                ):
+                    return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.AMBIGUOUS_TIMEZONE
+                else:
+                    # Mixed date and datetime
+                    return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TEMPORAL_CONTEXT_MISMATCH
+
                 if operator == OperatorEnum.EQ:
                     return (ComplianceStatus.PASS, ReasonCode.EQUAL) if match else (ComplianceStatus.FAIL, ReasonCode.NOT_EQUAL)
                 else:
@@ -925,15 +1368,23 @@ class ComplianceEngine:
                 return (ComplianceStatus.FAIL, ReasonCode.EQUAL) if match else (ComplianceStatus.PASS, ReasonCode.NOT_EQUAL)
 
         elif operator in (OperatorEnum.GT, OperatorEnum.GTE, OperatorEnum.LT, OperatorEnum.LTE):
-            dec_obs, curr_obs, _, _ = cls._parse_currency_and_scale(observed, obs_meta, rule_unit=rule.unit)
-            dec_exp, curr_exp, _, _ = cls._parse_currency_and_scale(expected, rule_meta, rule_unit=rule.unit)
+            ctx_obs = cls._parse_financial_context(observed, obs_meta, default_unit=None)
+            ctx_exp = cls._parse_financial_context(expected, rule_meta, default_unit=rule.unit)
 
-            if dec_obs is None or dec_exp is None:
-                return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TYPE_CONVERSION_ERROR
+            if not ctx_obs.is_valid:
+                return ComplianceStatus.REVIEW_REQUIRED, ctx_obs.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
+            if not ctx_exp.is_valid:
+                return ComplianceStatus.REVIEW_REQUIRED, ctx_exp.error_reason or ReasonCode.TYPE_CONVERSION_ERROR
 
-            # Strict currency mismatch check
-            if curr_exp and curr_obs and curr_exp.upper() != curr_obs.upper():
-                return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.CURRENCY_MISMATCH
+            # Strict financial context compatibility check
+            is_compat, compat_reason = cls._check_financial_compatibility(
+                ctx_exp, ctx_obs, require_financial_context=bool(rule.unit or ctx_exp.currency)
+            )
+            if not is_compat:
+                return ComplianceStatus.REVIEW_REQUIRED, compat_reason or ReasonCode.CURRENCY_MISMATCH
+
+            dec_obs = ctx_obs.base_decimal_value
+            dec_exp = ctx_exp.base_decimal_value
 
             if operator == OperatorEnum.GT:
                 return (ComplianceStatus.PASS, ReasonCode.GREATER_THAN) if dec_obs > dec_exp else (ComplianceStatus.FAIL, ReasonCode.NOT_GREATER_THAN)
@@ -954,38 +1405,41 @@ class ComplianceEngine:
             return (ComplianceStatus.PASS, ReasonCode.COUNT_SUFFICIENT) if obs_cnt >= exp_cnt else (ComplianceStatus.FAIL, ReasonCode.COUNT_INSUFFICIENT)
 
         elif operator in (OperatorEnum.DATE_BEFORE, OperatorEnum.DATE_AFTER):
-            obs_obj, obs_is_dt = cls._parse_date_or_datetime(observed)
-            exp_obj, exp_is_dt = cls._parse_date_or_datetime(expected)
+            obs_obj, obs_type = cls._parse_date_or_datetime(observed)
+            exp_obj, exp_type = cls._parse_date_or_datetime(expected)
 
             if obs_obj is None or exp_obj is None:
                 return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.MALFORMED_DATE
 
             # Date vs Date comparison
-            if not obs_is_dt and not exp_is_dt:
+            if obs_type == "DATE_ONLY" and exp_type == "DATE_ONLY":
                 if operator == OperatorEnum.DATE_BEFORE:
                     return (ComplianceStatus.PASS, ReasonCode.BEFORE_DATE) if obs_obj < exp_obj else (ComplianceStatus.FAIL, ReasonCode.ON_OR_AFTER_DATE)
                 else:
                     return (ComplianceStatus.PASS, ReasonCode.AFTER_DATE) if obs_obj > exp_obj else (ComplianceStatus.FAIL, ReasonCode.ON_OR_BEFORE_DATE)
 
             # Datetime vs Datetime comparison
-            if obs_is_dt and exp_is_dt:
-                if (obs_obj.tzinfo is None) != (exp_obj.tzinfo is None):
-                    # Timezone naive vs aware mismatch
-                    return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.MALFORMED_DATE
-                obs_dt = obs_obj.astimezone(timezone.utc) if obs_obj.tzinfo else obs_obj
-                exp_dt = exp_obj.astimezone(timezone.utc) if exp_obj.tzinfo else exp_obj
+            if obs_type == "AWARE_DATETIME" and exp_type == "AWARE_DATETIME":
+                obs_dt = obs_obj.astimezone(timezone.utc)
+                exp_dt = exp_obj.astimezone(timezone.utc)
                 if operator == OperatorEnum.DATE_BEFORE:
                     return (ComplianceStatus.PASS, ReasonCode.BEFORE_DATE) if obs_dt < exp_dt else (ComplianceStatus.FAIL, ReasonCode.ON_OR_AFTER_DATE)
                 else:
                     return (ComplianceStatus.PASS, ReasonCode.AFTER_DATE) if obs_dt > exp_dt else (ComplianceStatus.FAIL, ReasonCode.ON_OR_BEFORE_DATE)
 
+            if obs_type == "NAIVE_DATETIME" and exp_type == "NAIVE_DATETIME":
+                if operator == OperatorEnum.DATE_BEFORE:
+                    return (ComplianceStatus.PASS, ReasonCode.BEFORE_DATE) if obs_obj < exp_obj else (ComplianceStatus.FAIL, ReasonCode.ON_OR_AFTER_DATE)
+                else:
+                    return (ComplianceStatus.PASS, ReasonCode.AFTER_DATE) if obs_obj > exp_obj else (ComplianceStatus.FAIL, ReasonCode.ON_OR_BEFORE_DATE)
+
+            if (obs_type == "AWARE_DATETIME" and exp_type == "NAIVE_DATETIME") or (
+                obs_type == "NAIVE_DATETIME" and exp_type == "AWARE_DATETIME"
+            ):
+                return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.AMBIGUOUS_TIMEZONE
+
             # Mixed Date and Datetime comparison
-            obs_d = obs_obj.date() if isinstance(obs_obj, datetime) else obs_obj
-            exp_d = exp_obj.date() if isinstance(exp_obj, datetime) else exp_obj
-            if operator == OperatorEnum.DATE_BEFORE:
-                return (ComplianceStatus.PASS, ReasonCode.BEFORE_DATE) if obs_d < exp_d else (ComplianceStatus.FAIL, ReasonCode.ON_OR_AFTER_DATE)
-            else:
-                return (ComplianceStatus.PASS, ReasonCode.AFTER_DATE) if obs_d > exp_d else (ComplianceStatus.FAIL, ReasonCode.ON_OR_BEFORE_DATE)
+            return ComplianceStatus.REVIEW_REQUIRED, ReasonCode.TEMPORAL_CONTEXT_MISMATCH
 
         elif operator == OperatorEnum.IN:
             exp_list = expected if isinstance(expected, (list, tuple, set)) else [expected]
@@ -1016,4 +1470,3 @@ class ComplianceEngine:
             return (ComplianceStatus.PASS, ReasonCode.VALUE_NOT_IN_SET) if not match else (ComplianceStatus.FAIL, ReasonCode.VALUE_IN_SET)
 
         return ComplianceStatus.UNKNOWN, ReasonCode.UNSUPPORTED_OPERATOR
-

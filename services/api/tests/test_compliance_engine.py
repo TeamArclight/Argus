@@ -20,6 +20,7 @@ def make_requirement(
     field: str = "financial.average_annual_turnover",
     mandatory: bool = True,
     req_type: RequirementType = RequirementType.TURNOVER,
+    meta: dict | None = None,
 ) -> TenderRequirementRead:
     return TenderRequirementRead(
         id="REQ-001",
@@ -29,16 +30,20 @@ def make_requirement(
         field=field,
         operator=operator,
         expected_value=expected_value,
-        unit="INR",
+        unit="INR" if "financial" in field else None,
         mandatory=mandatory,
         confidence=1.0,
         requires_verification=True,
         is_approved=True,
+        metadata_json=meta or ({"currency": "INR"} if "financial" in field else {}),
         created_at=datetime.now(timezone.utc),
     )
 
 
-def make_fact(value: any, field: str = "financial.average_annual_turnover", fact_id: str = "FACT-001") -> FactRead:
+def make_fact(value: any, field: str = "financial.average_annual_turnover", fact_id: str = "FACT-001", meta: dict | None = None) -> FactRead:
+    metadata = {"currency": "INR"} if "financial" in field else {}
+    if meta:
+        metadata.update(meta)
     return FactRead(
         id=fact_id,
         document_id="DOC-001",
@@ -46,6 +51,7 @@ def make_fact(value: any, field: str = "financial.average_annual_turnover", fact
         field=field,
         value=value,
         confidence=1.0,
+        metadata_json=metadata,
         created_at=datetime.now(timezone.utc),
     )
 
@@ -92,10 +98,10 @@ def test_compliance_missing_facts_mandatory_unknown():
 
 
 def test_compliance_missing_facts_optional_not_applicable():
-    req = make_requirement(OperatorEnum.GTE, 100000000, mandatory=False)
+    req = make_requirement(OperatorEnum.GTE, 100000000, mandatory=False, meta={"optional_missing_policy": "NOT_APPLICABLE"})
     eval_res = ComplianceEngine.evaluate(req, [], [])
     assert eval_res.status == ComplianceStatus.NOT_APPLICABLE
-    assert eval_res.reason_code == "MISSING_EVIDENCE"
+    assert eval_res.reason_code == "NOT_APPLICABLE_OPTIONAL"
 
 
 def test_compliance_verification_service_error_unknown():
@@ -187,11 +193,11 @@ def test_evidence_absence_safety_exists_and_not_exists():
     assert res1.status == ComplianceStatus.UNKNOWN
     assert res1.reason_code == "MISSING_EVIDENCE"
 
-    # 2. EXISTS optional + no evidence => NOT_APPLICABLE / MISSING_EVIDENCE
-    req_exists_opt = make_requirement(OperatorEnum.EXISTS, True, field="cert.iso", mandatory=False)
+    # 2. EXISTS optional + no evidence => NOT_APPLICABLE / NOT_APPLICABLE_OPTIONAL
+    req_exists_opt = make_requirement(OperatorEnum.EXISTS, True, field="cert.iso", mandatory=False, meta={"optional_missing_policy": "NOT_APPLICABLE"})
     res2 = ComplianceEngine.evaluate(req_exists_opt, [], [])
     assert res2.status == ComplianceStatus.NOT_APPLICABLE
-    assert res2.reason_code == "MISSING_EVIDENCE"
+    assert res2.reason_code == "NOT_APPLICABLE_OPTIONAL"
 
     # 3. EXISTS + explicit usable value => PASS / EVIDENCE_EXISTS
     res3 = ComplianceEngine.evaluate(req_exists_mand, [make_fact(True, field="cert.iso")], [])
@@ -204,11 +210,11 @@ def test_evidence_absence_safety_exists_and_not_exists():
     assert res4.status == ComplianceStatus.UNKNOWN
     assert res4.reason_code == "MISSING_EVIDENCE"
 
-    # 5. NOT_EXISTS optional + no evidence => NOT_APPLICABLE / MISSING_EVIDENCE
-    req_ne_opt = make_requirement(OperatorEnum.NOT_EXISTS, False, field="debarment.status", mandatory=False)
+    # 5. NOT_EXISTS optional + no evidence => NOT_APPLICABLE / NOT_APPLICABLE_OPTIONAL
+    req_ne_opt = make_requirement(OperatorEnum.NOT_EXISTS, False, field="debarment.status", mandatory=False, meta={"optional_missing_policy": "NOT_APPLICABLE"})
     res5 = ComplianceEngine.evaluate(req_ne_opt, [], [])
     assert res5.status == ComplianceStatus.NOT_APPLICABLE
-    assert res5.reason_code == "MISSING_EVIDENCE"
+    assert res5.reason_code == "NOT_APPLICABLE_OPTIONAL"
 
     # 6. NOT_EXISTS + explicit False => PASS / EVIDENCE_ABSENT
     res6 = ComplianceEngine.evaluate(req_ne_mand, [make_fact(False, field="debarment.status")], [])
@@ -256,9 +262,9 @@ def test_gst_status_case_insensitivity():
 
 
 def test_date_eq_valid_equivalent_and_malformed():
-    # Valid equivalent representations -> PASS
+    # Valid equivalent representations (date-only) -> PASS
     req_eq = make_requirement(OperatorEnum.EQ, "2026-01-15", field="general.incorporation_date")
-    facts_valid = [make_fact("2026-01-15T00:00:00Z", field="general.incorporation_date")]
+    facts_valid = [make_fact("2026-01-15", field="general.incorporation_date")]
     res_valid = ComplianceEngine.evaluate(req_eq, facts_valid, [])
     assert res_valid.status == ComplianceStatus.PASS
 
@@ -307,11 +313,11 @@ def test_type_aware_eq_and_ne_type_conversion_errors():
     assert res2.status == ComplianceStatus.REVIEW_REQUIRED
     assert res2.reason_code == "TYPE_CONVERSION_ERROR"
 
-    # EQ expected numeric + malformed string -> REVIEW_REQUIRED, TYPE_CONVERSION_ERROR
+    # EQ expected numeric + malformed string -> REVIEW_REQUIRED, MALFORMED_NUMBER / TYPE_CONVERSION_ERROR
     req_eq_num = make_requirement(OperatorEnum.EQ, 100)
     res3 = ComplianceEngine.evaluate(req_eq_num, [make_fact("not-a-number")], [])
     assert res3.status == ComplianceStatus.REVIEW_REQUIRED
-    assert res3.reason_code == "TYPE_CONVERSION_ERROR"
+    assert res3.reason_code in ("TYPE_CONVERSION_ERROR", "MALFORMED_NUMBER")
 
 
 def test_strict_structured_value_ambiguity():

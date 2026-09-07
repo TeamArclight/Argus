@@ -320,7 +320,7 @@ class BidVerificationService:
             rules_hash = ComplianceEngine.compute_rules_hash(requirements_schema)
             run.rule_version = f"{ComplianceEngine.ENGINE_VERSION}:{rules_hash[:8]}"
 
-            eval_ts = datetime.now(timezone.utc)
+            eval_ts = run.started_at if run.started_at.tzinfo else run.started_at.replace(tzinfo=timezone.utc)
             evaluations_schema: list[RuleEvaluationRead] = []
             risk_signals_schema: list[RiskSignalRead] = []
 
@@ -587,12 +587,13 @@ class BidVerificationService:
                 risk_policy_version="1.0",
             )
 
-            # 6. Build explicit run input snapshot
             input_snapshot = {
                 "snapshot_version": "1.2.0",
                 "engine_version": ComplianceEngine.ENGINE_VERSION,
                 "normalization_policy_version": ComplianceEngine.NORMALIZATION_POLICY_VERSION,
                 "operator_semantics_version": ComplianceEngine.OPERATOR_SEMANTICS_VERSION,
+                "financial_context_policy_version": ComplianceEngine.FINANCIAL_CONTEXT_POLICY_VERSION,
+                "temporal_policy_version": ComplianceEngine.TEMPORAL_POLICY_VERSION,
                 "rules_hash": rules_hash,
                 "risk_engine_version": "1.0",
                 "risk_policy_version": "1.0",
