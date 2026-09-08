@@ -86,6 +86,8 @@ async def test_historical_rule_mutation(db_session, sample_tender, sample_bidder
         field="financial.average_annual_turnover",
         operator=OperatorEnum.GTE,
         expected_value="5000000",
+        unit="INR",
+        metadata_json={"currency": "INR"},
         mandatory=True,
         is_approved=True,
     )
@@ -108,6 +110,7 @@ async def test_historical_rule_mutation(db_session, sample_tender, sample_bidder
         bidder_id=sample_bidder.id,
         field="financial.average_annual_turnover",
         value="6000000",
+        metadata_json={"currency": "INR"},
         source_page=1,
         source_text="Turnover: 60 Lakhs",
         confidence=0.98,
@@ -148,6 +151,8 @@ async def test_historical_fact_mutation(db_session, sample_tender, sample_bidder
         field="financial.average_annual_turnover",
         operator=OperatorEnum.GTE,
         expected_value="5000000",
+        unit="INR",
+        metadata_json={"currency": "INR"},
         mandatory=True,
         is_approved=True,
     )
@@ -170,6 +175,7 @@ async def test_historical_fact_mutation(db_session, sample_tender, sample_bidder
         bidder_id=sample_bidder.id,
         field="financial.average_annual_turnover",
         value="6000000",
+        metadata_json={"currency": "INR"},
         source_page=1,
         source_text="Turnover: 60 Lakhs",
         confidence=0.98,
@@ -208,6 +214,8 @@ async def test_historical_verification_mutation(db_session, sample_tender, sampl
         field="financial.average_annual_turnover",
         operator=OperatorEnum.GTE,
         expected_value="5000000",
+        unit="INR",
+        metadata_json={"currency": "INR"},
         mandatory=True,
         is_approved=True,
     )
@@ -228,6 +236,7 @@ async def test_historical_verification_mutation(db_session, sample_tender, sampl
         bidder_id=sample_bidder.id,
         field="financial.average_annual_turnover",
         value="6000000",
+        metadata_json={"currency": "INR"},
     )
     db_session.add(fact)
     db_session.commit()
@@ -359,6 +368,8 @@ async def test_multiple_same_field_evidence_inputs(db_session, sample_tender, sa
         field="financial.average_annual_turnover",
         operator=OperatorEnum.GTE,
         expected_value="4000000",
+        unit="INR",
+        metadata_json={"currency": "INR"},
         mandatory=True,
         is_approved=True,
     )
@@ -381,6 +392,7 @@ async def test_multiple_same_field_evidence_inputs(db_session, sample_tender, sa
         bidder_id=sample_bidder.id,
         field="financial.average_annual_turnover",
         value="5000000",
+        metadata_json={"currency": "INR"},
     )
     # Fact 2: 50 Lakhs (same normalized value)
     fact2 = ExtractedFact(
@@ -389,6 +401,7 @@ async def test_multiple_same_field_evidence_inputs(db_session, sample_tender, sa
         bidder_id=sample_bidder.id,
         field="financial.average_annual_turnover",
         value="5000000",
+        metadata_json={"currency": "INR"},
     )
     db_session.add_all([fact1, fact2])
     db_session.commit()

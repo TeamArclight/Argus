@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 import math
 import re
 from typing import Any
@@ -70,6 +71,8 @@ class RiskEngine:
         No DB queries, no HTTP requests, no AI/ML calls, zero side effects.
         """
         eval_ts = evaluation_timestamp
+        if eval_ts and eval_ts.tzinfo is None:
+            eval_ts = eval_ts.replace(tzinfo=timezone.utc)
         candidates: list[RiskSignalCandidate] = []
         policy = {**cls.DEFAULT_FRESHNESS_DAYS, **(freshness_policy or {})}
 
@@ -260,10 +263,18 @@ class RiskEngine:
 
         currency = currency or text_curr
 
+        # Check base unit flag
+        is_base_unit = bool(
+            meta.get("is_base_unit")
+            or meta.get("normalized")
+            or meta.get("is_normalized")
+            or (meta_unit and str(meta_unit).upper() in ("INR", "USD", "EUR", "GBP", "BASE", "UNITS"))
+        )
+
         # Unit / Scale resolution from metadata
         meta_scale = 1.0
         canonical_meta_unit = None
-        if meta_unit and isinstance(meta_unit, str):
+        if meta_unit and isinstance(meta_unit, str) and not is_base_unit:
             meta_unit_clean = meta_unit.lower().strip()
             if meta_unit_clean in cls.UNIT_SCALE_MAP:
                 meta_scale, canonical_meta_unit = cls.UNIT_SCALE_MAP[meta_unit_clean]
@@ -306,10 +317,16 @@ class RiskEngine:
             val_to_parse = clean_s
 
         raw_num = ComplianceEngine._normalize_number(val_to_parse)
-        if raw_num is None or math.isnan(raw_num) or math.isinf(raw_num):
+        if raw_num is None:
+            return currency, resolved_unit, None, is_explicit
+        try:
+            f_num = float(raw_num)
+            if math.isnan(f_num) or math.isinf(f_num):
+                return currency, resolved_unit, None, is_explicit
+        except (ValueError, TypeError, OverflowError):
             return currency, resolved_unit, None, is_explicit
 
-        scaled_val = float(raw_num * scale)
+        scaled_val = float(Decimal(str(raw_num)) * Decimal(str(scale)))
         return currency, resolved_unit, scaled_val, is_explicit
 
     @classmethod

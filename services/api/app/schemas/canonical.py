@@ -392,7 +392,7 @@ class RuleEvaluationRead(BaseModel):
     expected_value: Any | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     rule_version: str = "1.0"
-    evaluated_at: datetime
+    evaluated_at: datetime | None = None
 
 
 class ProviderConfigurationStatus(str, Enum):
