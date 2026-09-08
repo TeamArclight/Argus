@@ -75,7 +75,7 @@ class GeminiProvider:
         if not key: raise RuntimeError("ARGUS_GEMINI_API_KEY is not configured")
         try: from google import genai
         except ImportError as exc: raise RuntimeError("Gemini support requires google-genai") from exc
-        self._client, self._model = genai.Client(api_key=key), (model or os.getenv("ARGUS_MODEL_NAME", "gemini-2.5-flash"))
+        self._client, self._model = genai.Client(api_key=key), (model or os.getenv("ARGUS_MODEL_NAME", "gemini-3.6-flash"))
 
     def structured(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
         response = self._client.models.generate_content(model=self._model, contents=prompt, config={"response_mime_type": "application/json", "response_json_schema": schema})
