@@ -71,104 +71,151 @@ def claim_job():
         db.close()
 
 
+def _sanitize_worker_error(exc: Exception) -> str:
+    """Sanitizes internal exception details before recording in job status or audit logs."""
+    msg = str(exc).strip()
+    if not msg:
+        return "Internal processing failure."
+    import re
+    if re.search(r"(?:api_key|access_token|secret_key|private_key|password|jwt_secret)\b", msg, flags=re.IGNORECASE):
+        return "Processing failed due to an authentication or configuration error."
+    msg = re.sub(r"[A-Za-z]:\\[^ \t\n\r\"']+", "[path]", msg)
+    msg = re.sub(r"/(?:app|home|var|tmp|Users)/[^ \t\n\r\"']+", "[path]", msg)
+    return msg[:300] if len(msg) > 300 else msg
+
+
 async def execute_job(job_id: str, job_type: str, target_id: str) -> None:
-    """Executes a claimed background job."""
-    db = SessionLocal()
+    """Executes a claimed background job with safe transaction boundaries."""
     resource_type = "TENDER" if job_type == "EXTRACT_REQUIREMENTS" else "BIDDER"
     operation = "PROCESS_TENDER" if job_type == "EXTRACT_REQUIREMENTS" else "VERIFY_BIDDER"
+
     try:
         if job_type == "EXTRACT_REQUIREMENTS":
-            tender = db.query(Tender).filter(Tender.id == target_id).first()
-            if not tender:
-                raise ValueError(f"Tender {target_id} not found.")
-            from app.models.domain import Document, TenderRequirement
-            doc = db.query(Document).filter(Document.tender_id == target_id).order_by(Document.created_at.desc()).first()
-            if not doc:
-                raise ValueError(f"No document found for tender {target_id}.")
+            # 1. Read document metadata in short-lived session
+            db = SessionLocal()
+            try:
+                tender = db.query(Tender).filter(Tender.id == target_id).first()
+                if not tender:
+                    raise ValueError(f"Tender {target_id} not found.")
+                from app.models.domain import Document, TenderRequirement
+                doc = db.query(Document).filter(Document.tender_id == target_id).order_by(Document.created_at.desc()).first()
+                if not doc:
+                    raise ValueError(f"No document found for tender {target_id}.")
+                doc_id = doc.id
+                doc_sha = doc.sha256
+                doc_uri = doc.storage_uri
+                doc_filename = doc.filename
+                doc_ctype = doc.content_type
+            finally:
+                db.close()
+
+            # 2. Perform file read and async AI call outside of database transaction
             storage = get_storage_provider()
-            file_bytes = storage.read_file(doc.storage_uri)
-            
+            file_bytes = storage.read_file(doc_uri)
+
             ai_adapter = AIServiceAdapter()
             result = await ai_adapter.extract_tender(
                 tender_id=target_id,
-                document_id=doc.id,
-                document_sha256=doc.sha256,
+                document_id=doc_id,
+                document_sha256=doc_sha,
                 file_bytes=file_bytes,
-                filename=doc.filename,
-                content_type=doc.content_type,
+                filename=doc_filename,
+                content_type=doc_ctype,
             )
             if not result.success:
                 raise RuntimeError(f"AI extraction failed: {result.message}")
-            
-            # Persist candidate requirements
-            for req_dict in (result.data or []):
-                req = TenderRequirement(
-                    tender_id=target_id,
-                    clause=req_dict["clause"],
-                    requirement_type=req_dict["requirement_type"],
-                    field=req_dict["field"],
-                    operator=req_dict["operator"],
-                    expected_value=req_dict["expected_value"],
-                    unit=req_dict.get("unit"),
-                    mandatory=req_dict.get("mandatory", True),
-                    source_page=req_dict.get("source_page"),
-                    source_text=req_dict.get("source_text"),
-                    confidence=req_dict.get("confidence", 1.0),
-                    requires_verification=req_dict.get("requires_verification", False),
-                    is_approved=False,
-                    metadata_json=req_dict.get("metadata_json", {}),
+
+            # 3. Persist results in a clean database transaction
+            db = SessionLocal()
+            try:
+                for req_dict in (result.data or []):
+                    req = TenderRequirement(
+                        tender_id=target_id,
+                        clause=req_dict["clause"],
+                        requirement_type=req_dict["requirement_type"],
+                        field=req_dict["field"],
+                        operator=req_dict["operator"],
+                        expected_value=req_dict["expected_value"],
+                        unit=req_dict.get("unit"),
+                        mandatory=req_dict.get("mandatory", True),
+                        source_page=req_dict.get("source_page"),
+                        source_text=req_dict.get("source_text"),
+                        confidence=req_dict.get("confidence", 1.0),
+                        requires_verification=req_dict.get("requires_verification", False),
+                        is_approved=False,
+                        metadata_json=req_dict.get("metadata_json", {}),
+                    )
+                    db.add(req)
+
+                job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+                if job:
+                    job.status = JobStatus.COMPLETED
+                    job.progress = 100
+                    job.completed_at = datetime.now(timezone.utc)
+                    JobEventService.emit_event(
+                        db=db,
+                        job_id=job.id,
+                        stage=JobStage.REPORTING,
+                        status=JobStatus.COMPLETED,
+                        progress=100,
+                        message="Tender requirements extracted successfully.",
+                    )
+                db.commit()
+            finally:
+                db.close()
+
+        elif job_type == "VERIFY_BIDDER":
+            db = SessionLocal()
+            try:
+                svc = BidVerificationService(db)
+                await svc.run_verification_workflow(
+                    bidder_id=target_id,
+                    job_id=job_id,
+                    triggered_by="WORKER_DAEMON",
+                    actor_id="WORKER_DAEMON",
+                    actor_role="SYSTEM",
                 )
-                db.add(req)
-            
+            finally:
+                db.close()
+        else:
+            db = SessionLocal()
+            try:
+                job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+                if job:
+                    job.status = JobStatus.FAILED
+                    job.error_message = f"Unsupported job type: {job_type}"
+                    job.completed_at = datetime.now(timezone.utc)
+                    db.commit()
+            finally:
+                db.close()
+
+    except Exception as exc:
+        sanitized = _sanitize_worker_error(exc)
+        logger.exception("Job %s execution failed: %s", job_id, sanitized)
+        db = SessionLocal()
+        try:
             job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
             if job:
-                job.status = JobStatus.COMPLETED
-                job.progress = 100
+                job.status = JobStatus.FAILED
+                job.error_message = sanitized
                 job.completed_at = datetime.now(timezone.utc)
                 JobEventService.emit_event(
                     db=db,
                     job_id=job.id,
-                    stage=JobStage.REPORTING,
-                    status=JobStatus.COMPLETED,
+                    stage=job.current_stage or JobStage.EXTRACTION,
+                    status=JobStatus.FAILED,
                     progress=100,
-                    message="Tender requirements extracted successfully.",
+                    message=f"Job failed: {sanitized}",
                 )
-            db.commit()
-
-        elif job_type == "VERIFY_BIDDER":
-            svc = BidVerificationService(db)
-            await svc.run_verification_workflow(
-                bidder_id=target_id,
-                job_id=job_id,
-                triggered_by="WORKER_DAEMON",
-                actor_id="WORKER_DAEMON",
-                actor_role="SYSTEM",
-            )
-        else:
-            job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
-            if job:
-                job.status = JobStatus.FAILED
-                job.error_message = f"Unsupported job type: {job_type}"
-                job.completed_at = datetime.now(timezone.utc)
                 db.commit()
-    except Exception as exc:
-        logger.exception("Job %s execution failed: %s", job_id, exc)
-        db.rollback()
-        job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
-        if job:
-            job.status = JobStatus.FAILED
-            job.error_message = str(exc)
-            job.completed_at = datetime.now(timezone.utc)
-            JobEventService.emit_event(
-                db=db,
-                job_id=job.id,
-                stage=job.current_stage or JobStage.EXTRACTION,
-                status=JobStatus.FAILED,
-                progress=100,
-                message=f"Job failed: {exc}",
-            )
-            db.commit()
+        except Exception as log_exc:
+            logger.error("Failed to record job failure in DB: %s", log_exc)
+            db.rollback()
+        finally:
+            db.close()
     finally:
+        # Definitive lock release on terminal state
+        db = SessionLocal()
         try:
             OperationLockService.release_lock(
                 db=db,
@@ -179,7 +226,8 @@ async def execute_job(job_id: str, job_type: str, target_id: str) -> None:
             )
         except Exception:
             pass
-        db.close()
+        finally:
+            db.close()
 
 
 def run(poll_interval: float = 1.0, max_iterations: int | None = None) -> None:

@@ -28,12 +28,17 @@ from .storage import DocumentResolutionError, resolved_document
 _LOW_CONFIDENCE_THRESHOLD = float(os.getenv("ARGUS_LOW_CONFIDENCE_THRESHOLD", "0.6"))
 
 
+_MAX_DOCUMENT_BYTES = int(os.getenv("ARGUS_MAX_DOCUMENT_BYTES", str(30 * 1024 * 1024)))
+_MAX_B64_LEN = int(_MAX_DOCUMENT_BYTES * 4 / 3) + 1024
+
+
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
 
 import base64
 import hashlib
+import re
 import tempfile
 from pathlib import Path
 
@@ -138,8 +143,13 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
 
     def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
         expected = os.getenv("ARGUS_INTELLIGENCE_API_KEY")
-        if expected and not hmac.compare_digest(authorization or "", f"Bearer {expected}"):
-            raise HTTPException(status_code=401, detail="Invalid intelligence service credentials")
+        require_auth_flag = os.getenv("ARGUS_REQUIRE_AUTH", "false").lower() in {"true", "1", "yes"}
+        is_production = os.getenv("APP_ENV", "development").lower() == "production"
+        if expected:
+            if not authorization or not hmac.compare_digest(authorization, f"Bearer {expected}"):
+                raise HTTPException(status_code=401, detail="Invalid intelligence service credentials")
+        elif require_auth_flag or is_production:
+            raise HTTPException(status_code=401, detail="Intelligence service authentication is required but ARGUS_INTELLIGENCE_API_KEY is not configured")
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -166,10 +176,14 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
         temp_file = None
         try:
             if payload.file_bytes_base64:
+                if len(payload.file_bytes_base64) > _MAX_B64_LEN:
+                    raise HTTPException(413, "Base64 document payload exceeds maximum allowed size")
                 try:
                     file_bytes = base64.b64decode(payload.file_bytes_base64)
                 except Exception as b64_err:
                     raise HTTPException(422, f"Invalid base64 document bytes: {b64_err}")
+                if len(file_bytes) > _MAX_DOCUMENT_BYTES:
+                    raise HTTPException(413, "Document size exceeds maximum allowed size")
                 computed_sha = hashlib.sha256(file_bytes).hexdigest()
                 if payload.document_sha256 and computed_sha.lower() != payload.document_sha256.lower():
                     raise HTTPException(422, "Document SHA-256 digest mismatch")
@@ -236,10 +250,14 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
         temp_file = None
         try:
             if payload.file_bytes_base64:
+                if len(payload.file_bytes_base64) > _MAX_B64_LEN:
+                    raise HTTPException(413, "Base64 document payload exceeds maximum allowed size")
                 try:
                     file_bytes = base64.b64decode(payload.file_bytes_base64)
                 except Exception as b64_err:
                     raise HTTPException(422, f"Invalid base64 document bytes: {b64_err}")
+                if len(file_bytes) > _MAX_DOCUMENT_BYTES:
+                    raise HTTPException(413, "Document size exceeds maximum allowed size")
                 computed_sha = hashlib.sha256(file_bytes).hexdigest()
                 if payload.document_sha256 and computed_sha.lower() != payload.document_sha256.lower():
                     raise HTTPException(422, "Document SHA-256 digest mismatch")
@@ -366,6 +384,9 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
     def rag_query_endpoint(payload: RAGQueryRequest, _: None = Depends(require_auth)) -> dict[str, Any]:
         filters = dict(payload.filters)
         if payload.tender_id: filters.setdefault("tender_id", payload.tender_id)
+        for key, value in filters.items():
+            if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", str(key)):
+                raise HTTPException(422, f"Invalid metadata filter key: {key}")
         results = store.retrieve(payload.query, filters, payload.top_k)
         return {"query": payload.query, "results": [item.model_dump(mode="json", exclude={"content_hash", "version", "effective_from", "effective_to", "security_level"}) for item in results], "retrieved_at": datetime.now(timezone.utc).isoformat(), "error_code": None if results else "INSUFFICIENT_EVIDENCE", "error_message": None if results else "No current evidence matched the query."}
 
@@ -384,6 +405,8 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
 
     @app.post("/rag-delete")
     def rag_delete_endpoint(payload: RAGDeleteRequest, _: None = Depends(require_auth)) -> dict[str, Any]:
+        if not payload.document_id or not re.fullmatch(r"[a-zA-Z0-9_.:-]+", payload.document_id):
+            raise HTTPException(422, "Invalid or missing document_id for deletion")
         delete = getattr(store, "delete", None)
         if delete is None:
             raise HTTPException(501, "Configured RAG store does not support document deletion")

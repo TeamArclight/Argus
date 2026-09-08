@@ -331,3 +331,68 @@ def test_synthetic_end_to_end_replay(tmp_path):
     # Valid matching claim and verified value yields 0 mismatch risk signals
     assert not any(s.signal_type == "CLAIM_VERIFIED_MISMATCH" for s in risk_signals)
 
+
+# ---------------------------------------------------------------------------
+# 8. HTTP SECURITY, AUTH ENFORCEMENT & BOUNDED PAYLOADS
+# ---------------------------------------------------------------------------
+
+def test_require_auth_enforced_when_configured(monkeypatch):
+    """When ARGUS_REQUIRE_AUTH=true, reject unauthenticated requests."""
+    monkeypatch.setenv("ARGUS_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("ARGUS_INTELLIGENCE_API_KEY", "test-secret-key")
+    app = create_app()
+    client = TestClient(app)
+
+    # Missing auth header -> 401
+    resp = client.get("/health")
+    assert resp.status_code == 401
+
+    # Wrong token -> 401
+    resp_wrong = client.get("/health", headers={"Authorization": "Bearer wrong-key"})
+    assert resp_wrong.status_code == 401
+
+    # Correct token -> 200
+    resp_ok = client.get("/health", headers={"Authorization": "Bearer test-secret-key"})
+    assert resp_ok.status_code == 200
+
+
+def test_oversized_base64_payload_rejected():
+    """Verify base64 payload exceeding size limits is rejected with HTTP 413 before decoding."""
+    app = create_app()
+    client = TestClient(app)
+
+    huge_b64 = "A" * (45 * 1024 * 1024)  # 45MB string exceeds max bounded limit
+
+    req_payload = {
+        "contract_version": "1.0",
+        "tender_id": "t1",
+        "file_bytes_base64": huge_b64,
+    }
+    resp = client.post("/extract-tender", json=req_payload)
+    assert resp.status_code == 413
+
+
+def test_rag_query_rejects_invalid_filter_key():
+    """Verify RAG query rejects SQL injection or invalid characters in filter keys."""
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post("/rag-query", json={
+        "query": "turnover",
+        "filters": {"invalid-key' OR '1'='1": "value"}
+    })
+    assert resp.status_code == 422
+
+
+def test_rag_delete_rejects_malformed_document_id():
+    """Verify RAG delete rejects invalid document_id patterns."""
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post("/rag-delete", json={"document_id": ""})
+    assert resp.status_code == 422
+
+    resp2 = client.post("/rag-delete", json={"document_id": "doc/../../evil"})
+    assert resp2.status_code == 422
+
+

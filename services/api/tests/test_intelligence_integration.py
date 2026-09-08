@@ -1080,3 +1080,18 @@ async def test_ai_adapter_error_message_scrubbing(monkeypatch):
     assert res.message == "Intelligence service connection failed."
 
 
+@pytest.mark.asyncio
+async def test_worker_execute_job_error_sanitization(monkeypatch):
+    """Verify worker sanitize helper masks sensitive credentials and paths."""
+    from app.workers.worker import _sanitize_worker_error
+
+    exc1 = Exception("Failed with ARGUS_GEMINI_API_KEY=AQ.secret_token_value in config")
+    assert _sanitize_worker_error(exc1) == "Processing failed due to an authentication or configuration error."
+
+    exc2 = Exception("Could not open file at C:\\Users\\Administrator\\SecretDir\\data.pdf")
+    sanitized = _sanitize_worker_error(exc2)
+    assert "SecretDir" not in sanitized
+    assert "[path]" in sanitized
+
+
+

@@ -60,11 +60,11 @@ This plan details the salvage and integration of the intelligence service (`serv
 ## 4. Verification Results Summary
  
 1. **Intelligence Microservice Test Suite (`services/intelligence/tests`)**:
-   - **44 passed, 0 failed, 1 warning** (0.84s).
-   - Covers: unit tests, gold cases, parser, chunking, embeddings, RAG ingestion/query/deletion, risk detection, LangGraph workflow, readiness probe, Windows storage resolution, envelope contract mapping, pgvector schema compilation & vector formatting, OCR missing binary graceful degradation, and synthetic end-to-end replay.
+   - **48 passed, 0 failed, 1 warning** (0.94s).
+   - Covers: unit tests, gold cases, parser, chunking, embeddings, RAG ingestion/query/deletion, risk detection, LangGraph workflow, readiness probe, Windows storage resolution, envelope contract mapping, pgvector schema compilation & vector formatting, OCR missing binary graceful degradation, synthetic end-to-end replay, bounded base64 size limits, auth enforcement, and RAG input validation.
 2. **Backend Regression Test Suite (`services/api/tests`)**:
-   - **249 passed, 7 skipped, 7 warnings** (matches reported baseline).
-   - Covers: Phase 11 PostgreSQL concurrency, row locks, idempotency, and Phase 12 pure compliance engine, strict numeric/financial contexts, and temporal truthfulness.
+   - **250 passed, 7 skipped, 7 warnings** (100% baseline match + worker error sanitization regression).
+   - Covers: Phase 11 PostgreSQL concurrency, row locks, idempotency, worker safe transaction boundaries and error sanitization, and Phase 12 pure compliance engine, strict numeric/financial contexts, and temporal truthfulness.
 3. **Normal Development Database Safety**:
    - `argus_dev.db` was untouched and preserved.
 
