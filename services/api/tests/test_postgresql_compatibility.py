@@ -1,5 +1,6 @@
 import concurrent.futures
 import os
+from pathlib import Path
 import uuid
 import pytest
 from fastapi import HTTPException
@@ -69,7 +70,8 @@ def test_alembic_postgresql_dialect_migration_check():
     from alembic.script import ScriptDirectory
 
     config = Config()
-    config.set_main_option("script_location", "alembic")
+    alembic_path = Path(__file__).resolve().parent.parent / "alembic"
+    config.set_main_option("script_location", str(alembic_path))
     script_dir = ScriptDirectory.from_config(config)
 
     revisions = list(script_dir.walk_revisions())

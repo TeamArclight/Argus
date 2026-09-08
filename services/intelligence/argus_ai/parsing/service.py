@@ -38,9 +38,11 @@ def parse_document(file_path: Union[str, Path]) -> list[tuple[int, str]]:
         try:
             from PIL import Image
             import pytesseract
+            text = pytesseract.image_to_string(Image.open(path))
         except ImportError as exc:
             raise DocumentParseError("Image parsing requires Pillow and pytesseract") from exc
-        text = pytesseract.image_to_string(Image.open(path))
+        except Exception as exc:
+            raise DocumentParseError(f"Image OCR failed: {exc}") from exc
         if not text.strip(): raise DocumentParseError("OCR produced no readable text")
         return [(1, text)]
     if path.suffix.lower() == ".pdf":
@@ -59,8 +61,10 @@ def _ocr_pdf(path: Path) -> list[tuple[int, str]]:
     try:
         from pdf2image import convert_from_path
         import pytesseract
+        pages = [(index + 1, pytesseract.image_to_string(image)) for index, image in enumerate(convert_from_path(str(path)))]
     except ImportError as exc:
         raise DocumentParseError("scanned PDF needs OCR dependencies: pdf2image and pytesseract") from exc
-    pages = [(index + 1, pytesseract.image_to_string(image)) for index, image in enumerate(convert_from_path(str(path)))]
+    except Exception as exc:
+        raise DocumentParseError(f"scanned PDF OCR failed: {exc}") from exc
     if not any(text.strip() for _, text in pages): raise DocumentParseError("OCR produced no readable text")
     return pages
