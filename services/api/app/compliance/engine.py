@@ -927,39 +927,46 @@ class ComplianceEngine:
 
     @classmethod
     def _determine_applicability(
-        cls, rule: TenderRequirementRead, context: dict[str, Any] | None = None
-    ) -> tuple[bool | None, str]:
-        """Evaluates requirement applicability from approved policy metadata and bidder context.
+        cls,
+        rule: TenderRequirementRead,
+        context: dict[str, Any] | None = None,
+        facts: list[FactRead] | None = None,
+        verification_results: list[VerificationResultRead] | None = None,
+    ) -> tuple[bool | None, str, list[str]]:
+        """Evaluates requirement applicability from approved policy metadata, bidder context, and evidence.
 
-        Returns (is_applicable, reason_code).
+        Returns (is_applicable, reason_code, evidence_ids).
         is_applicable is True (applicable), False (not applicable), or None (unknown).
         """
         context = context or {}
+        facts = facts or []
+        verification_results = verification_results or []
         rule_meta = getattr(rule, "metadata_json", {}) or {}
+        current_bidder_id = context.get("bidder_id")
 
         # 1. Explicit boolean applicability in metadata (tender-wide rule applicability)
         for bool_key in ("is_applicable", "applicable"):
             if bool_key in rule_meta and rule_meta[bool_key] is not None:
                 parsed_bool = cls._parse_boolean_strict(rule_meta[bool_key])
                 if parsed_bool is True:
-                    return True, "APPLICABLE"
+                    return True, "APPLICABLE", []
                 elif parsed_bool is False:
-                    return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
+                    return False, ReasonCode.NOT_APPLICABLE_EXPLICIT, []
                 else:
-                    return None, ReasonCode.INVALID_APPLICABILITY_POLICY
+                    return None, ReasonCode.INVALID_APPLICABILITY_POLICY, []
 
         # 2. String policy in metadata (tender-wide rule applicability)
         if "applicability" in rule_meta and rule_meta["applicability"] is not None:
             app_str = str(rule_meta["applicability"]).strip().upper()
             if app_str in ("NOT_APPLICABLE", "INAPPLICABLE"):
-                return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
+                return False, ReasonCode.NOT_APPLICABLE_EXPLICIT, []
             elif app_str in ("APPLICABLE", "MANDATORY"):
-                return True, "APPLICABLE"
+                return True, "APPLICABLE", []
             elif app_str == "EXEMPT":
                 # Exemption policy declared on rule, evaluate bidder qualification below
                 pass
             else:
-                return None, ReasonCode.INVALID_APPLICABILITY_POLICY
+                return None, ReasonCode.INVALID_APPLICABILITY_POLICY, []
 
         # 3. Categorical bidder-type applicability
         applicable_types = rule_meta.get("applicable_bidder_types") or rule_meta.get("applicable_categories")
@@ -967,14 +974,14 @@ class ComplianceEngine:
             bidder_type = context.get("bidder_type") or context.get("bidder_category")
             if bidder_type:
                 if str(bidder_type).strip().lower() in [str(t).strip().lower() for t in applicable_types]:
-                    return True, "APPLICABLE"
+                    return True, "APPLICABLE", []
                 else:
-                    return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
+                    return False, ReasonCode.NOT_APPLICABLE_EXPLICIT, []
             else:
                 # Do not treat missing bidder category as a categorical mismatch
-                return None, "UNKNOWN_APPLICABILITY"
+                return None, "UNKNOWN_APPLICABILITY", []
 
-        # 4. Evidence-backed Exemption Policy
+        # 4. Evidence-backed & Requirement-scoped Exemption Policy
         has_exemption_policy = False
         if "exemption" in rule_meta and rule_meta["exemption"] is not None:
             ex_val = rule_meta["exemption"]
@@ -983,34 +990,125 @@ class ComplianceEngine:
                 has_exemption_policy = True
             elif parsed_ex is False:
                 has_exemption_policy = False
-            elif isinstance(ex_val, str) and ex_val.strip().upper() in ("APPROVED", "VALID", "GRANTED", "YES", "MSME", "STARTUP", "EXEMPTION_ALLOWED", "EXEMPT"):
+            elif isinstance(ex_val, str) and ex_val.strip().upper() in (
+                "APPROVED", "VALID", "GRANTED", "YES", "MSME", "STARTUP", "EXEMPTION_ALLOWED", "EXEMPT"
+            ):
                 has_exemption_policy = True
             else:
-                return None, ReasonCode.INVALID_APPLICABILITY_POLICY
+                return None, ReasonCode.INVALID_APPLICABILITY_POLICY, []
 
         if "optional_exemption" in rule_meta and rule_meta["optional_exemption"] is not None:
             opt_ex = cls._parse_boolean_strict(rule_meta["optional_exemption"])
             if opt_ex is True and not rule.mandatory:
                 has_exemption_policy = True
             elif opt_ex is None:
-                return None, ReasonCode.INVALID_APPLICABILITY_POLICY
+                return None, ReasonCode.INVALID_APPLICABILITY_POLICY, []
 
         if has_exemption_policy:
-            # Check if bidder has verified exemption qualification or approved decision in context
-            is_bidder_exempt = bool(
-                context.get("exemption_approved") is True
-                or context.get("exemption_verified") is True
-                or context.get("is_exempt") is True
-            )
-            if is_bidder_exempt:
-                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
-            elif context.get("exemption_approved") is False or context.get("exemption_verified") is False:
-                return True, "APPLICABLE"
-            else:
-                # Bare string alone without context does not establish exemption
-                return None, ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
+            # Check requirement-scoped trusted determinations in context and facts
+            scoped_ex_record = None
 
-        return None, "UNKNOWN_APPLICABILITY"
+            # A) Mapping in context under "exemptions" or "approved_exemptions"
+            exemptions_map = context.get("exemptions") or context.get("approved_exemptions")
+            if isinstance(exemptions_map, dict):
+                if rule.id in exemptions_map:
+                    scoped_ex_record = exemptions_map[rule.id]
+                elif rule.field in exemptions_map:
+                    scoped_ex_record = exemptions_map[rule.field]
+            elif isinstance(exemptions_map, (list, tuple)):
+                for ex_item in exemptions_map:
+                    if isinstance(ex_item, dict):
+                        ex_req_id = ex_item.get("requirement_id") or ex_item.get("rule_id")
+                        if ex_req_id == rule.id:
+                            scoped_ex_record = ex_item
+                            break
+
+            # B) Explicit requirement-scoped key in context
+            if not scoped_ex_record and f"exemption_{rule.id}" in context:
+                scoped_ex_record = context[f"exemption_{rule.id}"]
+
+            # Validate requirement-scoped record
+            if scoped_ex_record is not None:
+                if isinstance(scoped_ex_record, dict):
+                    rec_bidder = scoped_ex_record.get("bidder_id")
+                    if rec_bidder and current_bidder_id and str(rec_bidder) != str(current_bidder_id):
+                        # Unrelated bidder's exemption cannot be reused
+                        return None, ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY, []
+
+                    is_approved = (
+                        scoped_ex_record.get("is_approved") is True
+                        or scoped_ex_record.get("approved") is True
+                        or str(scoped_ex_record.get("status", "")).upper() in ("APPROVED", "VALID")
+                    )
+                    if is_approved:
+                        ev_refs = scoped_ex_record.get("evidence_ids") or []
+                        if isinstance(ev_refs, str):
+                            ev_refs = [ev_refs]
+                        elif not isinstance(ev_refs, list):
+                            ev_refs = list(ev_refs)
+                        if not ev_refs and scoped_ex_record.get("decision_id"):
+                            ev_refs = [str(scoped_ex_record["decision_id"])]
+                        elif not ev_refs and scoped_ex_record.get("document_id"):
+                            ev_refs = [str(scoped_ex_record["document_id"])]
+                        elif not ev_refs and scoped_ex_record.get("id"):
+                            ev_refs = [str(scoped_ex_record["id"])]
+                        return False, ReasonCode.NOT_APPLICABLE_EXEMPTION, ev_refs
+                    elif scoped_ex_record.get("is_approved") is False or scoped_ex_record.get("approved") is False:
+                        return True, "APPLICABLE", []
+                elif scoped_ex_record is True:
+                    return False, ReasonCode.NOT_APPLICABLE_EXEMPTION, []
+                elif scoped_ex_record is False:
+                    return True, "APPLICABLE", []
+
+            # C) Check requirement-scoped exemption facts and verifications
+            ex_facts = [
+                f for f in facts
+                if f.field in (f"exemption.{rule.id}", f"exemption.{rule.field}", "exemption")
+                and (not current_bidder_id or getattr(f, "bidder_id", None) == current_bidder_id)
+            ]
+            if ex_facts:
+                truthy_facts = [f for f in ex_facts if cls._normalize_bool(f.value) is True]
+                falsy_facts = [f for f in ex_facts if cls._normalize_bool(f.value) is False]
+                if truthy_facts and falsy_facts:
+                    # Conflicting exemption evidence fails closed
+                    all_ids = [f.id for f in ex_facts]
+                    return None, ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY, all_ids
+                elif truthy_facts:
+                    return False, ReasonCode.NOT_APPLICABLE_EXEMPTION, [f.id for f in truthy_facts]
+                elif falsy_facts:
+                    return True, "APPLICABLE", [f.id for f in falsy_facts]
+
+            # D) Check category-based exemption from verified facts or bidder category
+            ex_category = str(rule_meta.get("exemption", "")).strip().upper()
+            if ex_category in ("MSME", "STARTUP"):
+                cat_facts = [
+                    f for f in facts
+                    if f.field in ("bidder.category", "bidder.type", f"bidder.{ex_category.lower()}_status")
+                    and (not current_bidder_id or getattr(f, "bidder_id", None) == current_bidder_id)
+                ]
+                if cat_facts:
+                    matching_cat_facts = [
+                        f for f in cat_facts
+                        if str(f.value).strip().upper() == ex_category or cls._normalize_bool(f.value) is True
+                    ]
+                    non_matching_cat_facts = [
+                        f for f in cat_facts
+                        if str(f.value).strip().upper() != ex_category and cls._normalize_bool(f.value) is False
+                    ]
+                    if matching_cat_facts and non_matching_cat_facts:
+                        all_ids = [f.id for f in cat_facts]
+                        return None, ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY, all_ids
+                    elif matching_cat_facts:
+                        return False, ReasonCode.NOT_APPLICABLE_EXEMPTION, [f.id for f in matching_cat_facts]
+
+                bidder_cat = context.get("bidder_category") or context.get("bidder_type")
+                if bidder_cat and str(bidder_cat).strip().upper() == ex_category:
+                    return False, ReasonCode.NOT_APPLICABLE_EXEMPTION, []
+
+            # Global unsupported boolean alone without requirement scope or evidence is rejected
+            return None, ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY, []
+
+        return None, "UNKNOWN_APPLICABILITY", []
 
     @classmethod
     def _is_time_dependent_rule(cls, rule: TenderRequirementRead) -> bool:
@@ -1057,8 +1155,10 @@ class ComplianceEngine:
         eval_id = str(uuid.uuid4())
         is_ci = cls._is_status_or_enum_field(rule.field, rule.requirement_type)
 
-        # Check explicit applicability policy
-        is_applicable, app_reason = cls._determine_applicability(rule, context)
+        # Check explicit applicability policy and requirement-scoped exemptions
+        is_applicable, app_reason, app_evidence_ids = cls._determine_applicability(
+            rule, context, facts=facts, verification_results=verification_results
+        )
         if is_applicable is False:
             return RuleEvaluationRead(
                 id=eval_id,
@@ -1068,7 +1168,7 @@ class ComplianceEngine:
                 reason_code=app_reason or ReasonCode.NOT_APPLICABLE_EXPLICIT,
                 observed_value=None,
                 expected_value=rule.expected_value,
-                evidence_ids=[],
+                evidence_ids=app_evidence_ids,
                 rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
@@ -1081,7 +1181,7 @@ class ComplianceEngine:
                 reason_code=app_reason,
                 observed_value=None,
                 expected_value=rule.expected_value,
-                evidence_ids=[],
+                evidence_ids=app_evidence_ids,
                 rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
@@ -1661,15 +1761,16 @@ class ComplianceEngine:
         return ComplianceStatus.UNKNOWN, ReasonCode.UNSUPPORTED_OPERATOR
 
     @classmethod
-    def replay_evaluation(
+    def reconstruct_historical_evaluation(
         cls,
         snapshot: dict[str, Any],
         rule_id: str,
     ) -> RuleEvaluationRead:
-        """Performs bounded historical evaluation verification against an authoritative stored snapshot.
+        """Performs historical evaluation reconstruction against an authoritative stored snapshot.
 
-        Reconstruction uses recorded results as the authoritative record. Full semantic replay across
-        disparate engine versions is bounded to supported engine versions matching ENGINE_VERSION.
+        Historical reconstruction retrieves and validates recorded evaluations from the stored snapshot
+        rather than re-executing historical rules or claiming full semantic replay across disparate engine versions.
+        Preserves recorded evaluation results and exact contributing evidence linkages.
         """
         snap_ts = snapshot.get("started_at") or snapshot.get("created_at") or snapshot.get("evaluated_at")
         if isinstance(snap_ts, str):
@@ -1715,3 +1816,6 @@ class ComplianceEngine:
             rule_version=f"{cls.ENGINE_VERSION}",
             evaluated_at=snap_ts,
         )
+
+    # Historical reconstruction backward-compatible alias
+    replay_evaluation = reconstruct_historical_evaluation

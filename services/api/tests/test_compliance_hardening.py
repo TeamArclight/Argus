@@ -336,12 +336,14 @@ def test_applicability_string_parsing_and_invalids():
 
 def test_approved_and_unapproved_exemptions():
     """Approved exemptions return NOT_APPLICABLE_EXEMPTION, unapproved returns INVALID_APPLICABILITY_POLICY, unverified context returns UNVERIFIED_EXEMPTION_ELIGIBILITY."""
-    # Exemption policy on rule with verified context
-    req_app_ex = make_req(OperatorEnum.EXISTS, True, meta={"exemption": "APPROVED"})
-    res_ex_approved = ComplianceEngine.evaluate(req_app_ex, [], [], context={"exemption_approved": True})
+    # Exemption policy on rule with requirement-scoped verified context
+    req_app_ex = make_req(OperatorEnum.EXISTS, True, req_id="REQ-101", meta={"exemption": "APPROVED"})
+    res_ex_approved = ComplianceEngine.evaluate(
+        req_app_ex, [], [], context={"bidder_id": "BIDDER-101", "exemptions": {"REQ-101": {"is_approved": True, "evidence_ids": ["DEC-101"]}}}
+    )
     assert res_ex_approved.status == ComplianceStatus.NOT_APPLICABLE
     assert res_ex_approved.reason_code == ReasonCode.NOT_APPLICABLE_EXEMPTION
-
+    assert res_ex_approved.evidence_ids == ["DEC-101"]
     # Exemption policy on rule without verified context
     res_ex_unverified = ComplianceEngine.evaluate(req_app_ex, [], [], context={})
     assert res_ex_unverified.status == ComplianceStatus.UNKNOWN
@@ -375,13 +377,12 @@ def test_categorical_bidder_applicability_and_missing_category():
         mandatory=True,
         meta={"applicable_bidder_types": ["MSME", "STARTUP"]},
     )
-
-    # Missing bidder category -> not treated as mismatch -> UNKNOWN (MISSING_EVIDENCE)
+    # Missing bidder category -> UNKNOWN applicability (evaluates against rule facts)
     res_missing_cat = ComplianceEngine.evaluate(req_msme, [], [], context={})
     assert res_missing_cat.status == ComplianceStatus.UNKNOWN
     assert res_missing_cat.reason_code == ReasonCode.MISSING_EVIDENCE
 
-    # MSME bidder -> applicable, missing evidence -> UNKNOWN
+    # MSME bidder -> applicable -> evaluates against rule facts (missing facts -> MISSING_EVIDENCE)
     res_msme = ComplianceEngine.evaluate(req_msme, [], [], context={"bidder_category": "MSME"})
     assert res_msme.status == ComplianceStatus.UNKNOWN
     assert res_msme.reason_code == ReasonCode.MISSING_EVIDENCE
@@ -449,7 +450,7 @@ def test_historical_replay_bounds_unsupported_version():
         "bidder_id": "BIDDER-101",
         "rule_evaluations": [],
     }
-    res = ComplianceEngine.replay_evaluation(snapshot, "REQ-101")
+    res = ComplianceEngine.reconstruct_historical_evaluation(snapshot, "REQ-101")
     assert res.status == ComplianceStatus.REVIEW_REQUIRED
     assert res.reason_code == ReasonCode.HISTORICAL_VERSION_UNSUPPORTED
 
@@ -462,7 +463,7 @@ def test_historical_replay_missing_rule_evaluation():
         "started_at": "2026-01-15T10:00:00+00:00",
         "rule_evaluations": [],
     }
-    res = ComplianceEngine.replay_evaluation(snapshot, "REQ-101")
+    res = ComplianceEngine.reconstruct_historical_evaluation(snapshot, "REQ-101")
     assert res.status == ComplianceStatus.UNKNOWN
     assert res.reason_code == ReasonCode.HISTORICAL_EVALUATION_NOT_FOUND
     assert res.evaluated_at == datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
@@ -501,7 +502,7 @@ def test_non_financial_numeric_unaffected():
 
 
 # ---------------------------------------------------------------------------
-# 7. REPRESENTATION FLAGS & EVIDENCE-BACKED EXEMPTIONS
+# 7. REPRESENTATION FLAGS & REQUIREMENT-SCOPED EXEMPTIONS
 # ---------------------------------------------------------------------------
 
 def test_representation_flags_strict_parsing():
@@ -529,21 +530,71 @@ def test_unsupported_unit_scale_rejected():
     assert ctx_unsupported.error_reason == ReasonCode.UNIT_MISMATCH
 
 
-def test_evidence_backed_exemption_policy():
-    """Bare exemption string in rule without verified bidder context returns UNVERIFIED_EXEMPTION_ELIGIBILITY."""
-    req_ex = make_req(
-        OperatorEnum.GTE,
-        5000000,
-        meta={"exemption": "MSME"},
-    )
-    # Unverified context -> UNVERIFIED_EXEMPTION_ELIGIBILITY
-    res_unverified = ComplianceEngine.evaluate(req_ex, [], [], context={})
-    assert res_unverified.status == ComplianceStatus.UNKNOWN
-    assert res_unverified.reason_code == ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
+def test_bidder_exempt_from_one_requirement_not_exempt_from_all():
+    """A bidder exempt from one requirement is NOT exempt from all requirements."""
+    req1 = make_req(OperatorEnum.GTE, 5000000, req_id="REQ-1", meta={"exemption": "MSME"})
+    req2 = make_req(OperatorEnum.GTE, 10000000, req_id="REQ-2", meta={"exemption": "MSME"})
 
-    # Verified exemption -> NOT_APPLICABLE_EXEMPTION
-    res_verified = ComplianceEngine.evaluate(req_ex, [], [], context={"exemption_approved": True})
-    assert res_verified.status == ComplianceStatus.NOT_APPLICABLE
-    assert res_verified.reason_code == ReasonCode.NOT_APPLICABLE_EXEMPTION
+    context = {
+        "bidder_id": "BIDDER-1",
+        "exemptions": {"REQ-1": {"is_approved": True, "evidence_ids": ["DOC-1"]}},
+    }
+    # REQ-1 is exempt and links DOC-1
+    res1 = ComplianceEngine.evaluate(req1, [], [], context=context)
+    assert res1.status == ComplianceStatus.NOT_APPLICABLE
+    assert res1.reason_code == ReasonCode.NOT_APPLICABLE_EXEMPTION
+    assert res1.evidence_ids == ["DOC-1"]
+
+    # REQ-2 is NOT exempt
+    res2 = ComplianceEngine.evaluate(req2, [], [], context=context)
+    assert res2.status == ComplianceStatus.UNKNOWN
+    assert res2.reason_code == ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
+    assert res2.evidence_ids == []
 
 
+def test_unrelated_bidder_exemption_cannot_be_reused():
+    """An exemption granted to BIDDER-1 cannot be reused by BIDDER-2."""
+    req = make_req(OperatorEnum.GTE, 5000000, req_id="REQ-1", meta={"exemption": "MSME"})
+    context = {
+        "bidder_id": "BIDDER-2",
+        "exemptions": {"REQ-1": {"bidder_id": "BIDDER-1", "is_approved": True, "evidence_ids": ["DOC-1"]}},
+    }
+    res = ComplianceEngine.evaluate(req, [], [], context=context)
+    assert res.status == ComplianceStatus.UNKNOWN
+    assert res.reason_code == ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
+
+
+def test_unsupported_global_boolean_cannot_grant_exemption():
+    """Global is_exempt=True or exemption_approved=True alone cannot grant silent exemption."""
+    req = make_req(OperatorEnum.GTE, 5000000, req_id="REQ-1", meta={"exemption": "MSME"})
+    context = {"bidder_id": "BIDDER-1", "is_exempt": True, "exemption_approved": True}
+    res = ComplianceEngine.evaluate(req, [], [], context=context)
+    assert res.status == ComplianceStatus.UNKNOWN
+    assert res.reason_code == ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
+
+
+def test_valid_requirement_scoped_determination_works():
+    """Valid requirement-scoped determination grants exemption and preserves evidence references."""
+    req = make_req(OperatorEnum.GTE, 5000000, req_id="REQ-1", meta={"exemption": "MSME"})
+    context = {
+        "bidder_id": "BIDDER-1",
+        "exemptions": [
+            {"requirement_id": "REQ-1", "bidder_id": "BIDDER-1", "is_approved": True, "decision_id": "DEC-42"}
+        ],
+    }
+    res = ComplianceEngine.evaluate(req, [], [], context=context)
+    assert res.status == ComplianceStatus.NOT_APPLICABLE
+    assert res.reason_code == ReasonCode.NOT_APPLICABLE_EXEMPTION
+    assert res.evidence_ids == ["DEC-42"]
+
+
+def test_missing_or_conflicting_exemption_evidence_fails_closed():
+    """Conflicting exemption facts fail closed and preserve contributing evidence IDs."""
+    req = make_req(OperatorEnum.GTE, 5000000, req_id="REQ-1", meta={"exemption": "MSME"})
+    f_pos = make_fact(True, field="exemption.REQ-1", fact_id="FACT-EX-POS")
+    f_neg = make_fact(False, field="exemption.REQ-1", fact_id="FACT-EX-NEG")
+
+    res = ComplianceEngine.evaluate(req, [f_pos, f_neg], [], context={"bidder_id": "BIDDER-101"})
+    assert res.status == ComplianceStatus.UNKNOWN
+    assert res.reason_code == ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
+    assert set(res.evidence_ids) == {"FACT-EX-POS", "FACT-EX-NEG"}

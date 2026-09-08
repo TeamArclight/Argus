@@ -31,15 +31,21 @@
   - Comparing `NAIVE_DATETIME` against `AWARE_DATETIME` returns `UNKNOWN` with `AMBIGUOUS_TIMEZONE`.
   - Comparing `DATE_ONLY` against datetimes returns `UNKNOWN` with `TEMPORAL_CONTEXT_MISMATCH`.
 
-### 4. Applicability Truth Table & Evidence-Backed Exemptions
+### 4. Applicability Truth Table & Requirement-Scoped Exemption Authority
 - **Boolean Validation**: Strict parsing of boolean metadata (`True`, `False`, `"true"`, `"false"`, `1`, `0`). Malformed strings (e.g. `"maybe"`) return `UNKNOWN` with `INVALID_APPLICABILITY_POLICY`.
-- **Evidence-Backed Exemptions**: Bare string `"EXEMPT"`, `"APPROVED"`, or `"GRANTED"` alone in rule metadata does not grant silent exemption without verified bidder context/evidence (`context.get("exemption_approved") is True` or `context.get("is_exempt") is True`). Unverified exemption eligibility returns `UNKNOWN` with `UNVERIFIED_EXEMPTION_ELIGIBILITY`.
+- **Requirement-Scoped Exemption Authority**: Exemption determinations must be scoped strictly to:
+  - The specific approved requirement (`rule.id`)
+  - The current bidder (`bidder_id`)
+  - The approved exemption policy (`rule.metadata_json`)
+  - The evidence or authorized manual determination supporting it (`evidence_ids`, `decision_id`, `document_id`)
+- **No Silent or Global Exemptions**: Global boolean flags (`is_exempt=True`, `exemption_approved=True`) alone are strictly rejected. Unverified exemption eligibility returns `UNKNOWN` with `UNVERIFIED_EXEMPTION_ELIGIBILITY`.
+- **Contributing Evidence Preservation**: When an exemption is granted (`NOT_APPLICABLE_EXEMPTION`), contributing evidence references are preserved in `RuleEvaluationRead.evidence_ids`.
 - **Categorical Bidder Context**: Bidder type/category must come from authorized context. Missing bidder category is NOT treated as a categorical mismatch.
 - **Mandatory Exemption Protection**: `optional_missing_policy` cannot override an explicitly applicable mandatory requirement. Missing evidence on mandatory requirements always evaluates to `UNKNOWN` (`MISSING_EVIDENCE`).
 
-### 5. Historical Replay & Provenance
+### 5. Historical Reconstruction & Snapshot Provenance
 - **Canonical Rule Hashing**: Rules hash (`canonical_rule_hash`) is computed via SHA-256 over deterministic JSON representations of rule attributes (`clause`, `field`, `operator`, `expected_value`, `unit`, `mandatory`, `requirement_type`) and semantic policy metadata (`applicability`, `currency`, `financial_year`, `metric`, `averaging_period`, `optional_missing_policy`), while strictly omitting transient database IDs and timestamps.
-- **Replay Boundaries**: Historical reconstruction uses authoritative recorded snapshots (`input_snapshot_json`). Evaluations missing from stored snapshots return `HISTORICAL_EVALUATION_NOT_FOUND` without fabricating missing evidence. Full semantic re-evaluation is bounded to supported engine versions matching `ENGINE_VERSION`. Incompatible historical versions return `REVIEW_REQUIRED` with `HISTORICAL_VERSION_UNSUPPORTED`.
+- **Historical Reconstruction**: `ComplianceEngine.reconstruct_historical_evaluation()` retrieves and validates recorded evaluations from the authoritative stored snapshot (`input_snapshot_json`) rather than re-executing historical rules or claiming full semantic replay across disparate engine versions. Evaluations missing from stored snapshots return `HISTORICAL_EVALUATION_NOT_FOUND` without fabricating missing evidence. Incompatible historical versions return `REVIEW_REQUIRED` with `HISTORICAL_VERSION_UNSUPPORTED`.
 
 ---
 
