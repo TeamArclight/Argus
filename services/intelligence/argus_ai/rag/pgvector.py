@@ -67,20 +67,47 @@ class PgVectorRAG:
         return chunks
 
     def retrieve(self, query: str, filters: Optional[dict[str, Any]] = None, top_k: int = 5) -> list[EvidenceChunk]:
-        filters = filters or {}; clauses, params = ["(effective_from IS NULL OR effective_from <= NOW())", "(effective_to IS NULL OR effective_to >= NOW())"], [_vector(self.embeddings.embed(query)), query]
+        filters = filters or {}
+        clauses = [
+            "(effective_from IS NULL OR effective_from <= NOW())",
+            "(effective_to IS NULL OR effective_to >= NOW())"
+        ]
+        params: list[Any] = [_vector(self.embeddings.embed(query)), query]
+
+        scoped_tender = filters.get("tender_id")
+        scoped_tenant = filters.get("tenant_id")
+        scoped_bidder = filters.get("bidder_id")
+
+        if scoped_tenant is not None:
+            clauses.append("(metadata ->> 'tenant_id' = %s OR security_level = 'PUBLIC')")
+            params.append(str(scoped_tenant))
+
+        if scoped_tender is not None:
+            clauses.append("(metadata ->> 'tender_id' = %s OR security_level = 'PUBLIC' OR (metadata ->> 'is_shared') = 'true' OR (metadata ->> 'document_type' = 'POLICY' AND metadata ->> 'tender_id' IS NULL))")
+            params.append(str(scoped_tender))
+
+        if scoped_bidder is not None:
+            clauses.append("(metadata ->> 'bidder_id' = %s OR metadata ->> 'bidder_id' IS NULL)")
+            params.append(str(scoped_bidder))
+
         for key, value in filters.items():
-            if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", key): raise ValueError("invalid metadata filter key")
-            clauses.append("metadata ->> %s = %s"); params.extend([key, str(value)])
+            if key in {"tender_id", "tenant_id", "bidder_id"}:
+                continue
+            if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", str(key)):
+                raise ValueError("invalid metadata filter key")
+            clauses.append("metadata ->> %s = %s")
+            params.extend([str(key), str(value)])
+
         where = " AND ".join(clauses)
         sql = """SELECT id,entity_type,entity_id,snippet,source_uri,page_number,metadata,content_hash,version,effective_from,effective_to,security_level,created_at,
         (0.7 * (1 - (embedding <=> %s::vector)) + 0.3 * ts_rank_cd(search_vector, plainto_tsquery('simple', %s))) AS score
         FROM intelligence_evidence_chunks WHERE """ + where + " ORDER BY score DESC LIMIT %s"
-        params.append(top_k)
+        
+        fetch_k = top_k * 3
+        params.append(fetch_k)
         with self._connect() as conn, conn.cursor() as cur:
-            # Fetch more candidates to rerank
-            fetch_k = top_k * 3
-            params[-1] = fetch_k
-            cur.execute(sql, params); rows = cur.fetchall()
+            cur.execute(sql, params)
+            rows = cur.fetchall()
             
         retrieved_chunks = [EvidenceChunk(id=row[0], entity_type=row[1], entity_id=row[2], snippet=row[3], source_uri=row[4], page_number=row[5], location_metadata=row[6], content_hash=row[7], version=row[8], effective_from=row[9], effective_to=row[10], security_level=row[11], created_at=row[12]) for row in rows]
         

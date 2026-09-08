@@ -396,51 +396,245 @@ def test_rag_delete_rejects_malformed_document_id():
     assert resp2.status_code == 422
 
 
-def test_rag_scoped_deletion_and_isolation(tmp_path):
-    """Verify scoped deletion only deletes documents matching authorized tender/tenant scope."""
+# ---------------------------------------------------------------------------
+# 9. TRUSTED RAG AUTHORIZATION & CROSS-TENANT / CROSS-TENDER REGRESSIONS
+# ---------------------------------------------------------------------------
+
+def test_rag_forged_authorized_scope_rejected_without_auth(monkeypatch):
+    """Verify that unauthenticated callers cannot invoke RAG operations regardless of supplied scope."""
+    monkeypatch.setenv("ARGUS_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("ARGUS_INTELLIGENCE_API_KEY", "backend-secret-token")
+    app = create_app()
+    client = TestClient(app)
+
+    # Attempt delete with forged tender/tenant scope without valid backend auth token
+    resp = client.post("/rag-delete", json={
+        "document_id": "DOC_123",
+        "tender_id": "TENDER_ADMIN",
+        "tenant_id": "TENANT_ADMIN",
+    })
+    assert resp.status_code == 401
+
+    # With invalid bearer token -> 401
+    resp_bad = client.post("/rag-delete", json={
+        "document_id": "DOC_123",
+        "tender_id": "TENDER_ADMIN",
+    }, headers={"Authorization": "Bearer forged-token"})
+    assert resp_bad.status_code == 401
+
+
+def test_rag_cross_bidder_retrieval_isolated(tmp_path):
+    """Verify RAG retrieval strictly isolates bidder-specific evidence."""
     store = InMemoryRAG()
     app = create_app(rag=store)
     client = TestClient(app)
 
-    p1 = tmp_path / "scope1.txt"
-    p1.write_text("Tenant A, Tender 1 policy document.")
+    # Ingest Bidder 1 turnover doc
+    b1_file = tmp_path / "b1.txt"
+    b1_file.write_text("Bidder Alpha annual turnover INR 10,00,00,000.")
     client.post("/rag-ingest", json={
-        "document_id": "SHARED_DOC_ID",
-        "title": "Tenant A Policy",
+        "document_id": "DOC_BIDDER_1",
+        "title": "Alpha Financials",
+        "document_uri": str(b1_file),
+        "document_type": "FINANCIAL_STATEMENT",
+        "tender_id": "TENDER_100",
+    })
+    # Attach bidder_id in store metadata
+    for c in store._chunks:
+        if c.entity_id == "DOC_BIDDER_1":
+            c.location_metadata["bidder_id"] = "BIDDER_ALPHA"
+
+    # Ingest Bidder 2 turnover doc
+    b2_file = tmp_path / "b2.txt"
+    b2_file.write_text("Bidder Beta annual turnover INR 2,00,00,000.")
+    client.post("/rag-ingest", json={
+        "document_id": "DOC_BIDDER_2",
+        "title": "Beta Financials",
+        "document_uri": str(b2_file),
+        "document_type": "FINANCIAL_STATEMENT",
+        "tender_id": "TENDER_100",
+    })
+    for c in store._chunks:
+        if c.entity_id == "DOC_BIDDER_2":
+            c.location_metadata["bidder_id"] = "BIDDER_BETA"
+
+    # Query scoped to BIDDER_ALPHA
+    q_alpha = client.post("/rag-query", json={
+        "query": "annual turnover",
+        "tender_id": "TENDER_100",
+        "filters": {"bidder_id": "BIDDER_ALPHA"},
+    })
+    assert q_alpha.status_code == 200
+    res_alpha = q_alpha.json()["results"]
+    assert len(res_alpha) >= 1
+    for r in res_alpha:
+        assert r["location_metadata"].get("bidder_id") == "BIDDER_ALPHA"
+        assert "Alpha" in r["snippet"]
+        assert "Beta" not in r["snippet"]
+
+
+def test_rag_cross_tender_retrieval_isolated(tmp_path):
+    """Verify private tender chunks are strictly isolated across tenders."""
+    store = InMemoryRAG()
+    app = create_app(rag=store)
+    client = TestClient(app)
+
+    t1_file = tmp_path / "t1.txt"
+    t1_file.write_text("Tender 101 confidential requirements: Special technical clearance XYZ.")
+    client.post("/rag-ingest", json={
+        "document_id": "DOC_T101",
+        "title": "Tender 101 Notice",
+        "document_uri": str(t1_file),
+        "document_type": "TENDER_NOTICE",
+        "tender_id": "TENDER_101",
+    })
+
+    t102_file = tmp_path / "t102.txt"
+    t102_file.write_text("Tender 102 confidential requirements: Special technical clearance ABC.")
+    client.post("/rag-ingest", json={
+        "document_id": "DOC_T102",
+        "title": "Tender 102 Notice",
+        "document_uri": str(t102_file),
+        "document_type": "TENDER_NOTICE",
+        "tender_id": "TENDER_102",
+    })
+
+    # Query for Tender 101 only returns T101 documents
+    q1 = client.post("/rag-query", json={"query": "confidential requirements", "tender_id": "TENDER_101"})
+    assert q1.status_code == 200
+    res1 = q1.json()["results"]
+    assert len(res1) >= 1
+    for r in res1:
+        assert r["location_metadata"].get("tender_id") == "TENDER_101"
+        assert "XYZ" in r["snippet"]
+        assert "ABC" not in r["snippet"]
+
+
+def test_rag_unauthorized_deletion_and_isolation(tmp_path):
+    """Verify deletion with mismatched scope fails safely without deleting other tenants' data."""
+    store = InMemoryRAG()
+    app = create_app(rag=store)
+    client = TestClient(app)
+
+    p1 = tmp_path / "del_iso.txt"
+    p1.write_text("Tender 201 document belonging to Tenant X.")
+    client.post("/rag-ingest", json={
+        "document_id": "DOC_DEL_201",
+        "title": "Doc 201",
         "document_uri": str(p1),
+        "document_type": "BID_DOCUMENT",
+        "tender_id": "TENDER_201",
+    })
+    for c in store._chunks:
+        if c.entity_id == "DOC_DEL_201":
+            c.location_metadata["tenant_id"] = "TENANT_X"
+
+    # Attempt delete with wrong tender_id -> 0 deleted
+    del_wrong_tender = client.post("/rag-delete", json={
+        "document_id": "DOC_DEL_201",
+        "tender_id": "TENDER_999",
+    })
+    assert del_wrong_tender.status_code == 200
+    assert del_wrong_tender.json()["chunks_deleted"] == 0
+    assert len(store._chunks) >= 1
+
+    # Attempt delete with wrong tenant_id -> 0 deleted
+    del_wrong_tenant = client.post("/rag-delete", json={
+        "document_id": "DOC_DEL_201",
+        "tenant_id": "TENANT_Y",
+    })
+    assert del_wrong_tenant.status_code == 200
+    assert del_wrong_tenant.json()["chunks_deleted"] == 0
+    assert len(store._chunks) >= 1
+
+
+def test_rag_valid_scoped_deletion(tmp_path):
+    """Verify deletion with matching authorized scope deletes only targeted chunks."""
+    store = InMemoryRAG()
+    app = create_app(rag=store)
+    client = TestClient(app)
+
+    p1 = tmp_path / "valid_del.txt"
+    p1.write_text("Target document to delete.")
+    client.post("/rag-ingest", json={
+        "document_id": "DOC_TARGET",
+        "title": "Target Doc",
+        "document_uri": str(p1),
+        "document_type": "BID_DOCUMENT",
+        "tender_id": "TENDER_VALID",
+    })
+
+    p2 = tmp_path / "preserve.txt"
+    p2.write_text("Document to preserve.")
+    client.post("/rag-ingest", json={
+        "document_id": "DOC_PRESERVE",
+        "title": "Preserve Doc",
+        "document_uri": str(p2),
+        "document_type": "BID_DOCUMENT",
+        "tender_id": "TENDER_VALID",
+    })
+
+    # Delete DOC_TARGET with matching tender_id
+    del_resp = client.post("/rag-delete", json={
+        "document_id": "DOC_TARGET",
+        "tender_id": "TENDER_VALID",
+    })
+    assert del_resp.status_code == 200
+    assert del_resp.json()["chunks_deleted"] >= 1
+
+    # Verify DOC_TARGET is gone, DOC_PRESERVE remains
+    remaining_ids = {c.entity_id for c in store._chunks}
+    assert "DOC_TARGET" not in remaining_ids
+    assert "DOC_PRESERVE" in remaining_ids
+
+
+def test_rag_shared_policy_access_across_tenders(tmp_path):
+    """Verify shared policies (PUBLIC or global POLICY) are retrievable across all tenders."""
+    store = InMemoryRAG()
+    app = create_app(rag=store)
+    client = TestClient(app)
+
+    # Ingest general public procurement policy (GFR 2017)
+    gfr_file = tmp_path / "gfr.txt"
+    gfr_file.write_text("General Financial Rules 2017 Rule 144: Fundamental principles of public buying.")
+    client.post("/rag-ingest", json={
+        "document_id": "DOC_GFR_2017",
+        "title": "GFR 2017 Policy",
+        "document_uri": str(gfr_file),
+        "document_type": "POLICY",
+        "security_level": "PUBLIC",
+    })
+
+    # Ingest tender-specific policy for Tender A
+    ta_file = tmp_path / "tender_a.txt"
+    ta_file.write_text("Tender A specific policy for highway construction.")
+    client.post("/rag-ingest", json={
+        "document_id": "DOC_TENDER_A",
+        "title": "Tender A Policy",
+        "document_uri": str(ta_file),
         "document_type": "POLICY",
         "tender_id": "TENDER_A",
     })
 
-    p2 = tmp_path / "scope2.txt"
-    p2.write_text("Tenant B, Tender 2 policy document.")
-    client.post("/rag-ingest", json={
-        "document_id": "SHARED_DOC_ID_2",
-        "title": "Tenant B Policy",
-        "document_uri": str(p2),
-        "document_type": "POLICY",
+    # Query from Tender B (should see GFR 2017 shared policy, but NOT Tender A policy)
+    q_b = client.post("/rag-query", json={
+        "query": "principles of public buying",
         "tender_id": "TENDER_B",
     })
+    assert q_b.status_code == 200
+    res_b = q_b.json()["results"]
+    assert len(res_b) >= 1
+    snippets = [r["snippet"] for r in res_b]
+    assert any("General Financial Rules" in s for s in snippets)
+    assert not any("highway construction" in s for s in snippets)
 
-    # Try to delete with non-matching tender scope -> 0 deleted
-    del_mismatch = client.post("/rag-delete", json={
-        "document_id": "SHARED_DOC_ID",
-        "tender_id": "TENDER_NON_EXISTENT",
-    })
-    assert del_mismatch.status_code == 200
-    assert del_mismatch.json()["chunks_deleted"] == 0
 
-    # Delete with matching authorized tender scope -> deleted
-    del_match = client.post("/rag-delete", json={
-        "document_id": "SHARED_DOC_ID",
-        "authorized_tender_id": "TENDER_A",
-    })
-    assert del_match.status_code == 200
-    assert del_match.json()["chunks_deleted"] >= 1
-
+# ---------------------------------------------------------------------------
+# 10. WORKFLOW GOVERNANCE & PRODUCTION GUARDS
+# ---------------------------------------------------------------------------
 
 def test_evaluate_bid_production_guard(monkeypatch, tmp_path):
-    """Verify workflow orchestration endpoint returns HTTP 403 in production unless demo mode is enabled."""
+    """Verify workflow orchestration endpoints return HTTP 403 in production unless demo mode is enabled."""
     app = create_app()
     client = TestClient(app)
 
@@ -466,10 +660,14 @@ def test_evaluate_bid_production_guard(monkeypatch, tmp_path):
     assert resp_prod.status_code == 403
     assert "disabled in production" in resp_prod.json()["detail"]
 
+    resp_resume_prod = client.post("/evaluate-bid/resume", json={"thread_id": "th1", "decision": "APPROVED"}, headers=auth_headers)
+    assert resp_resume_prod.status_code == 403
+
     # In production with demo enabled -> permitted to execute
     monkeypatch.setenv("ARGUS_WORKFLOW_DEMO_ENABLED", "true")
     resp_demo = client.post("/evaluate-bid", json=req_payload, headers=auth_headers)
     assert resp_demo.status_code == 200
+
 
 
 

@@ -35,9 +35,61 @@ class InMemoryRAG:
         return new_chunks
         
     def retrieve(self, query: str, filters: Optional[dict[str, object]] = None, top_k: int = 5) -> list[EvidenceChunk]:
-        now = datetime.now(timezone.utc); filters = filters or {}; needle = _terms(query)
-        candidates = [c for c in self._chunks if all(c.location_metadata.get(k) == v for k, v in filters.items())]
-        candidates = [c for c in candidates if (not c.effective_from or c.effective_from <= now) and (not c.effective_to or c.effective_to >= now)]
+        now = datetime.now(timezone.utc)
+        filters = filters or {}
+        needle = _terms(query)
+
+        scoped_tender = filters.get("tender_id")
+        scoped_tenant = filters.get("tenant_id")
+        scoped_bidder = filters.get("bidder_id")
+
+        candidates = []
+        for c in self._chunks:
+            # Temporal validity
+            if c.effective_from and c.effective_from > now:
+                continue
+            if c.effective_to and c.effective_to < now:
+                continue
+
+            # Check shared policy status
+            is_shared = (
+                c.security_level == "PUBLIC"
+                or c.location_metadata.get("is_shared") is True
+                or (c.location_metadata.get("document_type") == "POLICY" and not c.location_metadata.get("tender_id"))
+            )
+
+            # Tenant isolation
+            chunk_tenant = c.location_metadata.get("tenant_id")
+            if scoped_tenant is not None and chunk_tenant is not None and chunk_tenant != scoped_tenant:
+                if not is_shared:
+                    continue
+
+            # Tender isolation
+            chunk_tender = c.location_metadata.get("tender_id")
+            if scoped_tender is not None:
+                if chunk_tender is not None and chunk_tender != scoped_tender:
+                    continue
+                if chunk_tender is None and not is_shared:
+                    continue
+
+            # Bidder isolation
+            chunk_bidder = c.location_metadata.get("bidder_id")
+            if scoped_bidder is not None and chunk_bidder is not None and chunk_bidder != scoped_bidder:
+                continue
+
+            # Other narrowing filters
+            matches_all = True
+            for k, v in filters.items():
+                if k in {"tender_id", "tenant_id", "bidder_id"}:
+                    continue
+                if c.location_metadata.get(k) != v:
+                    matches_all = False
+                    break
+            if not matches_all:
+                continue
+
+            candidates.append(c)
+
         fetch_k = top_k * 3
         sorted_cands = sorted(candidates, key=lambda c: _score(needle, _terms(c.snippet)), reverse=True)[:fetch_k]
         if not sorted_cands:

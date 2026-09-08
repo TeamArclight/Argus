@@ -97,8 +97,6 @@ class RAGDeleteRequest(BaseModel):
     document_id: str
     tender_id: Optional[str] = None
     tenant_id: Optional[str] = None
-    authorized_tender_id: Optional[str] = None
-    authorized_tenant_id: Optional[str] = None
 
 class RiskDetectRequest(BaseModel):
     """Risk detection request — all fields optional; caller supplies what's available."""
@@ -421,12 +419,10 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
         if delete is None:
             raise HTTPException(501, "Configured RAG store does not support document deletion")
         scope: dict[str, Any] = {}
-        tender_id = payload.authorized_tender_id or payload.tender_id
-        tenant_id = payload.authorized_tenant_id or payload.tenant_id
-        if tender_id:
-            scope["tender_id"] = tender_id
-        if tenant_id:
-            scope["tenant_id"] = tenant_id
+        if payload.tender_id:
+            scope["tender_id"] = payload.tender_id
+        if payload.tenant_id:
+            scope["tenant_id"] = payload.tenant_id
         try:
             chunks_deleted = delete(payload.document_id, scope=scope if scope else None)
         except TypeError:

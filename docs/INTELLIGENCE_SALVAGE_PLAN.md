@@ -60,8 +60,8 @@ This plan details the salvage and integration of the intelligence service (`serv
 ## 4. Verification Results Summary
  
 1. **Intelligence Microservice Test Suite (`services/intelligence/tests`)**:
-   - **50 passed, 0 failed, 1 warning**.
-   - Covers: unit tests, gold cases, parser, chunking, embeddings, RAG ingestion/query/deletion, risk detection, LangGraph workflow, readiness probe, Windows storage resolution, envelope contract mapping, pgvector schema compilation & vector formatting, OCR missing binary graceful degradation, synthetic end-to-end replay, bounded base64 size limits, auth enforcement, RAG input validation, scoped deletion isolation, and workflow production guards.
+   - **55 passed, 0 failed, 1 warning**.
+   - Covers: unit tests, gold cases, parser, chunking, embeddings, RAG ingestion/query/deletion, risk detection, LangGraph workflow, readiness probe, Windows storage resolution, envelope contract mapping, pgvector schema compilation & vector formatting, OCR missing binary graceful degradation, synthetic end-to-end replay, bounded base64 size limits, auth enforcement, RAG input validation, forged scope rejection, cross-bidder & cross-tender isolation, unauthorized deletion prevention, valid scoped deletion, shared-policy retrieval, and workflow production guards.
 2. **Backend Regression Test Suite (`services/api/tests`)**:
    - **250 passed, 7 skipped, 7 warnings** (100% baseline match + worker error sanitization regression).
    - Covers: Phase 11 PostgreSQL concurrency, row locks, idempotency, worker safe transaction boundaries and error sanitization, and Phase 12 pure compliance engine, strict numeric/financial contexts, and temporal truthfulness.
@@ -70,14 +70,29 @@ This plan details the salvage and integration of the intelligence service (`serv
 
 ---
 
-## 5. Security & Tenant Isolation Controls
+## 5. Live Dependency & Unverified Environment Status
 
-1. **Service-to-Service Authentication**:
-   - In live mode, intelligence endpoints require Bearer authentication via `ARGUS_INTELLIGENCE_API_KEY`.
-2. **Document Resolution Safety**:
+1. **Live Gemini Provider (`gemini-3.6-flash` / `gemini-embedding-001`)**:
+   - Model gateway and embedding components implemented with `google-genai` SDK. Offline deterministic mocks are used for automated test suites; live provider mode activates when `ARGUS_GEMINI_API_KEY` is configured in the environment.
+2. **PostgreSQL pgvector (`PGVECTOR_LIVE_NOT_VERIFIED`)**:
+   - Docker CLI is unavailable on the local Windows host environment (`docker` not found on PATH). Full SQL DDL, HNSW cosine vector index, and hybrid tsvector search queries are compiled and verified via test mocks, but live PostgreSQL container execution is marked `PGVECTOR_LIVE_NOT_VERIFIED`.
+3. **Docker OCR (`OCR_LIVE_NOT_VERIFIED`)**:
+   - Tesseract/OCR container binaries are unavailable on the host. Document parser gracefully degrades with `DocumentParseError` on missing OCR binaries without fabricating synthetic live results, recorded as `OCR_LIVE_NOT_VERIFIED`.
+
+---
+
+## 6. Security & Tenant Isolation Controls
+
+1. **Trusted Backend Service-to-Service Boundary**:
+   - The intelligence microservice is an internal service. In production / authenticated environments, endpoints enforce Bearer authentication via `ARGUS_INTELLIGENCE_API_KEY`. Public requests must enter through `services/api` where principal authentication and tenant permissions are enforced.
+2. **Trusted RAG Authorization & Scoped Isolation**:
+   - Permitted scope (`tenant_id`, `tender_id`, `bidder_id`) is derived by the authenticated backend.
+   - Caller-supplied query filters can narrow search scope, never widen it.
+   - Cross-bidder and cross-tender evidence chunks are strictly isolated.
+   - Explicitly shared policies (`security_level="PUBLIC"` or global policies) remain accessible across tenders.
+   - Deletions require matching authorized scope; forged or mismatched scopes delete 0 chunks without collateral damage.
+3. **Document Resolution Safety**:
    - Traversal protection: Local files must resolve within `ARGUS_ALLOWED_STORAGE_ROOTS` when configured.
    - URL validation: Only `https://` signed URLs with public IP/domain allowed (loopback/private IPs rejected).
    - Credential stripping: URLs with embedded credentials are automatically rejected.
    - Bounded size: Documents exceeding `ARGUS_MAX_DOCUMENT_BYTES` (default 30MB) are rejected.
-3. **RAG Scope Isolation**:
-   - Queries and deletions strictly filter by `tenant_id`, `tender_id`, or `document_id`.
