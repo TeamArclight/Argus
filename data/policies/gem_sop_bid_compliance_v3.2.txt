@@ -1,0 +1,105 @@
+# ==============================================================================
+# SYNTHETIC DEMO POLICY GUIDELINE
+# Adapted standard operating procedure for ARGUS compliance demonstration.
+# Version 3.2 | Reference Date: 01/04/2026
+# ==============================================================================
+
+GOVERNMENT e-MARKETPLACE (GeM)
+STANDARD OPERATING PROCEDURE FOR BID COMPLIANCE VERIFICATION
+
+Version 3.2 | Effective Date: 01/04/2026
+
+1. PURPOSE
+This SOP establishes the procedure for verifying bidder eligibility and
+compliance claims submitted on the GeM platform.
+
+2. SCOPE
+Applicable to all procurement officers evaluating bids on GeM for goods
+and services valued above INR 25,00,000.
+
+3. DOCUMENT VERIFICATION HIERARCHY
+
+3.1 Verification Priority Order:
+    Priority 1: Authorized government API/registry response
+    Priority 2: Portal-cached verified data (less than 90 days old)
+    Priority 3: Document-based verification (certificates, statements)
+    Priority 4: Self-declaration by bidder
+
+3.2 In case of conflict between verification sources, the higher-priority
+    source shall prevail.
+
+4. MANDATORY CHECKS
+
+4.1 GST Verification:
+    - Verify GSTIN through the authorized GST portal API
+    - Confirm registration status is "Active"
+    - Verify legal name matches bidder declaration
+    - Confirm state code matches address
+
+4.2 Financial Verification:
+    - Verify annual turnover against CA certificate
+    - Cross-reference with MCA filings where available
+    - For MSMEs, confirm Udyam registration for turnover exemption
+    - Turnover figures shall be in Indian Rupees (INR)
+
+4.3 Experience Verification:
+    - Verify work completion certificates are issued by authorized officers
+    - Confirm contract values and completion dates
+    - Minimum experience period is measured from the date of first completed
+      contract in the relevant domain
+
+4.4 Debarment Check:
+    - Check the centralized debarment database
+    - Verify self-declaration against database records
+    - Any discrepancy shall result in automatic referral for review
+
+4.5 Labour Compliance:
+    - Verify EPFO registration for establishments with 20+ employees
+    - Verify ESIC registration for establishments in applicable zones
+    - Document-based verification is acceptable for EPFO/ESIC
+
+5. RISK INDICATORS
+
+5.1 The following conditions shall be flagged as risk signals requiring
+    officer review:
+    (a) SHA-256 hash of submitted document matches a previously submitted
+        document from a different bidder
+    (b) Entity name on verification does not match bidder registration
+    (c) Multiple GSTIN values found across bidder documents
+    (d) Certificate expiry date is before bid submission deadline
+    (e) Claimed turnover exceeds verified turnover by more than 10%
+    (f) Document content is near-identical to another bidder's submission
+    (g) OEM authorization letter matches a previously submitted authorization
+    (h) Contradictory values extracted from different documents for the
+        same data field
+
+5.2 Risk flags do not automatically disqualify a bidder. They require
+    manual review by the procurement officer.
+
+6. COMPLIANCE EVALUATION OUTCOMES
+
+6.1 Each requirement evaluation shall result in one of:
+    - PASS: Bidder meets the requirement based on verified evidence
+    - FAIL: Bidder does not meet the requirement
+    - REVIEW_REQUIRED: Conflicting evidence, low confidence, or risk flag
+    - UNKNOWN: Insufficient evidence to determine compliance
+    - NOT_APPLICABLE: Requirement does not apply to this bidder category
+
+6.2 UNKNOWN shall never be treated as FAIL. It shall be escalated for
+    manual review and additional document collection.
+
+6.3 The final qualification/disqualification decision rests with the
+    authorized procurement officer. Automated systems provide
+    recommendation and evidence only.
+
+7. AUDIT TRAIL
+
+7.1 All verification actions, decisions, and overrides shall be recorded
+    in the audit log with:
+    - Timestamp
+    - Officer ID
+    - Action taken
+    - Reason code
+    - Supporting evidence references
+
+7.2 Audit records shall be retained for a minimum of 5 years.

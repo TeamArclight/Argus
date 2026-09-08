@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-argus}
       POSTGRES_USER: ${POSTGRES_USER:-argus}
@@ -24,6 +24,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://argus:argus@postgres:5432/argus}
       ARGUS_STORAGE_LOCAL_PATH: /app/data/uploads
+      ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL: http://intelligence:8100/extract-tender
+      ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL: http://intelligence:8100/extract-document
     ports:
       - "8000:8000"
     volumes:
@@ -36,6 +38,48 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
+
+  intelligence:
+    build:
+      context: ..
+      dockerfile: infra/docker/intelligence.Dockerfile
+    environment:
+      ARGUS_RAG_DATABASE_URL: ${ARGUS_RAG_DATABASE_URL:-postgresql://argus:argus@postgres:5432/argus}
+      ARGUS_MODEL_PROVIDER: ${ARGUS_MODEL_PROVIDER:-disabled}
+      ARGUS_GEMINI_API_KEY: ${ARGUS_GEMINI_API_KEY:-}
+      ARGUS_INTELLIGENCE_API_KEY: ${ARGUS_INTELLIGENCE_API_KEY:-}
+    ports:
+      - "8100:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+    command: ["python", "-m", "app.workers.worker"]
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://argus:argus@postgres:5432/argus}
+      ARGUS_STORAGE_LOCAL_PATH: /app/data/uploads
+      ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL: http://intelligence:8100/extract-tender
+      ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL: http://intelligence:8100/extract-document
+    volumes:
+      - argus_uploads:/app/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      intelligence:
+        condition: service_healthy
 
   web:
     build:

@@ -1,0 +1,113 @@
+# ==============================================================================
+# SYNTHETIC DEMO TENDER — NOT AN OFFICIAL GOVERNMENT RECORD
+# Simulated tender notice generated for ARGUS platform demonstration and testing.
+# ==============================================================================
+
+GOVERNMENT e-MARKETPLACE (GeM)
+TENDER DOCUMENT
+
+TENDER NO: GEM/2026/B/4521089
+DATE OF PUBLICATION: 01-08-2026
+
+TITLE: Supply of IT Infrastructure Equipment — Server Racks, UPS Systems, and Networking Hardware
+
+PROCURING AUTHORITY: National Informatics Centre (NIC), Ministry of Electronics and Information Technology
+
+CATEGORY: IT Hardware / Data Centre Infrastructure
+ESTIMATED VALUE: INR 5,00,00,000 (Five Crore Rupees Only)
+EARNEST MONEY DEPOSIT (EMD): INR 10,00,000
+BID SUBMISSION DEADLINE: 30-09-2026, 17:00 IST
+
+================================================================================
+
+SECTION 1: SCOPE OF WORK
+
+1.1 The procuring authority invites bids for the supply, installation, and commissioning
+of IT infrastructure equipment at the National Data Centre, New Delhi.
+
+1.2 Items include:
+    (a) 42U Server Racks — Qty: 25
+    (b) Online UPS Systems (20 KVA) — Qty: 10
+    (c) Layer-3 Managed Switches — Qty: 40
+    (d) Structured Cabling and Accessories
+
+================================================================================
+
+SECTION 2: ELIGIBILITY CRITERIA
+
+2.1 The bidder must have a valid GSTIN (Goods and Services Tax Identification Number)
+    and must be registered on the GeM portal.
+
+2.2 The bidder must possess a valid Udyam registration certificate, if applicable
+    under the MSME Development Act.
+
+2.3 Minimum annual turnover shall be INR 1,00,00,000 (One Crore Rupees) based on
+    the average of the last three financial years (FY 2023-24, 2024-25, 2025-26).
+
+2.4 The bidder must have a minimum of 3 years of experience in supply and installation
+    of IT infrastructure equipment to government or PSU organizations.
+
+2.5 The bidder must not be blacklisted or debarred by any Central/State Government
+    department, PSU, or autonomous body as on the date of bid submission.
+
+2.6 The bidder must have valid EPFO registration for its employees.
+
+2.7 The bidder must have valid ESIC registration for its employees, if applicable.
+
+2.8 The bidder must be a company registered with the Ministry of Corporate Affairs (MCA),
+    or a proprietorship/partnership firm with valid legal standing.
+
+================================================================================
+
+SECTION 3: TECHNICAL SPECIFICATIONS
+
+3.1 Server Racks: 42U, 600mm x 1000mm, IP20 rated, perforated front and rear doors,
+    cable management, PDU mounting, earthquake-resistant design.
+
+3.2 UPS Systems: Online double conversion, 20 KVA, 0.9 power factor, SNMP management
+    card, battery backup minimum 15 minutes at full load.
+
+3.3 Managed Switches: Layer-3, 48-port Gigabit Ethernet, 4x10G SFP+ uplinks,
+    SNMP v3, IEEE 802.1X, IPv6 ready.
+
+================================================================================
+
+SECTION 4: SUBMISSION REQUIREMENTS
+
+4.1 Bidders must upload the following documents on the GeM portal:
+    (a) Company registration certificate / Certificate of Incorporation
+    (b) GST registration certificate
+    (c) Udyam registration certificate (if MSME)
+    (d) Audited financial statements for the last 3 years
+    (e) CA certificate for average annual turnover
+    (f) Experience certificates / Work order copies
+    (g) EPFO registration certificate
+    (h) ESIC registration certificate (if applicable)
+    (i) Self-declaration of non-blacklisting
+    (j) Authorization letter from OEM (where applicable)
+
+================================================================================
+
+SECTION 5: EVALUATION METHODOLOGY
+
+5.1 Bids will be evaluated in two stages: Technical Evaluation and Financial Evaluation.
+
+5.2 Only technically qualified bidders will be considered for financial evaluation.
+
+5.3 The contract will be awarded to the lowest qualified bidder (L1).
+
+================================================================================
+
+SECTION 6: GENERAL TERMS AND CONDITIONS
+
+6.1 Delivery period: Within 45 days from the date of purchase order.
+6.2 Warranty: Minimum 3 years comprehensive on-site warranty.
+6.3 Payment terms: 100% payment after delivery, installation, and acceptance.
+6.4 Liquidated damages: 0.5% per week of delay, subject to maximum 10% of order value.
+
+================================================================================
+
+AUTHORIZED SIGNATORY
+Director (Procurement)
+National Informatics Centre
+New Delhi — 110001

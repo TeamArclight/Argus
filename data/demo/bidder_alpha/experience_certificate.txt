@@ -1,0 +1,37 @@
+# ==============================================================================
+# SYNTHETIC DEMO DATA — NOT AN OFFICIAL RECORD
+# Fictitious entity generated for ARGUS platform testing and evaluation.
+# All registration numbers, names, and values are simulated.
+# ==============================================================================
+
+EXPERIENCE CERTIFICATE
+
+Reference No: NIC/PROC/2024-25/EXP/0087
+Date: 20/05/2025
+
+To Whomsoever It May Concern
+
+This is to certify that M/s ALPHA TECHNOLOGIES PRIVATE LIMITED has successfully
+completed the following work order:
+
+Work Order No: NIC/WO/2023/IT-INFRA/042
+Description: Supply, Installation, and Commissioning of IT Infrastructure
+            including Server Racks, UPS Systems, and Networking Hardware
+            at National Data Centre, Shastri Park, New Delhi
+
+Contract Value: INR 3,45,00,000
+Date of Award: 15/06/2023
+Date of Completion: 28/02/2024
+Completion Status: Satisfactorily completed within the stipulated period
+
+The firm has demonstrated experience of 8 years in supply and installation of
+IT infrastructure equipment to government organizations.
+
+Performance: The work was executed in a professional manner with no quality
+defects reported during the warranty period.
+
+(Authorized Signatory)
+Deputy Director (IT Procurement)
+National Informatics Centre
+Ministry of Electronics and Information Technology
+New Delhi — 110001

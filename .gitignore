@@ -32,6 +32,7 @@ build/
 *.sqlite
 *.sqlite3
 services/api/data/
+data/uploads/
 candidate_openapi.json
 services/api/candidate_openapi.json
 
