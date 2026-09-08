@@ -95,6 +95,10 @@ class RAGIngestRequest(BaseModel):
 class RAGDeleteRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     document_id: str
+    tender_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    authorized_tender_id: Optional[str] = None
+    authorized_tenant_id: Optional[str] = None
 
 class RiskDetectRequest(BaseModel):
     """Risk detection request — all fields optional; caller supplies what's available."""
@@ -138,7 +142,13 @@ class ResumeWorkflowRequest(BaseModel):
 def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) -> FastAPI:
     if rag is None:
         database_url = os.getenv("ARGUS_RAG_DATABASE_URL")
-        rag = PgVectorRAG(database_url) if database_url else InMemoryRAG()
+        live_rag_required = os.getenv("ARGUS_REQUIRE_LIVE_RAG", "false").lower() in {"true", "1", "yes"} or os.getenv("APP_ENV") == "production"
+        if database_url:
+            rag = PgVectorRAG(database_url)
+        elif live_rag_required:
+            raise RuntimeError("Live RAG is required but ARGUS_RAG_DATABASE_URL is not configured")
+        else:
+            rag = InMemoryRAG()
     store = rag
 
     def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
@@ -410,7 +420,18 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
         delete = getattr(store, "delete", None)
         if delete is None:
             raise HTTPException(501, "Configured RAG store does not support document deletion")
-        return {"document_id": payload.document_id, "chunks_deleted": delete(payload.document_id)}
+        scope: dict[str, Any] = {}
+        tender_id = payload.authorized_tender_id or payload.tender_id
+        tenant_id = payload.authorized_tenant_id or payload.tenant_id
+        if tender_id:
+            scope["tender_id"] = tender_id
+        if tenant_id:
+            scope["tenant_id"] = tenant_id
+        try:
+            chunks_deleted = delete(payload.document_id, scope=scope if scope else None)
+        except TypeError:
+            chunks_deleted = delete(payload.document_id)
+        return {"document_id": payload.document_id, "chunks_deleted": chunks_deleted}
 
     # ------------------------------------------------------------------
     # Full workflow evaluation (LangGraph orchestration)
@@ -421,9 +442,14 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
         """Execute the full intelligence pipeline: extract → retrieve → risk → compliance → report.
 
         The compliance_tool defaults to REVIEW_REQUIRED, which correctly
-        triggers the human-in-the-loop interrupt.  The API layer should
+        triggers the human-in-the-loop interrupt. The API layer should
         call this endpoint and then persist the returned state.
         """
+        is_production = os.getenv("APP_ENV", "development").lower() == "production"
+        demo_enabled = os.getenv("ARGUS_WORKFLOW_DEMO_ENABLED", "false").lower() in {"true", "1", "yes"}
+        if is_production and not demo_enabled:
+            raise HTTPException(403, "LangGraph workflow endpoints are disabled in production; backend owns compliance evaluation and governance.")
+
         from .agents.workflow import build_argus_workflow
 
         try:
@@ -456,6 +482,11 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
     @app.post("/evaluate-bid/resume")
     def resume_evaluate_bid_endpoint(payload: ResumeWorkflowRequest, _: None = Depends(require_auth)) -> dict[str, Any]:
         """Resume an interrupted workflow using the application's injected checkpointer."""
+        is_production = os.getenv("APP_ENV", "development").lower() == "production"
+        demo_enabled = os.getenv("ARGUS_WORKFLOW_DEMO_ENABLED", "false").lower() in {"true", "1", "yes"}
+        if is_production and not demo_enabled:
+            raise HTTPException(403, "LangGraph workflow endpoints are disabled in production; backend owns compliance evaluation and governance.")
+
         if checkpointer is None:
             raise HTTPException(503, "Workflow resume requires a configured durable checkpointer")
         from .agents.workflow import build_argus_workflow

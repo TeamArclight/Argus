@@ -89,9 +89,18 @@ class PgVectorRAG:
             
         return self.reranker.rerank(query, retrieved_chunks, top_k)
 
-    def delete(self, document_id: str) -> int:
+    def delete(self, document_id: str, scope: Optional[dict[str, Any]] = None) -> int:
+        clauses = ["entity_id = %s"]
+        params: list[Any] = [document_id]
+        if scope:
+            for k, v in scope.items():
+                if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", str(k)):
+                    raise ValueError(f"invalid metadata scope key: {k}")
+                clauses.append("metadata ->> %s = %s")
+                params.extend([str(k), str(v)])
+        sql = "DELETE FROM intelligence_evidence_chunks WHERE " + " AND ".join(clauses)
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM intelligence_evidence_chunks WHERE entity_id = %s", (document_id,))
+            cur.execute(sql, params)
             return cur.rowcount
 
 

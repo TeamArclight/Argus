@@ -44,7 +44,13 @@ class InMemoryRAG:
             return []
         return self.reranker.rerank(query, sorted_cands, top_k)
 
-    def delete(self, document_id: str) -> int:
+    def delete(self, document_id: str, scope: Optional[dict[str, object]] = None) -> int:
         before = len(self._chunks)
-        self._chunks = [chunk for chunk in self._chunks if chunk.entity_id != document_id]
+        if not scope:
+            self._chunks = [chunk for chunk in self._chunks if chunk.entity_id != document_id]
+        else:
+            self._chunks = [
+                chunk for chunk in self._chunks
+                if not (chunk.entity_id == document_id and all(chunk.location_metadata.get(k) == v for k, v in scope.items()))
+            ]
         return before - len(self._chunks)

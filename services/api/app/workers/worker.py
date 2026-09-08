@@ -85,13 +85,14 @@ def _sanitize_worker_error(exc: Exception) -> str:
 
 
 async def execute_job(job_id: str, job_type: str, target_id: str) -> None:
-    """Executes a claimed background job with safe transaction boundaries."""
+    """Executes a claimed background job with safe transaction boundaries and error categorization."""
     resource_type = "TENDER" if job_type == "EXTRACT_REQUIREMENTS" else "BIDDER"
     operation = "PROCESS_TENDER" if job_type == "EXTRACT_REQUIREMENTS" else "VERIFY_BIDDER"
+    release_lock_on_exit = True
 
     try:
         if job_type == "EXTRACT_REQUIREMENTS":
-            # 1. Read document metadata in short-lived session
+            # 1. Read document metadata in short-lived session (Pre-flight deterministic check)
             db = SessionLocal()
             try:
                 tender = db.query(Tender).filter(Tender.id == target_id).first()
@@ -114,16 +115,28 @@ async def execute_job(job_id: str, job_type: str, target_id: str) -> None:
             file_bytes = storage.read_file(doc_uri)
 
             ai_adapter = AIServiceAdapter()
-            result = await ai_adapter.extract_tender(
-                tender_id=target_id,
-                document_id=doc_id,
-                document_sha256=doc_sha,
-                file_bytes=file_bytes,
-                filename=doc_filename,
-                content_type=doc_ctype,
-            )
+            try:
+                result = await ai_adapter.extract_tender(
+                    tender_id=target_id,
+                    document_id=doc_id,
+                    document_sha256=doc_sha,
+                    file_bytes=file_bytes,
+                    filename=doc_filename,
+                    content_type=doc_ctype,
+                )
+            except Exception as net_err:
+                # Ambiguous external network failure during extraction: fail closed
+                release_lock_on_exit = False
+                raise RuntimeError("External extraction operation timed out or interrupted; reconciliation required.") from net_err
+
             if not result.success:
-                raise RuntimeError(f"AI extraction failed: {result.message}")
+                if result.error_code in ("DOCUMENT_NOT_FOUND", "INVALID_BASE64", "SHA256_MISMATCH"):
+                    # Deterministic terminal failure
+                    raise ValueError(f"Deterministic extraction failure: {result.message}")
+                else:
+                    # Ambiguous failure
+                    release_lock_on_exit = False
+                    raise RuntimeError(f"Extraction failed ambiguously: {result.message}")
 
             # 3. Persist results in a clean database transaction
             db = SessionLocal()
@@ -196,16 +209,17 @@ async def execute_job(job_id: str, job_type: str, target_id: str) -> None:
         try:
             job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
             if job:
-                job.status = JobStatus.FAILED
+                # If ambiguous, mark as REVIEW_REQUIRED or FAILED with recovery message
+                job.status = JobStatus.REVIEW_REQUIRED if not release_lock_on_exit else JobStatus.FAILED
                 job.error_message = sanitized
                 job.completed_at = datetime.now(timezone.utc)
                 JobEventService.emit_event(
                     db=db,
                     job_id=job.id,
                     stage=job.current_stage or JobStage.EXTRACTION,
-                    status=JobStatus.FAILED,
+                    status=job.status,
                     progress=100,
-                    message=f"Job failed: {sanitized}",
+                    message=f"Job stopped: {sanitized}",
                 )
                 db.commit()
         except Exception as log_exc:
@@ -214,20 +228,21 @@ async def execute_job(job_id: str, job_type: str, target_id: str) -> None:
         finally:
             db.close()
     finally:
-        # Definitive lock release on terminal state
-        db = SessionLocal()
-        try:
-            OperationLockService.release_lock(
-                db=db,
-                resource_type=resource_type,
-                resource_id=target_id,
-                operation=operation,
-                job_id=job_id,
-            )
-        except Exception:
-            pass
-        finally:
-            db.close()
+        # Release lock only when state is definitively terminal and non-ambiguous
+        if release_lock_on_exit:
+            db = SessionLocal()
+            try:
+                OperationLockService.release_lock(
+                    db=db,
+                    resource_type=resource_type,
+                    resource_id=target_id,
+                    operation=operation,
+                    job_id=job_id,
+                )
+            except Exception:
+                pass
+            finally:
+                db.close()
 
 
 def run(poll_interval: float = 1.0, max_iterations: int | None = None) -> None:

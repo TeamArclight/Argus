@@ -396,3 +396,80 @@ def test_rag_delete_rejects_malformed_document_id():
     assert resp2.status_code == 422
 
 
+def test_rag_scoped_deletion_and_isolation(tmp_path):
+    """Verify scoped deletion only deletes documents matching authorized tender/tenant scope."""
+    store = InMemoryRAG()
+    app = create_app(rag=store)
+    client = TestClient(app)
+
+    p1 = tmp_path / "scope1.txt"
+    p1.write_text("Tenant A, Tender 1 policy document.")
+    client.post("/rag-ingest", json={
+        "document_id": "SHARED_DOC_ID",
+        "title": "Tenant A Policy",
+        "document_uri": str(p1),
+        "document_type": "POLICY",
+        "tender_id": "TENDER_A",
+    })
+
+    p2 = tmp_path / "scope2.txt"
+    p2.write_text("Tenant B, Tender 2 policy document.")
+    client.post("/rag-ingest", json={
+        "document_id": "SHARED_DOC_ID_2",
+        "title": "Tenant B Policy",
+        "document_uri": str(p2),
+        "document_type": "POLICY",
+        "tender_id": "TENDER_B",
+    })
+
+    # Try to delete with non-matching tender scope -> 0 deleted
+    del_mismatch = client.post("/rag-delete", json={
+        "document_id": "SHARED_DOC_ID",
+        "tender_id": "TENDER_NON_EXISTENT",
+    })
+    assert del_mismatch.status_code == 200
+    assert del_mismatch.json()["chunks_deleted"] == 0
+
+    # Delete with matching authorized tender scope -> deleted
+    del_match = client.post("/rag-delete", json={
+        "document_id": "SHARED_DOC_ID",
+        "authorized_tender_id": "TENDER_A",
+    })
+    assert del_match.status_code == 200
+    assert del_match.json()["chunks_deleted"] >= 1
+
+
+def test_evaluate_bid_production_guard(monkeypatch, tmp_path):
+    """Verify workflow orchestration endpoint returns HTTP 403 in production unless demo mode is enabled."""
+    app = create_app()
+    client = TestClient(app)
+
+    tender_file = tmp_path / "t.txt"
+    tender_file.write_text("Tender clause")
+    bidder_file = tmp_path / "b.txt"
+    bidder_file.write_text("Bidder profile")
+
+    req_payload = {
+        "tender_document_uri": str(tender_file),
+        "bidder_document_uri": str(bidder_file),
+        "document_id": "doc1",
+        "bidder_id": "bid1",
+    }
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ARGUS_INTELLIGENCE_API_KEY", "test-key")
+    auth_headers = {"Authorization": "Bearer test-key"}
+
+    # In production without demo enabled -> 403 Forbidden
+    monkeypatch.setenv("ARGUS_WORKFLOW_DEMO_ENABLED", "false")
+    resp_prod = client.post("/evaluate-bid", json=req_payload, headers=auth_headers)
+    assert resp_prod.status_code == 403
+    assert "disabled in production" in resp_prod.json()["detail"]
+
+    # In production with demo enabled -> permitted to execute
+    monkeypatch.setenv("ARGUS_WORKFLOW_DEMO_ENABLED", "true")
+    resp_demo = client.post("/evaluate-bid", json=req_payload, headers=auth_headers)
+    assert resp_demo.status_code == 200
+
+
+

@@ -48,5 +48,10 @@ class GeminiEmbedding:
 
 def configured_embeddings() -> EmbeddingProvider:
     dimensions = int(os.getenv("ARGUS_EMBEDDING_DIMENSIONS", "768"))
-    if os.getenv("ARGUS_EMBEDDING_PROVIDER", "hash").lower() == "gemini": return GeminiEmbedding(dimensions=dimensions)
+    provider = os.getenv("ARGUS_EMBEDDING_PROVIDER", "hash").lower()
+    live_required = os.getenv("ARGUS_REQUIRE_LIVE_EMBEDDINGS", "false").lower() in {"true", "1", "yes"} or os.getenv("APP_ENV") == "production"
+    if provider == "gemini":
+        return GeminiEmbedding(dimensions=dimensions)
+    elif live_required:
+        raise RuntimeError("Live embeddings are required but ARGUS_EMBEDDING_PROVIDER is not configured for a live provider.")
     return HashEmbedding(dimensions)
