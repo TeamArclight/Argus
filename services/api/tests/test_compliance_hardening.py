@@ -335,14 +335,19 @@ def test_applicability_string_parsing_and_invalids():
 
 
 def test_approved_and_unapproved_exemptions():
-    """Approved exemptions return NOT_APPLICABLE_EXEMPTION, unapproved returns INVALID_APPLICABILITY_POLICY."""
-    # Approved exemption
+    """Approved exemptions return NOT_APPLICABLE_EXEMPTION, unapproved returns INVALID_APPLICABILITY_POLICY, unverified context returns UNVERIFIED_EXEMPTION_ELIGIBILITY."""
+    # Exemption policy on rule with verified context
     req_app_ex = make_req(OperatorEnum.EXISTS, True, meta={"exemption": "APPROVED"})
-    res_ex = ComplianceEngine.evaluate(req_app_ex, [], [])
-    assert res_ex.status == ComplianceStatus.NOT_APPLICABLE
-    assert res_ex.reason_code == ReasonCode.NOT_APPLICABLE_EXEMPTION
+    res_ex_approved = ComplianceEngine.evaluate(req_app_ex, [], [], context={"exemption_approved": True})
+    assert res_ex_approved.status == ComplianceStatus.NOT_APPLICABLE
+    assert res_ex_approved.reason_code == ReasonCode.NOT_APPLICABLE_EXEMPTION
 
-    # Unapproved exemption string
+    # Exemption policy on rule without verified context
+    res_ex_unverified = ComplianceEngine.evaluate(req_app_ex, [], [], context={})
+    assert res_ex_unverified.status == ComplianceStatus.UNKNOWN
+    assert res_ex_unverified.reason_code == ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
+
+    # Unrecognized / invalid exemption policy string on rule
     req_unapp_ex = make_req(OperatorEnum.EXISTS, True, meta={"exemption": "random_self_claimed_exemption"})
     res_unapp = ComplianceEngine.evaluate(req_unapp_ex, [], [])
     assert res_unapp.status == ComplianceStatus.UNKNOWN
@@ -392,7 +397,7 @@ def test_categorical_bidder_applicability_and_missing_category():
 # ---------------------------------------------------------------------------
 
 def test_missing_evaluation_clock_on_time_dependent_rule_no_1970():
-    """Time-dependent rule missing evaluation clock returns MISSING_EVALUATION_CLOCK without 1970 fallback."""
+    """Time-dependent rule missing evaluation clock returns MISSING_EVALUATION_CLOCK with evaluated_at=None."""
     req_time = make_req(
         OperatorEnum.DATE_BEFORE,
         "now",
@@ -402,8 +407,7 @@ def test_missing_evaluation_clock_on_time_dependent_rule_no_1970():
     res = ComplianceEngine.evaluate(req_time, [make_fact("2025-01-01")], [], context={})
     assert res.status == ComplianceStatus.UNKNOWN
     assert res.reason_code == ReasonCode.MISSING_EVALUATION_CLOCK
-    assert res.evaluated_at != datetime(1970, 1, 1, tzinfo=timezone.utc)
-    assert res.evaluated_at.year >= 2026
+    assert res.evaluated_at is None
 
 
 def test_multi_fact_conflicts_linking_all_evidence():
@@ -450,6 +454,20 @@ def test_historical_replay_bounds_unsupported_version():
     assert res.reason_code == ReasonCode.HISTORICAL_VERSION_UNSUPPORTED
 
 
+def test_historical_replay_missing_rule_evaluation():
+    """Replaying historical snapshot when rule evaluation is absent returns HISTORICAL_EVALUATION_NOT_FOUND."""
+    snapshot = {
+        "engine_version": "2.0.0",
+        "bidder_id": "BIDDER-101",
+        "started_at": "2026-01-15T10:00:00+00:00",
+        "rule_evaluations": [],
+    }
+    res = ComplianceEngine.replay_evaluation(snapshot, "REQ-101")
+    assert res.status == ComplianceStatus.UNKNOWN
+    assert res.reason_code == ReasonCode.HISTORICAL_EVALUATION_NOT_FOUND
+    assert res.evaluated_at == datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+
 def test_invalid_context_cannot_fallback_to_raw_numeric_equality():
     """Different currency or missing required financial metadata must not fall back to raw number equality."""
     # 50,000,000 INR vs 50,000,000 USD (same raw number, different currency)
@@ -480,4 +498,52 @@ def test_non_financial_numeric_unaffected():
     res_exp = ComplianceEngine.evaluate(req_exp, facts_exp, [])
     assert res_exp.status == ComplianceStatus.PASS
     assert res_exp.reason_code == ReasonCode.GREATER_THAN_OR_EQUAL
+
+
+# ---------------------------------------------------------------------------
+# 7. REPRESENTATION FLAGS & EVIDENCE-BACKED EXEMPTIONS
+# ---------------------------------------------------------------------------
+
+def test_representation_flags_strict_parsing():
+    """Strict boolean representation flags: 'false' is not base unit, 'true' is base unit, malformed is rejected."""
+    # is_base_unit='false' with unit='Crore' -> multiplier 10,000,000 applies
+    ctx_scaled = ComplianceEngine._parse_financial_context(5, {"currency": "INR", "unit": "Crore", "is_base_unit": "false"})
+    assert ctx_scaled.is_valid is True
+    assert ctx_scaled.base_decimal_value == Decimal("50000000")
+
+    # is_base_unit='true' with unit='Crore' -> already normalized base unit, multiplier not applied again
+    ctx_base = ComplianceEngine._parse_financial_context(50000000, {"currency": "INR", "unit": "Crore", "is_base_unit": "true"})
+    assert ctx_base.is_valid is True
+    assert ctx_base.base_decimal_value == Decimal("50000000")
+
+    # is_base_unit='maybe' -> malformed boolean representation flag
+    ctx_malformed = ComplianceEngine._parse_financial_context(5, {"currency": "INR", "unit": "Crore", "is_base_unit": "maybe"})
+    assert ctx_malformed.is_valid is False
+    assert ctx_malformed.error_reason == ReasonCode.MALFORMED_NUMBER
+
+
+def test_unsupported_unit_scale_rejected():
+    """Unsupported unit scale in metadata is rejected with UNIT_MISMATCH."""
+    ctx_unsupported = ComplianceEngine._parse_financial_context(5, {"currency": "INR", "unit": "lightyears"})
+    assert ctx_unsupported.is_valid is False
+    assert ctx_unsupported.error_reason == ReasonCode.UNIT_MISMATCH
+
+
+def test_evidence_backed_exemption_policy():
+    """Bare exemption string in rule without verified bidder context returns UNVERIFIED_EXEMPTION_ELIGIBILITY."""
+    req_ex = make_req(
+        OperatorEnum.GTE,
+        5000000,
+        meta={"exemption": "MSME"},
+    )
+    # Unverified context -> UNVERIFIED_EXEMPTION_ELIGIBILITY
+    res_unverified = ComplianceEngine.evaluate(req_ex, [], [], context={})
+    assert res_unverified.status == ComplianceStatus.UNKNOWN
+    assert res_unverified.reason_code == ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
+
+    # Verified exemption -> NOT_APPLICABLE_EXEMPTION
+    res_verified = ComplianceEngine.evaluate(req_ex, [], [], context={"exemption_approved": True})
+    assert res_verified.status == ComplianceStatus.NOT_APPLICABLE
+    assert res_verified.reason_code == ReasonCode.NOT_APPLICABLE_EXEMPTION
+
 

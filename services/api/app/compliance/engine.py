@@ -47,13 +47,13 @@ class ComplianceEngine:
     Requires explicit clock context and enforces strict context compatibility.
     """
 
-    ENGINE_VERSION = "1.2.0"
-    NORMALIZATION_POLICY_VERSION = "1.2.0"
-    OPERATOR_SEMANTICS_VERSION = "1.2.0"
-    FINANCIAL_CONTEXT_POLICY_VERSION = "1.2.0"
-    TEMPORAL_POLICY_VERSION = "1.2.0"
+    ENGINE_VERSION = "2.0.0"
+    NORMALIZATION_POLICY_VERSION = "1.0.0"
+    OPERATOR_SEMANTICS_VERSION = "1.1.0"
+    FINANCIAL_CONTEXT_POLICY_VERSION = "1.0.0"
+    TEMPORAL_POLICY_VERSION = "1.0.0"
 
-    SUPPORTED_REPLAY_VERSIONS = {"1.2.0"}
+    SUPPORTED_REPLAY_VERSIONS = {"2.0.0"}
 
     MAX_INPUT_STR_LENGTH = 100
     MAX_DECIMAL_DIGITS = 38
@@ -413,12 +413,33 @@ class ComplianceEngine:
         resolved_currency = (meta_curr or text_curr or "").upper() or None
 
         # 2. Base-unit representation check
-        is_base_unit = bool(
-            meta.get("is_base_unit")
-            or meta.get("normalized")
-            or meta.get("is_normalized")
-            or (meta.get("unit") and str(meta.get("unit")).upper() in ("INR", "USD", "EUR", "GBP", "BASE", "UNITS"))
-        )
+        is_base_unit = False
+        has_explicit_base_flag = False
+        for flag_name in ("is_base_unit", "normalized", "is_normalized"):
+            if flag_name in meta and meta[flag_name] is not None:
+                parsed_flag = cls._parse_boolean_strict(meta[flag_name])
+                if parsed_flag is None:
+                    return FinancialContext(
+                        raw_value=val,
+                        base_decimal_value=None,
+                        currency=resolved_currency,
+                        scale_token=None,
+                        scale_multiplier=Decimal("1"),
+                        metric=meta.get("metric"),
+                        financial_year=meta.get("financial_year") or meta.get("fy"),
+                        averaging_period=meta.get("averaging_period") or meta.get("period"),
+                        is_base_unit=False,
+                        is_valid=False,
+                        error_reason=ReasonCode.MALFORMED_NUMBER,
+                    )
+                has_explicit_base_flag = True
+                if parsed_flag is True:
+                    is_base_unit = True
+
+        if not has_explicit_base_flag and meta.get("unit"):
+            unit_str_val = str(meta.get("unit")).strip().upper()
+            if unit_str_val in ("INR", "USD", "EUR", "GBP", "BASE", "UNITS"):
+                is_base_unit = True
 
         # 3. Scale resolution
         meta_scale = Decimal("1")
@@ -431,7 +452,20 @@ class ComplianceEngine:
             if unit_clean in cls.UNIT_SCALE_MAP:
                 meta_scale, canonical_meta_unit = cls.UNIT_SCALE_MAP[unit_clean]
             elif unit_clean:
-                canonical_meta_unit = input_meta_unit.strip()
+                # Unsupported unit scale in metadata
+                return FinancialContext(
+                    raw_value=val,
+                    base_decimal_value=None,
+                    currency=resolved_currency,
+                    scale_token=input_meta_unit.strip(),
+                    scale_multiplier=Decimal("1"),
+                    metric=meta.get("metric"),
+                    financial_year=meta.get("financial_year") or meta.get("fy"),
+                    averaging_period=meta.get("averaging_period") or meta.get("period"),
+                    is_base_unit=is_base_unit,
+                    is_valid=False,
+                    error_reason=ReasonCode.UNIT_MISMATCH,
+                )
 
         text_scale = Decimal("1")
         canonical_text_unit = None
@@ -903,7 +937,7 @@ class ComplianceEngine:
         context = context or {}
         rule_meta = getattr(rule, "metadata_json", {}) or {}
 
-        # 1. Explicit boolean applicability in metadata
+        # 1. Explicit boolean applicability in metadata (tender-wide rule applicability)
         for bool_key in ("is_applicable", "applicable"):
             if bool_key in rule_meta and rule_meta[bool_key] is not None:
                 parsed_bool = cls._parse_boolean_strict(rule_meta[bool_key])
@@ -914,37 +948,20 @@ class ComplianceEngine:
                 else:
                     return None, ReasonCode.INVALID_APPLICABILITY_POLICY
 
-        # 2. String policy in metadata
+        # 2. String policy in metadata (tender-wide rule applicability)
         if "applicability" in rule_meta and rule_meta["applicability"] is not None:
             app_str = str(rule_meta["applicability"]).strip().upper()
             if app_str in ("NOT_APPLICABLE", "INAPPLICABLE"):
                 return False, ReasonCode.NOT_APPLICABLE_EXPLICIT
-            elif app_str == "EXEMPT":
-                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
             elif app_str in ("APPLICABLE", "MANDATORY"):
                 return True, "APPLICABLE"
-            else:
-                return None, ReasonCode.INVALID_APPLICABILITY_POLICY
-
-        # 3. Approved exemption policy
-        if "exemption" in rule_meta and rule_meta["exemption"] is not None:
-            ex_val = rule_meta["exemption"]
-            parsed_ex = cls._parse_boolean_strict(ex_val)
-            if parsed_ex is True:
-                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
-            elif parsed_ex is False:
+            elif app_str == "EXEMPT":
+                # Exemption policy declared on rule, evaluate bidder qualification below
                 pass
-            elif isinstance(ex_val, str) and ex_val.strip().upper() in ("APPROVED", "VALID", "GRANTED", "YES"):
-                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
             else:
                 return None, ReasonCode.INVALID_APPLICABILITY_POLICY
 
-        if "optional_exemption" in rule_meta and rule_meta["optional_exemption"] is not None:
-            opt_ex = cls._parse_boolean_strict(rule_meta["optional_exemption"])
-            if opt_ex is True and not rule.mandatory:
-                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
-
-        # 4. Categorical bidder-type applicability
+        # 3. Categorical bidder-type applicability
         applicable_types = rule_meta.get("applicable_bidder_types") or rule_meta.get("applicable_categories")
         if applicable_types and isinstance(applicable_types, (list, tuple, set)):
             bidder_type = context.get("bidder_type") or context.get("bidder_category")
@@ -956,6 +973,42 @@ class ComplianceEngine:
             else:
                 # Do not treat missing bidder category as a categorical mismatch
                 return None, "UNKNOWN_APPLICABILITY"
+
+        # 4. Evidence-backed Exemption Policy
+        has_exemption_policy = False
+        if "exemption" in rule_meta and rule_meta["exemption"] is not None:
+            ex_val = rule_meta["exemption"]
+            parsed_ex = cls._parse_boolean_strict(ex_val)
+            if parsed_ex is True:
+                has_exemption_policy = True
+            elif parsed_ex is False:
+                has_exemption_policy = False
+            elif isinstance(ex_val, str) and ex_val.strip().upper() in ("APPROVED", "VALID", "GRANTED", "YES", "MSME", "STARTUP", "EXEMPTION_ALLOWED", "EXEMPT"):
+                has_exemption_policy = True
+            else:
+                return None, ReasonCode.INVALID_APPLICABILITY_POLICY
+
+        if "optional_exemption" in rule_meta and rule_meta["optional_exemption"] is not None:
+            opt_ex = cls._parse_boolean_strict(rule_meta["optional_exemption"])
+            if opt_ex is True and not rule.mandatory:
+                has_exemption_policy = True
+            elif opt_ex is None:
+                return None, ReasonCode.INVALID_APPLICABILITY_POLICY
+
+        if has_exemption_policy:
+            # Check if bidder has verified exemption qualification or approved decision in context
+            is_bidder_exempt = bool(
+                context.get("exemption_approved") is True
+                or context.get("exemption_verified") is True
+                or context.get("is_exempt") is True
+            )
+            if is_bidder_exempt:
+                return False, ReasonCode.NOT_APPLICABLE_EXEMPTION
+            elif context.get("exemption_approved") is False or context.get("exemption_verified") is False:
+                return True, "APPLICABLE"
+            else:
+                # Bare string alone without context does not establish exemption
+                return None, ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY
 
         return None, "UNKNOWN_APPLICABILITY"
 
@@ -998,11 +1051,8 @@ class ComplianceEngine:
                 expected_value=rule.expected_value,
                 evidence_ids=[],
                 rule_version=f"{cls.ENGINE_VERSION}",
-                evaluated_at=datetime.now(timezone.utc),
+                evaluated_at=None,
             )
-
-        if eval_ts is None:
-            eval_ts = datetime.now(timezone.utc)
 
         eval_id = str(uuid.uuid4())
         is_ci = cls._is_status_or_enum_field(rule.field, rule.requirement_type)
@@ -1022,13 +1072,13 @@ class ComplianceEngine:
                 rule_version=f"{cls.ENGINE_VERSION}",
                 evaluated_at=eval_ts,
             )
-        elif app_reason == ReasonCode.INVALID_APPLICABILITY_POLICY:
+        elif app_reason in (ReasonCode.INVALID_APPLICABILITY_POLICY, ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY):
             return RuleEvaluationRead(
                 id=eval_id,
                 bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
                 requirement_id=rule.id,
                 status=ComplianceStatus.UNKNOWN,
-                reason_code=ReasonCode.INVALID_APPLICABILITY_POLICY,
+                reason_code=app_reason,
                 observed_value=None,
                 expected_value=rule.expected_value,
                 evidence_ids=[],
@@ -1621,12 +1671,14 @@ class ComplianceEngine:
         Reconstruction uses recorded results as the authoritative record. Full semantic replay across
         disparate engine versions is bounded to supported engine versions matching ENGINE_VERSION.
         """
-        snap_ts = snapshot.get("started_at") or snapshot.get("created_at") or datetime.now(timezone.utc)
+        snap_ts = snapshot.get("started_at") or snapshot.get("created_at") or snapshot.get("evaluated_at")
         if isinstance(snap_ts, str):
             try:
                 snap_ts = datetime.fromisoformat(snap_ts.replace("Z", "+00:00"))
             except Exception:
-                snap_ts = datetime.now(timezone.utc)
+                snap_ts = None
+        elif not isinstance(snap_ts, datetime):
+            snap_ts = None
 
         recorded_engine_version = snapshot.get("engine_version") or snapshot.get("rule_version")
         if recorded_engine_version and recorded_engine_version not in cls.SUPPORTED_REPLAY_VERSIONS:
@@ -1656,7 +1708,7 @@ class ComplianceEngine:
             bidder_id=snapshot.get("bidder_id", "UNKNOWN_BIDDER"),
             requirement_id=rule_id,
             status=ComplianceStatus.UNKNOWN,
-            reason_code=ReasonCode.MISSING_EVIDENCE,
+            reason_code=ReasonCode.HISTORICAL_EVALUATION_NOT_FOUND,
             observed_value=None,
             expected_value=None,
             evidence_ids=[],
