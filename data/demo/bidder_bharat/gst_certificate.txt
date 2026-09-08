@@ -1,0 +1,27 @@
+# ==============================================================================
+# SYNTHETIC DEMO DATA — NOT AN OFFICIAL RECORD
+# Fictitious entity generated for ARGUS platform testing and evaluation.
+# All registration numbers, names, and values are simulated.
+# ==============================================================================
+
+BHARAT INFOSYSTEMS LLP
+GST Registration Certificate
+
+GSTIN: 29AAFBB5678K1Z3
+Legal Name: BHARAT INFOSYSTEMS LLP
+Trade Name: Bharat InfoSys
+PAN: AAFBB5678K
+State: Karnataka (29)
+Registration Date: 22/09/2019
+Status: Active
+
+Type of Registration: Regular
+Constitution of Business: Limited Liability Partnership
+Principal Place of Business: No. 112, 3rd Cross, Indiranagar, Bengaluru, Karnataka — 560038
+
+Nature of Business Activity:
+1. Wholesale Trade — IT Equipment and Peripherals
+2. Service Provider — Systems Integration
+
+This certificate is generated electronically and is valid without signature.
+Date of Generation: 10/06/2026

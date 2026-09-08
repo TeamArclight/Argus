@@ -1,0 +1,33 @@
+# ==============================================================================
+# SYNTHETIC DEMO DATA — NOT AN OFFICIAL RECORD
+# Fictitious entity generated for ARGUS platform testing and evaluation.
+# All registration numbers, names, and values are simulated.
+# ==============================================================================
+
+CREST SOLUTIONS PRIVATE LIMITED
+GST Registration Certificate
+
+GSTIN: 27AABCC9876D1Z7
+Legal Name: CREST SOLUTIONS PRIVATE LIMITED
+Trade Name: Crest Solutions
+PAN: AABCC9876D
+State: Maharashtra (27)
+Registration Date: 05/01/2020
+Status: Suspended
+
+NOTICE: GST registration has been suspended effective 15/03/2026 due to
+non-filing of returns for consecutive six months. The taxpayer is advised
+to file pending returns and apply for revocation.
+
+Type of Registration: Regular
+Constitution of Business: Private Limited Company
+Principal Place of Business: Office 301, Trade Tower, Andheri East, Mumbai, Maharashtra — 400069
+
+Nature of Business Activity:
+1. Trading — IT Equipment
+2. Service Provider — IT Solutions
+
+This certificate is generated electronically and is valid without signature.
+Date of Generation: 20/05/2026
+
+Valid up to: 15/03/2026

@@ -1,0 +1,33 @@
+# ==============================================================================
+# SYNTHETIC DEMO DATA — NOT AN OFFICIAL RECORD
+# Fictitious entity generated for ARGUS platform testing and evaluation.
+# All registration numbers, names, and values are simulated.
+# ==============================================================================
+
+UDYAM REGISTRATION CERTIFICATE
+
+UDYAM Registration Number: UDYAM-KA-29-0045678
+
+Enterprise Name: BHARAT INFOSYSTEMS LLP
+Type of Enterprise: Small
+Major Activity: Services
+
+Flat/Door/Block No: No. 112
+Name of Premises/Building: Indiranagar Plaza
+Village/Town: Bengaluru
+State: Karnataka
+District: Bengaluru Urban
+Pin: 560038
+
+Date of Incorporation: 01/07/2019
+Date of Commencement of Production/Business: 01/10/2019
+
+NIC Code: 62011 — IT Consulting and Systems Integration
+Investment in Plant and Machinery (INR): 4,50,00,000
+Turnover (INR): 88,00,000
+
+PAN: AAFBB5678K
+GSTIN: 29AAFBB5678K1Z3
+
+This is a system-generated certificate and does not require a physical signature.
+Date of Printing: 10/06/2026

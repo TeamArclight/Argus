@@ -1,0 +1,86 @@
+# ==============================================================================
+# STATUTORY POLICY REFERENCE (PUBLIC DOMAIN)
+# Source: General Financial Rules 2017, Ministry of Finance, Government of India
+# Excerpts from Chapter 6: Procurement of Goods and Services
+# ==============================================================================
+
+GENERAL FINANCIAL RULES (GFR) 2017
+GOVERNMENT OF INDIA
+MINISTRY OF FINANCE, DEPARTMENT OF EXPENDITURE
+
+CHAPTER 6: PROCUREMENT OF GOODS AND SERVICES
+
+Rule 149: Fundamental Principles of Public Buying
+Every authority delegated with the financial powers of procuring goods in the
+public interest shall have the responsibility and accountability to bring
+efficiency, economy, and transparency in matters relating to public procurement.
+
+Rule 153: Purchase of Goods — Open Tender Enquiry
+Save in cases of proprietary articles or single source supply, open tender
+enquiry is the most preferred method of procurement.
+
+Rule 154: Mandatory Use of GeM
+All Ministries and Departments shall procure goods and services available on
+Government e-Marketplace (GeM). Procurement of goods or services not available
+on GeM shall follow the procedure prescribed under GFR Rules 155-170.
+
+Rule 155: Registration on GeM
+All bidders must be registered on the GeM portal before submitting bids.
+Registration requires a valid GSTIN, PAN, and bank account details.
+
+Rule 156: Financial Qualification
+(a) The procuring authority shall prescribe minimum annual turnover criteria
+    based on the estimated value of procurement.
+(b) For procurements up to INR 10 Crore, minimum annual turnover may be set
+    at 30% of the estimated value.
+(c) For procurements above INR 10 Crore, minimum annual turnover may be set
+    at 50% of the estimated value, subject to the Competent Authority's discretion.
+
+Rule 157: Technical Qualification
+(a) Bidders shall demonstrate relevant experience in similar work.
+(b) Minimum experience of 3 years in the relevant field shall be prescribed
+    for procurements above INR 1 Crore.
+(c) Experience certificates from Central Government, State Government, PSU,
+    or autonomous body clients shall be accepted.
+
+Rule 158: Eligibility Restrictions
+(a) Firms that have been debarred or blacklisted by any Central or State
+    Government department are not eligible to participate in government
+    procurement for the period of debarment.
+(b) A self-declaration of non-blacklisting shall be obtained from all bidders.
+(c) The procuring authority shall verify the debarment status through the
+    centralized debarment database maintained by the Department of Expenditure.
+
+Rule 159: Verification of Bidder Claims
+(a) All factual claims made by bidders in their submissions shall be verified
+    through authorized government portals or registries.
+(b) Verification shall cover: GSTIN status, Udyam registration, company
+    registration with MCA, EPFO/ESIC compliance, and financial claims.
+(c) In case of discrepancy between claimed and verified values, the verified
+    value shall prevail, and the matter shall be referred to the Competent
+    Authority for review.
+(d) Verification results from authorized API sources shall be given precedence
+    over self-declared or document-based evidence.
+
+Rule 160: Turnover Exemptions for MSMEs
+(a) Micro and Small Enterprises registered under the MSME Development Act shall
+    be exempt from the prior turnover criteria prescribed under Rule 156.
+(b) This exemption applies only to MSMEs registered under the Udyam portal with
+    a valid and current Udyam Registration Certificate.
+(c) Medium enterprises and large companies are not eligible for this exemption.
+
+Rule 161: EMD Exemption
+(a) MSMEs registered on the Udyam portal and startups registered under DPIIT
+    are exempt from submitting Earnest Money Deposit (EMD).
+
+Rule 162: Bid Evaluation
+(a) Technical evaluation shall be completed before opening financial bids.
+(b) All evaluation criteria shall be disclosed in the tender document.
+(c) The procuring authority shall maintain a complete audit trail of all
+    evaluation decisions, including reasons for qualification and disqualification.
+(d) Any deviation from prescribed evaluation criteria requires prior approval
+    of the Competent Authority.
+
+Rule 163: Award of Contract
+The contract shall be awarded to the lowest evaluated responsive bidder (L1)
+who meets all technical and eligibility criteria.

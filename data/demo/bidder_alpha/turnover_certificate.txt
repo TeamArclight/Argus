@@ -1,0 +1,32 @@
+# ==============================================================================
+# SYNTHETIC DEMO DATA — NOT AN OFFICIAL RECORD
+# Fictitious entity generated for ARGUS platform testing and evaluation.
+# All registration numbers, names, and values are simulated.
+# ==============================================================================
+
+CERTIFICATE OF AVERAGE ANNUAL TURNOVER
+
+To Whomsoever It May Concern
+
+This is to certify that M/s ALPHA TECHNOLOGIES PRIVATE LIMITED, having its
+registered office at Plot No. 45, Sector 18, Noida, Uttar Pradesh — 201301,
+bearing PAN: AABCA1234H, has the following audited annual turnover:
+
+Financial Year      | Gross Turnover (INR)
+-------------------------------------------------
+FY 2023-24          | INR 4,85,00,000
+FY 2024-25          | INR 5,12,00,000
+FY 2025-26          | INR 5,40,00,000
+
+Average Annual Turnover: INR 5,12,33,333
+
+The above figures are based on the audited financial statements of the company
+and are true and correct to the best of my knowledge and belief.
+
+CA Rajesh Kumar Sharma
+Membership No: 045821
+UDIN: 26045821ABCDEF1234
+Firm: Sharma & Associates
+Date: 15/06/2026
+
+Valid up to: 31/03/2027
