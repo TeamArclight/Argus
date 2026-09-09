@@ -3,10 +3,78 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  /* 1. Core Brand & State Tokens */
+  --bg: #020329;                     /* Void Navy: Deep background canvas */
+  --bg-panel: #03045A;               /* Midnight Indigo: Panel/surface tint, hero backgrounds */
+  --accent: #C9D6E8;                 /* Frost Silver: Core brand accent, active states, focus borders */
+  --glacier: #EAF2FA;                /* Glacier White: High-contrast text highlights, hover states */
+  --pass: #00E676;                   /* Neon Emerald: Verified pass status, compliant chips */
+  --high: #FFB020;                   /* Vigilance Amber: Review-required status, warning signals */
+  --critical: #FF4D4D;               /* Crimson Red: Critical alerts, disqualification, fail badges */
+  --unknown: #9D7BFF;                /* Electric Lavender: Unknown / unverified / missing evidence state */
+  --sapphire: #5FA8D3;               /* Steel Cyan: Secondary accent, ambient background mesh */
+
+  /* 2. Typography & Text Colors */
+  --text-white: #FFFFFF;
+  --text-1: rgba(234, 242, 250, 0.95);  /* Primary Text: Glacier White */
+  --text-2: rgba(201, 214, 232, 0.62);  /* Secondary Text: Frost Silver */
+  --text-3: rgba(201, 214, 232, 0.32);  /* Tertiary Text: Frost Silver */
+  --text-accent: #C9D6E8;
+  --text-pass: #00E676;
+  --text-high: #FFB020;
+  --text-critical: #FF4D4D;
+
+  /* 3. Liquid Glass Surfaces & Borders */
+  --glass: rgba(201, 214, 232, 0.035);
+  --glass-hover: rgba(201, 214, 232, 0.065);
+  --glass-border: rgba(201, 214, 232, 0.11);
+  --glass-border-specular: rgba(234, 242, 250, 0.14);
+  --glass-border-bright: rgba(234, 242, 250, 0.22);
+  --shadow-deep: 0 14px 40px rgba(0, 0, 0, 0.55);
+  --glow-steel: rgba(95, 168, 211, 0.35);
+
+  /* Dim & Glow Utility Variables */
+  --accent-dim: rgba(201, 214, 232, 0.12);
+  --accent-glow: rgba(95, 168, 211, 0.35);
+  --pass-dim: rgba(0, 230, 118, 0.14);
+  --critical-dim: rgba(255, 77, 77, 0.14);
+  --high-dim: rgba(255, 176, 32, 0.14);
+  --unknown-dim: rgba(157, 123, 255, 0.14);
+  --sapphire-dim: rgba(95, 168, 211, 0.14);
+
+  /* 4. Specialized Dark Frameworks & Windows */
+  --modal-toast-bg: rgba(3, 4, 90, 0.93);
+  --chassis-frame-bg: rgba(2, 3, 41, 0.75);
+  --footer-bg: rgba(1, 2, 23, 0.80);
+  --inner-mockup-bg: rgba(0, 0, 0, 0.40);
+
+  /* 7. Window Frame Control Dots */
+  --dot-close: #FF5F56;
+  --dot-minimize: #FFBD2E;
+  --dot-maximize: #27C93F;
 }
 
 body {
   margin: 0;
+  background-color: var(--bg);
+  color: var(--text-1);
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 }
+
+/* Transparent Scrollbar */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+html::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+html::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+

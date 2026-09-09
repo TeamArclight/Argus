@@ -1,0 +1,3616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARGUS — AI-Powered Bid Compliance Verification Platform for GeM Procurement</title>
+  <meta name="description" content="AI-Powered Integrated Bid Compliance Verification Platform for GeM (Government e-Marketplace) Procurement. Scrutinize tenders, verify bidders with live registries, and enforce deterministic compliance with zero hallucinations.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* 1. Core Brand & State Tokens */
+      --bg: #020329;                     /* Void Navy: Deep background canvas */
+      --bg-panel: #03045A;               /* Midnight Indigo: Panel/surface tint, hero backgrounds */
+      --accent: #C9D6E8;                 /* Frost Silver: Core brand accent, active states, focus borders */
+      --glacier: #EAF2FA;                /* Glacier White: High-contrast text highlights, hover states */
+      --pass: #00E676;                   /* Neon Emerald: Verified pass status, compliant chips */
+      --high: #FFB020;                   /* Vigilance Amber: Review-required status, warning signals */
+      --critical: #FF4D4D;               /* Crimson Red: Critical alerts, disqualification, fail badges */
+      --unknown: #9D7BFF;                /* Electric Lavender: Unknown / unverified / missing evidence state */
+      --sapphire: #5FA8D3;               /* Steel Cyan: Secondary accent, ambient background mesh */
+
+      /* 2. Typography & Text Colors */
+      --text-white: #FFFFFF;
+      --text-1: rgba(234, 242, 250, 0.95);  /* Primary Text: Glacier White */
+      --text-2: rgba(201, 214, 232, 0.62);  /* Secondary Text: Frost Silver */
+      --text-3: rgba(201, 214, 232, 0.32);  /* Tertiary Text: Frost Silver */
+      --text-accent: #C9D6E8;
+      --text-pass: #00E676;
+      --text-high: #FFB020;
+      --text-critical: #FF4D4D;
+
+      /* 3. Liquid Glass Surfaces & Borders */
+      --glass: rgba(201, 214, 232, 0.035);
+      --glass-hover: rgba(201, 214, 232, 0.065);
+      --glass-border: rgba(201, 214, 232, 0.11);
+      --glass-border-specular: rgba(234, 242, 250, 0.14);
+      --glass-border-bright: rgba(234, 242, 250, 0.22);
+      --shadow-deep: 0 14px 40px rgba(0, 0, 0, 0.55);
+      --glow-steel: rgba(95, 168, 211, 0.35);
+
+      /* Dim & Glow Utility Variables */
+      --accent-dim: rgba(201, 214, 232, 0.12);
+      --accent-glow: rgba(95, 168, 211, 0.35);
+      --pass-dim: rgba(0, 230, 118, 0.14);
+      --critical-dim: rgba(255, 77, 77, 0.14);
+      --high-dim: rgba(255, 176, 32, 0.14);
+      --unknown-dim: rgba(157, 123, 255, 0.14);
+      --sapphire-dim: rgba(95, 168, 211, 0.14);
+
+      /* 4. Specialized Dark Frameworks & Windows */
+      --modal-toast-bg: rgba(3, 4, 90, 0.93);
+      --chassis-frame-bg: rgba(2, 3, 41, 0.75);
+      --footer-bg: rgba(1, 2, 23, 0.80);
+      --inner-mockup-bg: rgba(0, 0, 0, 0.40);
+
+      /* 7. Window Frame Control Dots */
+      --dot-close: #FF5F56;
+      --dot-minimize: #FFBD2E;
+      --dot-maximize: #27C93F;
+
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --radius-sm: 8px;
+      --radius-pill: 9999px;
+      --font-display: 'Fraunces', serif;
+      --font-sans: 'Outfit', -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      font-size: 16px;
+      background-color: var(--bg);
+      color: var(--text-1);
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+
+    html::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+      background: transparent;
+    }
+
+    html::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    html::-webkit-scrollbar-thumb {
+      background: transparent;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg);
+      color: var(--text-1);
+      overflow-x: hidden;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      position: relative;
+    }
+
+    /* Animated Ambient Mesh Background */
+    .ambient-mesh {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+
+    .ambient-blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(90px);
+      opacity: 0.85;
+      animation: floatBlob 24s ease-in-out infinite alternate;
+    }
+
+    .blob-1 {
+      width: 700px;
+      height: 700px;
+      background: radial-gradient(circle, rgba(3, 4, 90, 0.40) 0%, rgba(3, 4, 90, 0) 70%);
+      top: -150px;
+      left: 10%;
+      animation-duration: 26s;
+    }
+
+    .blob-2 {
+      width: 850px;
+      height: 850px;
+      background: radial-gradient(circle, rgba(95, 168, 211, 0.13) 0%, rgba(95, 168, 211, 0) 70%);
+      top: 35%;
+      right: -200px;
+      animation-duration: 32s;
+      animation-delay: -6s;
+    }
+
+    .blob-3 {
+      width: 650px;
+      height: 650px;
+      background: radial-gradient(circle, rgba(201, 214, 232, 0.06) 0%, rgba(201, 214, 232, 0) 70%);
+      bottom: 5%;
+      left: -150px;
+      animation-duration: 28s;
+      animation-delay: -12s;
+    }
+
+    @keyframes floatBlob {
+      0% {
+        transform: translate(0, 0) scale(1);
+      }
+      50% {
+        transform: translate(60px, 40px) scale(1.08);
+      }
+      100% {
+        transform: translate(-40px, 80px) scale(0.95);
+      }
+    }
+
+    /* Fixed Noise Texture */
+    .noise-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      opacity: 0.025;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+
+    /* Container Utility */
+    .container {
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+      position: relative;
+      z-index: 2;
+    }
+
+    /* Typography */
+    h1, h2, h3, .font-display {
+      font-family: var(--font-display);
+      letter-spacing: -0.02em;
+      font-feature-settings: "liga" 1, "dlig" 1;
+    }
+
+    .font-mono {
+      font-family: var(--font-mono);
+    }
+
+    /* Section Label */
+    .section-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid rgba(201, 214, 232, 0.25);
+      padding: 0.35rem 0.85rem;
+      border-radius: var(--radius-pill);
+      margin-bottom: 1.25rem;
+    }
+
+    .section-eyebrow::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    /* Section Header */
+    .section-header {
+      text-align: center;
+      max-width: 760px;
+      margin: 0 auto 4rem auto;
+    }
+
+    .section-title {
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1.15;
+      margin-bottom: 1rem;
+      color: var(--text-1);
+    }
+
+    .section-title em {
+      font-style: italic;
+      color: var(--accent);
+    }
+
+    .section-subtitle {
+      font-size: 1.1rem;
+      color: var(--text-2);
+      line-height: 1.6;
+    }
+
+    /* Glass Surfaces */
+    .glass-card {
+      background: var(--glass);
+      backdrop-filter: blur(24px) saturate(180%) brightness(1.08);
+      -webkit-backdrop-filter: blur(24px) saturate(180%) brightness(1.08);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 var(--glass-border-specular),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+      transition: var(--transition);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .glass-card:hover {
+      background: var(--glass-hover);
+      border-color: var(--glass-border-bright);
+      transform: translateY(-2px);
+      box-shadow: 
+        var(--shadow-deep),
+        0 0 20px var(--glow-steel),
+        inset 0 1px 0 var(--glass-border-bright);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.65rem;
+      font-family: var(--font-sans);
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 0.75rem 1.65rem;
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      text-decoration: none;
+      transition: var(--transition);
+      border: 1px solid transparent;
+      outline: none;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: rgba(201, 214, 232, 0.14);
+      color: #FFFFFF;
+      border-color: rgba(201, 214, 232, 0.35);
+      box-shadow: 0 4px 18px rgba(95, 168, 211, 0.25), inset 0 1px 0 rgba(234, 242, 250, 0.2);
+    }
+
+    .btn-primary:hover {
+      background: rgba(201, 214, 232, 0.25);
+      color: #FFFFFF;
+      border-color: #C9D6E8;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 28px rgba(95, 168, 211, 0.45), inset 0 1px 0 rgba(234, 242, 250, 0.35);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-1);
+      border-color: var(--glass-border);
+      backdrop-filter: blur(12px);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.25);
+      transform: translateY(-2px);
+      color: #FFF;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-2);
+      border-color: transparent;
+    }
+
+    .btn-ghost:hover {
+      color: var(--text-1);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .btn-sm {
+      padding: 0.45rem 1rem;
+      font-size: 0.85rem;
+    }
+
+    .btn-gem {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: var(--text-1);
+    }
+
+    .btn-gem:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: #FFB020;
+      box-shadow: 0 0 16px rgba(255, 176, 32, 0.2);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.25rem 0.65rem;
+      border-radius: var(--radius-pill);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-pass {
+      background: rgba(0, 230, 118, 0.14);
+      color: #00E676;
+      border: 1px solid rgba(0, 230, 118, 0.30);
+    }
+
+    .badge-fail {
+      background: rgba(255, 77, 77, 0.14);
+      color: #FF4D4D;
+      border: 1px solid rgba(255, 77, 77, 0.30);
+    }
+
+    .badge-high {
+      background: rgba(255, 176, 32, 0.14);
+      color: #FFB020;
+      border: 1px solid rgba(255, 176, 32, 0.30);
+    }
+
+    .badge-unknown {
+      background: rgba(157, 123, 255, 0.14);
+      color: #B388FF;
+      border: 1px solid rgba(157, 123, 255, 0.30);
+    }
+
+    .badge-neutral {
+      background: rgba(234, 242, 250, 0.06);
+      color: rgba(201, 214, 232, 0.62);
+      border: 1px solid rgba(234, 242, 250, 0.12);
+    }
+
+    /* ==========================================================================
+       SECTION 1: NAVBAR
+       ========================================================================== */
+    .navbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 68px;
+      z-index: 100;
+      transition: var(--transition);
+      border-bottom: 1px solid transparent;
+    }
+
+    .navbar.scrolled {
+      background: rgba(2, 3, 41, 0.85);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border-bottom: 1px solid rgba(201, 214, 232, 0.11);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+    }
+
+    .nav-container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 100%;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      text-decoration: none;
+    }
+
+    .brand-logo {
+      font-family: var(--font-display);
+      font-size: 1.45rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      color: #FFFFFF;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .brand-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      display: inline-block;
+    }
+
+    .brand-badge {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid rgba(201, 214, 232, 0.25);
+      padding: 0.2rem 0.55rem;
+      border-radius: var(--radius-pill);
+      letter-spacing: 0.06em;
+      font-weight: 600;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1.75rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-2);
+      font-size: 0.92rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: var(--transition);
+      position: relative;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-1);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .role-pill {
+      height: 38px;
+      background: rgba(201, 214, 232, 0.05);
+      border: 1px solid rgba(201, 214, 232, 0.16);
+      padding: 0 1rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+      color: var(--text-2);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      transition: var(--transition);
+      box-sizing: border-box;
+    }
+
+    .role-pill:hover {
+      background: rgba(201, 214, 232, 0.10);
+      border-color: rgba(201, 214, 232, 0.35);
+      color: #FFFFFF;
+    }
+
+    .role-pill-indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+      flex-shrink: 0;
+    }
+
+    .btn-nav-signin {
+      height: 38px;
+      padding: 0 1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-1);
+      background: rgba(201, 214, 232, 0.08);
+      border: 1px solid rgba(201, 214, 232, 0.22);
+      border-radius: var(--radius-pill);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: var(--transition);
+      text-decoration: none;
+      box-sizing: border-box;
+    }
+
+    .btn-nav-signin:hover {
+      background: rgba(201, 214, 232, 0.18);
+      border-color: var(--accent);
+      color: #FFFFFF;
+      transform: translateY(-1px);
+    }
+
+    .hamburger {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-1);
+      cursor: pointer;
+      padding: 0.5rem;
+      height: 38px;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Mobile Drawer */
+    .mobile-drawer {
+      position: fixed;
+      top: 0;
+      right: -100%;
+      width: 320px;
+      height: 100vh;
+      background: rgba(2, 3, 41, 0.96);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border-left: 1px solid var(--glass-border);
+      z-index: 200;
+      padding: 2rem 1.5rem;
+      transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .mobile-drawer.open {
+      right: 0;
+    }
+
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 199;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+
+    .drawer-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* ==========================================================================
+       SECTION 2: HERO
+       ========================================================================== */
+    .hero {
+      min-height: auto;
+      padding-top: clamp(76px, 8.5vh, 92px);
+      padding-bottom: 2.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      text-align: center;
+      position: relative;
+    }
+
+    .hero-watermark {
+      position: absolute;
+      top: 36%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 680px;
+      height: 680px;
+      opacity: 0.035;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .hero-content {
+      max-width: 860px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 2;
+    }
+
+    .hero-headline {
+      font-size: clamp(2.4rem, 5.5vw, 4.2rem);
+      line-height: 1.08;
+      margin-bottom: 1.15rem;
+      font-weight: 300;
+    }
+
+    .hero-headline span {
+      display: block;
+      font-style: italic;
+      transition: var(--transition);
+    }
+
+    .hero-headline .line-1 {
+      color: rgba(255, 255, 255, 0.6);
+      font-weight: 300;
+    }
+
+    .hero-headline .line-2 {
+      color: rgba(255, 255, 255, 0.85);
+      font-weight: 500;
+    }
+
+    .hero-headline .line-3 {
+      color: #EAF2FA;
+      font-weight: 700;
+      text-shadow: 0 0 35px rgba(95, 168, 211, 0.40);
+    }
+
+    .hero-subheadline {
+      font-size: clamp(1.05rem, 1.8vw, 1.25rem);
+      color: var(--text-2);
+      max-width: 720px;
+      margin: 0 auto 1.45rem auto;
+      line-height: 1.6;
+    }
+
+    .hero-cta-cluster {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 3.5rem;
+    }
+
+    /* Glass Statistics Strip */
+    .stats-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1rem;
+      padding: 1.25rem 1.75rem;
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .stat-item {
+      text-align: center;
+      position: relative;
+    }
+
+    .stat-item:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      right: -0.5rem;
+      top: 15%;
+      height: 70%;
+      width: 1px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .stat-number {
+      font-family: var(--font-mono);
+      font-size: clamp(1.4rem, 2.4vw, 1.95rem);
+      font-weight: 700;
+      color: #FFFFFF;
+      margin-bottom: 0.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.15rem;
+    }
+
+    .stat-number .highlight {
+      color: var(--accent);
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 500;
+    }
+
+    .scroll-indicator {
+      margin-top: 3.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-3);
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      animation: pulseUpDown 2.2s infinite ease-in-out;
+    }
+
+    @keyframes pulseUpDown {
+      0%, 100% {
+        transform: translateY(0);
+        opacity: 0.5;
+      }
+      50% {
+        transform: translateY(6px);
+        opacity: 0.9;
+      }
+    }
+
+    /* ==========================================================================
+       SECTION 3: THE PROBLEM
+       ========================================================================== */
+    .problem-section {
+      padding: 5.5rem 0;
+      position: relative;
+    }
+
+    .story-container {
+      max-width: 820px;
+      margin: 0 auto;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 2.25rem;
+    }
+
+    .story-line {
+      font-family: var(--font-display);
+      font-size: clamp(1.65rem, 3.2vw, 2.6rem);
+      line-height: 1.25;
+      font-style: italic;
+      opacity: 0;
+      transform: translateY(28px);
+      transition: all 0.85s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .story-line.revealed {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .story-line.dim {
+      color: rgba(255, 255, 255, 0.45);
+    }
+
+    .story-line.medium {
+      color: rgba(255, 255, 255, 0.75);
+    }
+
+    .story-line.bright {
+      color: rgba(255, 255, 255, 0.95);
+    }
+
+    .story-line.accent {
+      color: #C9D6E8;
+      text-shadow: 0 0 25px rgba(95, 168, 211, 0.35);
+    }
+
+    .story-summary {
+      margin-top: 1.5rem;
+      font-size: 1.15rem;
+      line-height: 1.7;
+      color: var(--text-2);
+      max-width: 680px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ==========================================================================
+       SECTION 4: HOW IT WORKS
+       ========================================================================== */
+    .pipeline-section {
+      padding: 5.5rem 0;
+      position: relative;
+    }
+
+    .pipeline-wrapper {
+      position: relative;
+      margin-top: 3rem;
+    }
+
+    .pipeline-line-svg {
+      position: absolute;
+      top: 48px;
+      left: 5%;
+      width: 90%;
+      height: 4px;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .pipeline-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 1rem;
+      position: relative;
+      z-index: 2;
+    }
+
+    .pipeline-card {
+      padding: 2rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      position: relative;
+      opacity: 0;
+      transform: translateY(20px) scale(0.98);
+      transition: opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1), transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: opacity, transform;
+    }
+
+    .pipeline-card.is-revealed {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .pipeline-card {
+        opacity: 1 !important;
+        transform: none !important;
+        transition: none !important;
+      }
+      #pipelineProgressLine {
+        stroke-dashoffset: 0 !important;
+        transition: none !important;
+      }
+    }
+
+    /* Interactive Mouse Tilt Surfaces */
+    .tilt-card {
+      transform-style: preserve-3d;
+      transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease;
+      will-change: transform;
+    }
+
+    .pipeline-icon {
+      width: 48px;
+      height: 48px;
+      color: var(--accent);
+      margin-bottom: 1.25rem;
+    }
+
+    .pipeline-step-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #FFFFFF;
+      margin-bottom: 0.45rem;
+    }
+
+    .pipeline-step-desc {
+      font-size: 0.8rem;
+      color: var(--text-2);
+      line-height: 1.45;
+    }
+
+    /* ==========================================================================
+       SECTION 5: CAPABILITIES & FEATURE GRID - 9-CARD STAGGERED LOADING ANIMATION
+       ========================================================================== */
+    .capabilities-section {
+      padding: 5.5rem 0;
+      position: relative;
+    }
+
+    .capabilities-section .section-header {
+      max-width: 1050px;
+    }
+
+    .capabilities-section .section-subtitle {
+      white-space: nowrap;
+    }
+
+    @media (max-width: 900px) {
+      .capabilities-section .section-subtitle {
+        white-space: normal;
+      }
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+      margin-top: 2rem;
+    }
+
+    .feature-card {
+      padding: 1.65rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+      /* Initial state for loading animation */
+      opacity: 0;
+      transform: translateY(40px) scale(0.95);
+      filter: blur(5px);
+      transition: opacity 0.75s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.75s cubic-bezier(0.16, 1, 0.3, 1),
+                  filter 0.75s cubic-bezier(0.16, 1, 0.3, 1),
+                  border-color 0.28s ease,
+                  background 0.28s ease,
+                  box-shadow 0.28s ease;
+    }
+
+    /* Laser scanline across top border */
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--glacier), var(--sapphire), transparent);
+      opacity: 0;
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.85s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.6s ease;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    /* Holographic shimmer / light sweep beam */
+    .feature-card::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        115deg,
+        transparent 20%,
+        rgba(201, 214, 232, 0.04) 36%,
+        rgba(234, 242, 250, 0.25) 50%,
+        rgba(95, 168, 211, 0.16) 64%,
+        transparent 80%
+      );
+      transform: translateX(-160%);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* Icon box loading pop */
+    .feature-card .feature-icon-box {
+      transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.6s ease;
+      transform: scale(0.85);
+    }
+
+    /* Activated state when each card is revealed one-by-one as user scrolls */
+    .feature-card.revealed {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      filter: blur(0);
+    }
+
+    .feature-card.revealed::before {
+      opacity: 0.95;
+      transform: scaleX(1);
+    }
+
+    .feature-card.revealed .feature-icon-box {
+      transform: scale(1);
+      box-shadow: 0 0 20px rgba(95, 168, 211, 0.35);
+    }
+
+    .feature-card.revealed::after {
+      animation: cardSweepGlow 1.15s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    }
+
+    /* Instant 0s delay on hover so tilt-card and hover state respond immediately */
+    .feature-card:hover {
+      transition-delay: 0s !important;
+    }
+
+    @keyframes cardSweepGlow {
+      0% {
+        transform: translateX(-160%);
+        opacity: 0;
+      }
+      30% {
+        opacity: 1;
+      }
+      100% {
+        transform: translateX(170%);
+        opacity: 0;
+      }
+    }
+
+    .feature-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+
+    .feature-icon-box {
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius-sm);
+      background: rgba(201, 214, 232, 0.08);
+      border: 1px solid rgba(201, 214, 232, 0.20);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+    }
+
+    .feature-title {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: #FFFFFF;
+      margin-bottom: 0.45rem;
+      line-height: 1.35;
+    }
+
+    .feature-desc {
+      font-size: 0.88rem;
+      color: var(--text-2);
+      line-height: 1.55;
+      margin-bottom: 1rem;
+    }
+
+    .feature-mockup {
+      background: rgba(0, 0, 0, 0.40);
+      border: 1px solid rgba(201, 214, 232, 0.11);
+      border-radius: var(--radius-sm);
+      padding: 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+    }
+
+    /* Mini Mockups inside Feature Cards */
+    .registry-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .registry-chip {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.28rem 0.55rem;
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-2);
+      font-size: 0.72rem;
+    }
+
+    .registry-chip.active {
+      border-color: rgba(201, 214, 232, 0.30);
+      color: var(--text-1);
+    }
+
+    .dot-pulse {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--pass);
+      box-shadow: 0 0 8px var(--pass);
+    }
+
+    .rag-input-box {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .rag-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--radius-sm);
+      padding: 0.45rem 0.75rem;
+      color: var(--text-1);
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      outline: none;
+    }
+
+    .rag-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 10px rgba(95, 168, 211, 0.30);
+    }
+
+    /* ==========================================================================
+       SECTION 6: SCROLL-PINNED DASHBOARD STORY
+       ========================================================================== */
+    .pinned-story-section {
+      position: relative;
+      height: 280vh;
+      background: linear-gradient(180deg, transparent 0%, rgba(95, 168, 211, 0.04) 50%, transparent 100%);
+    }
+
+    .pinned-sticky-container {
+      position: sticky;
+      top: 90px;
+      height: calc(100vh - 110px);
+      display: flex;
+      align-items: center;
+      gap: 2.5rem;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    .story-left {
+      flex: 0 0 40%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2rem;
+    }
+
+    .story-step-indicator {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .step-pill {
+      height: 4px;
+      width: 32px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.15);
+      transition: var(--transition);
+    }
+
+    .step-pill.active {
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      width: 48px;
+    }
+
+    .story-narrative-box {
+      min-height: 180px;
+    }
+
+    .story-title {
+      font-size: clamp(1.8rem, 2.5vw, 2.4rem);
+      line-height: 1.15;
+      margin-bottom: 0.85rem;
+      color: #FFFFFF;
+    }
+
+    .story-desc {
+      font-size: 1.05rem;
+      color: var(--text-2);
+      line-height: 1.6;
+    }
+
+    .story-controls {
+      display: grid;
+      grid-template-columns: auto auto auto;
+      column-gap: 0.5rem;
+      row-gap: 1.45rem;
+      margin-top: 1.25rem;
+      width: fit-content;
+    }
+
+    .story-tab-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 0.45rem 0.95rem;
+      border-radius: var(--radius-pill);
+      color: var(--text-2);
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: var(--transition);
+      font-family: var(--font-sans);
+      white-space: nowrap;
+    }
+
+    .story-tab-btn.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    #switchBidderBtn {
+      grid-column: 2;
+      grid-row: 2;
+      justify-self: center;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 0.75rem 1.65rem;
+      line-height: 1.25;
+      min-width: 185px;
+      gap: 0.22rem;
+      border-radius: var(--radius-pill);
+      background: rgba(201, 214, 232, 0.09);
+      border: 1.5px solid rgba(201, 214, 232, 0.32);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(234, 242, 250, 0.2);
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    #switchBidderBtn:hover {
+      background: rgba(201, 214, 232, 0.18);
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 26px rgba(95, 168, 211, 0.35), inset 0 1px 0 rgba(234, 242, 250, 0.35);
+    }
+
+    #switchBidderBtn:active {
+      transform: translateY(0);
+    }
+
+    .switch-bidder-sub {
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text-2);
+      line-height: 1.2;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .switch-bidder-name {
+      font-size: 1.08rem;
+      font-weight: 700;
+      color: #FFFFFF;
+      line-height: 1.25;
+      letter-spacing: -0.01em;
+    }
+
+    /* Right Side: 3D Perspective Glass Mockup */
+    .story-right {
+      flex: 0 0 58%;
+      perspective: 1200px;
+    }
+
+    .mockup-frame {
+      background: rgba(2, 3, 41, 0.75);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid rgba(201, 214, 232, 0.14);
+      border-radius: var(--radius-lg);
+      box-shadow: 
+        0 24px 70px rgba(0, 0, 0, 0.70),
+        0 0 40px rgba(95, 168, 211, 0.20),
+        inset 0 1px 0 rgba(234, 242, 250, 0.14);
+      padding: 1.5rem;
+      transform: rotateY(-5deg) rotateX(2deg);
+      transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .mockup-frame:hover {
+      transform: rotateY(0deg) rotateX(0deg);
+    }
+
+    .mockup-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 1rem;
+    }
+
+    .mockup-dots {
+      display: flex;
+      gap: 0.4rem;
+    }
+
+    .mockup-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .mockup-tender-info {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-2);
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .mockup-metrics-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.65rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .metric-chip {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: var(--radius-sm);
+      padding: 0.65rem;
+    }
+
+    .metric-chip-val {
+      font-family: var(--font-mono);
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #FFF;
+    }
+
+    .metric-chip-label {
+      font-size: 0.7rem;
+      color: var(--text-2);
+      text-transform: uppercase;
+    }
+
+    /* Mockup Interactive Body Views */
+    .mockup-view {
+      display: none;
+      animation: fadeIn 0.4s ease-out forwards;
+    }
+
+    .mockup-view.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Matrix Table Mockup */
+    .compliance-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+    }
+
+    .compliance-table th {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      color: var(--text-3);
+      font-weight: 500;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+    }
+
+    .compliance-table td {
+      padding: 0.65rem 0.75rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-2);
+    }
+
+    .compliance-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-1);
+    }
+
+    /* ==========================================================================
+       SECTION 7: NUMBERS THAT MATTER
+       ========================================================================== */
+    .numbers-section {
+      padding: 5.5rem 0;
+      position: relative;
+    }
+
+    .numbers-section .section-header {
+      max-width: 1100px;
+      margin: 0 auto 3.5rem auto;
+    }
+
+    .numbers-section .section-title {
+      white-space: nowrap;
+      font-size: clamp(1.1rem, 3.4vw, 2.75rem);
+    }
+
+    .numbers-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+      text-align: center;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    .number-col {
+      padding: 2.5rem 1.5rem;
+      position: relative;
+    }
+
+    .number-col:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      right: -1rem;
+      top: 20%;
+      height: 60%;
+      width: 1px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .big-num {
+      font-family: var(--font-display);
+      font-size: clamp(3rem, 5.5vw, 4.5rem);
+      font-style: italic;
+      line-height: 1;
+      margin-bottom: 1rem;
+      color: #FFFFFF;
+    }
+
+    .big-num em {
+      color: var(--accent);
+      font-style: normal;
+    }
+
+    .big-num-desc {
+      font-size: 1.05rem;
+      color: var(--text-2);
+      line-height: 1.5;
+    }
+
+    .numbers-source {
+      text-align: center;
+      margin-top: 3rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-3);
+    }
+
+    /* ==========================================================================
+       SECTION 8: THE CREED
+       ========================================================================== */
+    .creed-section {
+      padding: 5.5rem 0;
+      position: relative;
+    }
+
+    .creed-section .container {
+      max-width: 1200px;
+    }
+
+    .creed-card {
+      padding: 4.5rem 2.5rem;
+      text-align: center;
+      background: linear-gradient(135deg, rgba(201, 214, 232, 0.08) 0%, rgba(95, 168, 211, 0.08) 100%);
+      border: 1px solid rgba(201, 214, 232, 0.22);
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.50), 0 0 30px rgba(95, 168, 211, 0.18);
+    }
+
+    .creed-text {
+      font-family: var(--font-display);
+      font-size: clamp(1.35rem, 2.55vw, 2.25rem);
+      font-style: italic;
+      font-weight: 500;
+      letter-spacing: -0.015em;
+      line-height: 1.45;
+      color: #FFFFFF;
+      margin-bottom: 1.75rem;
+      max-width: 1180px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .creed-line {
+      display: block;
+      white-space: nowrap;
+    }
+
+    .creed-line.creed-highlight {
+      color: var(--accent);
+    }
+
+    .creed-subtext {
+      font-size: 1.12rem;
+      color: var(--text-2);
+      line-height: 1.65;
+      max-width: 740px;
+      margin: 0 auto;
+    }
+
+    /* ==========================================================================
+       SECTION 9: EVIDENCE TRACE
+       ========================================================================== */
+    .evidence-section {
+      padding: 5.5rem 0;
+    }
+
+    .evidence-layout {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr;
+      gap: 3rem;
+      align-items: center;
+    }
+
+    .evidence-bullets {
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+      margin-top: 1.5rem;
+    }
+
+    .evidence-bullet-card {
+      padding: 1.1rem 1.35rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .evidence-bullet-icon {
+      color: var(--accent);
+      flex-shrink: 0;
+      margin-top: 0.15rem;
+    }
+
+    .evidence-bullet-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #FFF;
+      margin-bottom: 0.2rem;
+    }
+
+    .evidence-bullet-desc {
+      font-size: 0.86rem;
+      color: var(--text-2);
+      line-height: 1.45;
+    }
+
+    .evidence-mockup-card {
+      padding: 1.85rem;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .evidence-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .source-snippet-box {
+      background: rgba(0, 0, 0, 0.40);
+      border: 1px solid rgba(201, 214, 232, 0.11);
+      border-left: 3px solid var(--accent);
+      padding: 1.15rem 1.25rem;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--text-2);
+      margin-bottom: 1.25rem;
+      line-height: 1.65;
+    }
+
+    .source-snippet-box mark {
+      background: rgba(95, 168, 211, 0.25);
+      color: #FFFFFF;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    .registry-proof-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.85rem;
+    }
+
+    .proof-item {
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 0.85rem 1rem;
+      border-radius: var(--radius-sm);
+    }
+
+    .proof-label {
+      font-size: 0.68rem;
+      color: var(--text-3);
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      margin-bottom: 0.25rem;
+    }
+
+    .proof-val {
+      font-size: 0.85rem;
+      font-family: var(--font-mono);
+      color: var(--text-1);
+    }
+
+    /* ==========================================================================
+       SECTION 10: GOVERNANCE & AUDITOR STUDIO
+       ========================================================================== */
+    .governance-section {
+      padding: 5.5rem 0;
+    }
+
+    .perspective-toggle-bar {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-bottom: 3rem;
+    }
+
+    .perspective-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 0.75rem 1.5rem;
+      border-radius: var(--radius-pill);
+      color: var(--text-2);
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: var(--transition);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .perspective-btn.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: #FFF;
+      box-shadow: 0 0 20px rgba(95, 168, 211, 0.30);
+    }
+
+    .governance-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+
+    .audit-event-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+    }
+
+
+
+    /* ==========================================================================
+       SECTION 14: FOOTER
+       ========================================================================== */
+    .footer {
+      border-top: 1px solid rgba(201, 214, 232, 0.11);
+      padding: 4.5rem 0 2.5rem 0;
+      background: rgba(1, 2, 23, 0.80);
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr 1fr 1fr;
+      gap: 3rem;
+      margin-bottom: 4rem;
+    }
+
+    .footer-col-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #FFF;
+      margin-bottom: 1.25rem;
+      letter-spacing: 0.04em;
+    }
+
+    .footer-links {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .footer-links a {
+      color: var(--text-2);
+      font-size: 0.88rem;
+      text-decoration: none;
+      transition: var(--transition);
+    }
+
+    .footer-links a:hover {
+      color: var(--accent);
+      padding-left: 4px;
+    }
+
+    .footer-bottom {
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding-top: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      color: var(--text-3);
+    }
+
+    /* ==========================================================================
+       MODALS & TOASTS
+       ========================================================================== */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-card {
+      background: rgba(3, 4, 90, 0.94);
+      border: 1px solid rgba(201, 214, 232, 0.18);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.8), 0 0 30px rgba(95, 168, 211, 0.20);
+      width: 100%;
+      max-width: 480px;
+      padding: 2.25rem;
+      transform: translateY(24px) scale(0.96);
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+
+    .modal-overlay.open .modal-card {
+      transform: translateY(0) scale(1);
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 1.25rem;
+      right: 1.25rem;
+      background: none;
+      border: none;
+      color: var(--text-2);
+      font-size: 1.25rem;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .modal-close:hover {
+      color: #FFF;
+    }
+
+    .modal-tabs {
+      display: flex;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 0.35rem;
+      border-radius: var(--radius-pill);
+      margin: 1.5rem 0;
+    }
+
+    .modal-tab-btn {
+      flex: 1;
+      background: none;
+      border: none;
+      color: var(--text-2);
+      padding: 0.55rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .modal-tab-btn.active {
+      background: var(--accent-dim);
+      color: #FFFFFF;
+    }
+
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--text-2);
+      margin-bottom: 0.45rem;
+      font-weight: 500;
+    }
+
+    .form-input {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--radius-sm);
+      padding: 0.75rem 1rem;
+      color: #FFF;
+      font-size: 0.9rem;
+      outline: none;
+      transition: var(--transition);
+      font-family: var(--font-sans);
+    }
+
+    .form-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 15px rgba(95, 168, 211, 0.30);
+    }
+
+    /* Toast Container */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: rgba(3, 4, 90, 0.94);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(201, 214, 232, 0.18);
+      border-left: 4px solid var(--accent);
+      border-radius: var(--radius-sm);
+      padding: 1rem 1.25rem;
+      color: #FFF;
+      font-size: 0.88rem;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 20px rgba(95, 168, 211, 0.20);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      pointer-events: auto;
+      transform: translateY(16px);
+      opacity: 0;
+      transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      max-width: 380px;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .toast.toast-pass { border-left-color: var(--pass); }
+    .toast.toast-high { border-left-color: var(--high); }
+    .toast.toast-critical { border-left-color: var(--critical); }
+
+    /* Scroll Animation Base */
+    .reveal-on-scroll {
+      opacity: 0;
+      transform: translateY(32px);
+      transition: opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1), transform 0.85s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .reveal-on-scroll.revealed {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .pipeline-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .pipeline-line-svg {
+        display: none;
+      }
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+      }
+      .features-grid > .feature-card:last-child {
+        grid-column: span 2;
+      }
+      .feature-card.col-span-2 {
+        grid-column: span 2;
+      }
+      .pinned-sticky-container {
+        flex-direction: column;
+        height: auto;
+        position: relative;
+        top: 0;
+      }
+      .pinned-story-section {
+        height: auto;
+        padding: 6rem 0;
+      }
+      .story-left, .story-right {
+        flex: 0 0 100%;
+        width: 100%;
+      }
+      .mockup-frame {
+        transform: none;
+      }
+      .evidence-layout, .governance-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links {
+        display: none;
+      }
+      .hamburger {
+        display: block;
+      }
+      .nav-actions {
+        gap: 0.6rem;
+      }
+      .role-pill {
+        display: inline-flex;
+        padding: 0 0.65rem;
+        font-size: 0.72rem;
+      }
+      .stats-strip {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .stat-item:not(:last-child)::after {
+        display: none;
+      }
+      .features-grid, .numbers-grid {
+        grid-template-columns: 1fr;
+      }
+      .feature-card.col-span-2 {
+        grid-column: span 1;
+      }
+      .pipeline-grid {
+        grid-template-columns: 1fr;
+      }
+      .footer-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+      .creed-line {
+        white-space: normal;
+      }
+    }
+    
+    @media (max-width: 560px) {
+      .brand-badge {
+        display: none;
+      }
+      .nav-actions {
+        gap: 0.45rem;
+      }
+      .role-pill {
+        display: inline-flex;
+        padding: 0 0.55rem;
+        font-size: 0.70rem;
+      }
+      .btn-nav-signin {
+        padding: 0 0.85rem;
+        font-size: 0.78rem;
+      }
+      .story-controls {
+        grid-template-columns: 1fr;
+        width: 100%;
+      }
+      #switchBidderBtn {
+        grid-column: 1;
+        grid-row: auto;
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .role-pill {
+        display: none;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .footer-grid {
+        grid-template-columns: 1fr;
+      }
+      .footer-bottom {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Ambient Mesh Background -->
+  <div class="ambient-mesh" aria-hidden="true">
+    <div class="ambient-blob blob-1"></div>
+    <div class="ambient-blob blob-2"></div>
+    <div class="ambient-blob blob-3"></div>
+  </div>
+
+  <!-- Noise Texture Overlay -->
+  <div class="noise-overlay" aria-hidden="true"></div>
+
+  <!-- ==========================================================================
+       SECTION 1: NAVBAR
+       ========================================================================== -->
+  <nav class="navbar" id="navbar">
+    <div class="container nav-container">
+      <a href="#" class="brand-group">
+        <span class="brand-logo">
+          ARGUS<span class="brand-dot"></span>
+        </span>
+        <span class="brand-badge">GeM INTELLIGENCE</span>
+      </a>
+
+      <ul class="nav-links">
+        <li><a href="#pipeline">Pipeline</a></li>
+        <li><a href="#capabilities">Capabilities</a></li>
+        <li><a href="#dashboard">Live Matrix</a></li>
+        <li><a href="#evidence">Evidence Trace</a></li>
+        <li><a href="#governance">Governance</a></li>
+      </ul>
+
+      <div class="nav-actions">
+        <button class="btn-nav-signin" id="navSignInBtn">Sign In</button>
+        <button class="hamburger" id="hamburgerBtn" aria-label="Open Navigation Drawer">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Mobile Drawer -->
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+  <div class="mobile-drawer" id="mobileDrawer">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <span class="brand-logo">ARGUS<span class="brand-dot"></span></span>
+      <button id="drawerCloseBtn" style="background:none; border:none; color:#FFF; font-size:1.5rem; cursor:pointer;">&times;</button>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1.5rem;">
+      <a href="#pipeline" class="btn btn-ghost" style="justify-content: flex-start;">Pipeline</a>
+      <a href="#capabilities" class="btn btn-ghost" style="justify-content: flex-start;">Capabilities</a>
+      <a href="#dashboard" class="btn btn-ghost" style="justify-content: flex-start;">Live Matrix</a>
+      <a href="#evidence" class="btn btn-ghost" style="justify-content: flex-start;">Evidence Trace</a>
+      <a href="#governance" class="btn btn-ghost" style="justify-content: flex-start;">Governance</a>
+    </div>
+    <div style="margin-top: auto; display: flex; flex-direction: column; gap: 0.75rem;">
+      <button class="role-pill" id="drawerRoleBtn" style="height: 38px; width: 100%; justify-content: center;" title="Click to switch persona">
+        <span class="role-pill-indicator"></span>
+        <span id="drawerRoleText">PROCUREMENT OFFICER</span>
+      </button>
+      <button class="btn btn-secondary" id="mobileSignInBtn" style="width:100%; justify-content:center;">Sign In</button>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       SECTION 2: HERO
+       ========================================================================== -->
+  <header class="hero">
+    <!-- Indian National Seal Watermark Outline -->
+    <svg class="hero-watermark" viewBox="0 0 200 200" fill="none" stroke="currentColor" stroke-width="1.5">
+      <circle cx="100" cy="100" r="85"></circle>
+      <circle cx="100" cy="100" r="72" stroke-dasharray="4 4"></circle>
+      <circle cx="100" cy="100" r="24"></circle>
+      <path d="M100 28 L100 172 M28 100 L172 100 M49 49 L151 151 M49 151 L151 49"></path>
+    </svg>
+
+    <div class="container hero-content">
+      <h1 class="hero-headline">
+        <span class="line-1">800 tender clauses.</span>
+        <span class="line-2">40 complex bidder binders.</span>
+        <span class="line-3">Zero manual blindspots. Until now.</span>
+      </h1>
+
+      <p class="hero-subheadline">
+        ARGUS autonomously ingests scanned GeM tenders, parses compliance rules, queries live government registries, evaluates deterministic eligibility with zero hallucinations, and arms procurement officers with audit-ready, traceable dossiers.
+      </p>
+
+      <!-- Glass Statistics Strip -->
+      <div class="glass-card stats-strip reveal-on-scroll">
+        <div class="stat-item">
+          <div class="stat-number"><span class="highlight">₹</span><span class="count-up" data-target="4850">0</span><span class="highlight">Cr+</span></div>
+          <div class="stat-label">Tender Value Screened</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-number"><span class="count-up" data-target="14200">0</span><span class="highlight">+</span></div>
+          <div class="stat-label">Clauses Evaluated</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-number">6/6</div>
+          <div class="stat-label">Live Registry Gateways</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-number"><span class="count-up" data-target="100">0</span><span class="highlight">%</span></div>
+          <div class="stat-label">Deterministic Replay</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-number">0</div>
+          <div class="stat-label">AI Hallucinations Allowed</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==========================================================================
+       SECTION 3: THE PROBLEM (Storytelling)
+       ========================================================================== -->
+  <section class="problem-section" id="problem">
+    <div class="container story-container">
+      <p class="story-line dim" data-story="1">“Every week, Indian government departments evaluate thousands of public tenders on GeM.”</p>
+      <p class="story-line medium" data-story="2">“Hundreds of pages of scanned PDFs. Forged CA turnover certificates. Expired OEM authorizations.”</p>
+      <p class="story-line medium" data-story="3">“Officers spend 18 days per tender manually cross-checking documents against government portals.”</p>
+      <p class="story-line bright" data-story="4">“And critical disqualifications still slip through.”</p>
+      <p class="story-line accent" data-story="5">“Because humans get fatigued. Scanned tables blur. And manual scrutiny does not scale.”</p>
+      
+      <p class="story-summary reveal-on-scroll">
+        ARGUS bridges the gap between chaotic multi-hundred page bidder submissions and statutory public procurement integrity. By combining non-authoritative AI extraction with pure mathematical rule verification, we ensure no collusive bidder or non-compliant claim ever goes unnoticed.
+      </p>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       SECTION 4: HOW IT WORKS (6-Stage Pipeline)
+       ========================================================================== -->
+  <section class="pipeline-section" id="pipeline">
+    <div class="container">
+      <div class="section-header reveal-on-scroll">
+        <h2 class="section-title">From raw bid submission to authoritative qualification. <em>Fully automated.</em></h2>
+        <p class="section-subtitle">A multi-stage deterministic pipeline architected to protect public funds with cryptographic proof.</p>
+      </div>
+
+      <div class="pipeline-wrapper">
+        <!-- SVG Connection Line with dynamic pathLength -->
+        <svg class="pipeline-line-svg" viewBox="0 0 1000 4" fill="none" preserveAspectRatio="none">
+          <line x1="0" y1="2" x2="1000" y2="2" stroke="rgba(255,255,255,0.12)" stroke-width="2" stroke-dasharray="6 6"></line>
+          <line id="pipelineProgressLine" x1="0" y1="2" x2="1000" y2="2" stroke="#C9D6E8" stroke-width="2"></line>
+        </svg>
+
+        <div class="pipeline-grid" id="pipelineGrid">
+          <!-- Step 1 -->
+          <div class="glass-card pipeline-card tilt-card" data-stage="1">
+            <svg class="pipeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            <h3 class="pipeline-step-title">Ingest & Hash</h3>
+            <p class="pipeline-step-desc">Magic-byte validation, zero-byte guard, 20MB streaming, and SHA-256 cryptographic fingerprinting.</p>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="glass-card pipeline-card tilt-card" data-stage="2">
+            <svg class="pipeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <h3 class="pipeline-step-title">Extract & OCR</h3>
+            <p class="pipeline-step-desc">Contract-versioned intelligence isolates tender requirements and bidder claims without granting AI final authority.</p>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="glass-card pipeline-card tilt-card" data-stage="3">
+            <svg class="pipeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            <h3 class="pipeline-step-title">Registry Gateway</h3>
+            <p class="pipeline-step-desc">Real-time queries to GSTN, Udyam MSME, MCA21, EPFO, ESIC, and GeM Central Blacklist registries.</p>
+          </div>
+
+          <!-- Step 4 -->
+          <div class="glass-card pipeline-card tilt-card" data-stage="4">
+            <svg class="pipeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <h3 class="pipeline-step-title">Deterministic Rules</h3>
+            <p class="pipeline-step-desc">Pure functional evaluation of numerical thresholds, Indian financial scales (Crores/Lakhs), and temporal clocks.</p>
+          </div>
+
+          <!-- Step 5 -->
+          <div class="glass-card pipeline-card tilt-card" data-stage="5">
+            <svg class="pipeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <h3 class="pipeline-step-title">Risk Radar</h3>
+            <p class="pipeline-step-desc">Stateless detection of cross-bidder document sharing, GSTIN-PAN mismatches, and expired OEM authorizations.</p>
+          </div>
+
+          <!-- Step 6 -->
+          <div class="glass-card pipeline-card tilt-card" data-stage="6">
+            <svg class="pipeline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><polyline points="17 11 19 13 23 9"></polyline></svg>
+            <h3 class="pipeline-step-title">Officer Decision</h3>
+            <p class="pipeline-step-desc">Procurement Officer records qualification decision with immutable user attribution and frozen snapshot provenance.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       SECTION 5: CAPABILITIES & FEATURE GRID
+       ========================================================================== -->
+  <section class="capabilities-section" id="capabilities">
+    <div class="container">
+      <div class="section-header reveal-on-scroll">
+        <h2 class="section-title">Everything public procurement committees need.<br><em>Zero guesswork.</em></h2>
+        <p class="section-subtitle">Designed specifically for the strict statutory constraints of Indian Government GFR 2017 & GeM SOPs.</p>
+      </div>
+
+      <div class="features-grid" id="featuresGrid">
+        <!-- Card 1: Ingestion Engine -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+              </div>
+              <span class="badge badge-pass">PHASE 7 HARDENED</span>
+            </div>
+            <h3 class="feature-title">Smart Document Ingestion & Integrity Containment</h3>
+            <p class="feature-desc" style="margin-bottom:0; line-height:1.65;">Rejects corrupt uploads, dangerous extensions, and path traversals. Employs chunked 64KB streaming up to 20MB, validates raw magic headers (%PDF-, PNG, JPEG), and binds every document to an immutable SHA-256 digest.</p>
+          </div>
+        </div>
+
+        <!-- Card 2: Human Rule Approval -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              </div>
+              <span class="badge badge-neutral">AI ISOLATION</span>
+            </div>
+            <h3 class="feature-title">Human-in-the-Loop Rule Approval</h3>
+            <p class="feature-desc" style="margin-bottom:0; line-height:1.65;">AI extracts candidate tender clauses, but defaults to is_approved=False. Only authorized officers can approve rules, preventing hallucinated thresholds from entering evaluation.</p>
+          </div>
+        </div>
+
+        <!-- Card 3: 6-Registry Live Gateway -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+              </div>
+              <span class="badge badge-pass">6 LIVE ADAPTERS</span>
+            </div>
+            <h3 class="feature-title">6-Registry Verification Gateway</h3>
+            <p class="feature-desc">Live adapters with bounded 10s timeouts, safe idempotent retries, and strict provenance tracking across primary government databases.</p>
+          </div>
+          <div class="registry-chips">
+            <div class="registry-chip active"><span class="dot-pulse"></span> GSTIN (Active)</div>
+            <div class="registry-chip active"><span class="dot-pulse"></span> Udyam (MSME)</div>
+            <div class="registry-chip active"><span class="dot-pulse"></span> MCA21 (CIN/DIN)</div>
+            <div class="registry-chip active"><span class="dot-pulse"></span> EPFO (Challan)</div>
+            <div class="registry-chip active"><span class="dot-pulse"></span> ESIC (Returns)</div>
+            <div class="registry-chip active"><span class="dot-pulse"></span> Debarment List</div>
+          </div>
+        </div>
+
+        <!-- Card 4: Deterministic Engine -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+              </div>
+              <span class="badge badge-pass">ENGINE V2.0</span>
+            </div>
+            <h3 class="feature-title">Deterministic Compliance Matrix & Scale Normalizer</h3>
+            <p class="feature-desc" style="margin-bottom:0; line-height:1.65;">Pure functional engine with 12+ operators (EQ, GTE, EXISTS, COUNT_GTE). Enforces strict Decimal(38) bounds, prevents currency bypasses, and resolves Indian financial scales (Crores vs Lakhs) with zero confusion.</p>
+          </div>
+        </div>
+
+        <!-- Card 5: Stateless Risk Radar -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+              </div>
+              <span class="badge badge-fail">COLLUSION DETECTOR</span>
+            </div>
+            <h3 class="feature-title">Pure Stateless Risk Radar</h3>
+            <p class="feature-desc" style="margin-bottom:0; line-height:1.65;">Zero DB side-effects. Analyzes cross-bidder document SHA-256 reuse, GSTIN-PAN structural discrepancies, and OEM authorization validity dates.</p>
+          </div>
+        </div>
+
+        <!-- Card 6: RAG Procurement Search -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              </div>
+              <span class="badge badge-pass">RAG ENGINE</span>
+            </div>
+            <h3 class="feature-title">RAG Knowledge Retrieval</h3>
+            <p class="feature-desc" style="margin-bottom:0; line-height:1.65;">Semantic search over GFR 2017 Chapter 6, GeM SOP v3.2, and CVC vigilance guidelines. Instant clause extraction with statutory citations.</p>
+          </div>
+        </div>
+
+        <!-- Card 7: Requirement-Scoped Exemptions -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+              </div>
+              <span class="badge badge-pass">STRICT SCOPING</span>
+            </div>
+            <h3 class="feature-title">Requirement-Scoped Exemptions</h3>
+            <p class="feature-desc" style="margin-bottom:0; font-size:0.92rem; line-height:1.7; max-width:96%;">
+              Rejects blanket <code style="font-family:var(--font-mono); font-size:0.82rem; color:var(--accent); background:rgba(201,214,232,0.08); padding:0.15rem 0.35rem; border-radius:4px;">is_exempt=True</code> bypasses.<br>
+              Exemption policies are strictly scoped to specific tender requirement IDs, authorized statutory categories, and validated registry evidence.
+            </p>
+          </div>
+        </div>
+
+        <!-- Card 8: Historical Snapshot Provenance -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+              </div>
+              <span class="badge badge-pass">IMMUTABLE ARCHIVE</span>
+            </div>
+            <h3 class="feature-title">Authoritative Historical Snapshots</h3>
+            <p class="feature-desc" style="margin-bottom:0; line-height:1.65;">Reports reconstruct strictly from input_snapshot_json. Re-running extractions or modifying databases never alters historical tender audit compliance outcomes.</p>
+          </div>
+        </div>
+
+        <!-- Card 9: One-Click Audit Export -->
+        <div class="glass-card feature-card tilt-card">
+          <div>
+            <div class="feature-header">
+              <div class="feature-icon-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              </div>
+              <span class="badge badge-pass">AUDIT READY</span>
+            </div>
+            <h3 class="feature-title">One-Click Compliance Dossier</h3>
+            <p class="feature-desc" style="margin-bottom:0; line-height:1.65;">Export comprehensive bid scrutiny packages for CAG audit, Vigilance review, and judicial scrutiny with full cryptographic checksums.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       SECTION 6: SCROLL-PINNED DASHBOARD STORY
+       ========================================================================== -->
+  <section class="pinned-story-section" id="dashboard">
+    <div class="pinned-sticky-container">
+      <!-- Story Narrative (Left 40%) -->
+      <div class="story-left">
+        <div class="story-step-indicator">
+          <div class="step-pill active" id="pill1"></div>
+          <div class="step-pill" id="pill2"></div>
+          <div class="step-pill" id="pill3"></div>
+        </div>
+
+        <div class="story-narrative-box">
+          <h2 class="story-title" id="storyTitle">The Full Compliance Picture. Instantaneously.</h2>
+          <p class="story-desc" id="storyDesc">Tender GEM/2026/B/4521089 requirements automatically extracted. Review and authorize rules before deterministic evaluation begins.</p>
+        </div>
+
+        <div class="story-controls">
+          <button class="story-tab-btn active" data-step="1">1. Ingestion & Approval</button>
+          <button class="story-tab-btn" data-step="2">2. Compliance Matrix</button>
+          <button class="story-tab-btn" data-step="3">3. Risk & Decision</button>
+          <button class="btn btn-secondary" id="switchBidderBtn">
+            <span class="switch-bidder-sub">Switch to</span>
+            <span class="switch-bidder-name" id="switchBidderName">Bidder Bharat</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 3D Mockup Frame (Right 60%) -->
+      <div class="story-right">
+        <div class="mockup-frame tilt-card">
+          <div class="mockup-header">
+            <div class="mockup-dots">
+              <div class="mockup-dot" style="background:#FF5F56;"></div>
+              <div class="mockup-dot" style="background:#FFBD2E;"></div>
+              <div class="mockup-dot" style="background:#27C93F;"></div>
+            </div>
+            <div class="mockup-tender-info">
+              <span>GeM: <strong style="color:#FFF;">GEM/2026/B/4521089</strong></span>
+              <span>•</span>
+              <span id="currentBidderName" style="color:var(--accent);">Alpha Infotech Pvt Ltd</span>
+            </div>
+            <span class="badge badge-pass" id="mockupStatusBadge">QUALIFIED (ALL PASS)</span>
+          </div>
+
+          <div class="mockup-metrics-row">
+            <div class="metric-chip">
+              <div class="metric-chip-val">₹5.00 Cr</div>
+              <div class="metric-chip-label">Tender Value</div>
+            </div>
+            <div class="metric-chip">
+              <div class="metric-chip-val" id="metricEvaluated">8 / 8</div>
+              <div class="metric-chip-label">Clauses Evaluated</div>
+            </div>
+            <div class="metric-chip">
+              <div class="metric-chip-val" style="color:var(--pass);" id="metricPassRate">100%</div>
+              <div class="metric-chip-label">Pass Rate</div>
+            </div>
+            <div class="metric-chip">
+              <div class="metric-chip-val" style="color:var(--accent);" id="metricRiskCount">0 Flags</div>
+              <div class="metric-chip-label">Risk Signals</div>
+            </div>
+          </div>
+
+          <!-- View 1: Tender Requirements & Rule Approval -->
+          <div class="mockup-view active" id="view1">
+            <div style="font-size:0.75rem; color:var(--text-3); margin-bottom:0.6rem; text-transform:uppercase; font-family:var(--font-mono);">
+              Extracted Tender Eligibility Requirements
+            </div>
+            <table class="compliance-table">
+              <thead>
+                <tr>
+                  <th>Clause</th>
+                  <th>Requirement</th>
+                  <th>Threshold</th>
+                  <th>Mandatory</th>
+                  <th>Approval</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>2.1</td>
+                  <td>Valid GSTIN</td>
+                  <td>Active Status</td>
+                  <td><span class="badge badge-neutral">YES</span></td>
+                  <td><span class="badge badge-pass">APPROVED</span></td>
+                </tr>
+                <tr id="ruleRow23" style="cursor: pointer;" title="Click to toggle rule approval">
+                  <td>2.3</td>
+                  <td>Annual Turnover</td>
+                  <td>≥ ₹1.00 Cr (3 FY)</td>
+                  <td><span class="badge badge-neutral">YES</span></td>
+                  <td><span class="badge badge-pass" id="mockupRuleBadge">APPROVED</span></td>
+                </tr>
+                <tr>
+                  <td>2.4</td>
+                  <td>Govt IT Experience</td>
+                  <td>≥ 3 Years</td>
+                  <td><span class="badge badge-neutral">YES</span></td>
+                  <td><span class="badge badge-pass">APPROVED</span></td>
+                </tr>
+                <tr>
+                  <td>2.5</td>
+                  <td>Debarment Status</td>
+                  <td>Not Debarred</td>
+                  <td><span class="badge badge-neutral">YES</span></td>
+                  <td><span class="badge badge-pass">APPROVED</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- View 2: Deterministic Compliance Matrix -->
+          <div class="mockup-view" id="view2">
+            <div style="font-size:0.75rem; color:var(--text-3); margin-bottom:0.6rem; text-transform:uppercase; font-family:var(--font-mono);">
+              Rule Evaluation vs Live Registries
+            </div>
+            <table class="compliance-table">
+              <thead>
+                <tr>
+                  <th>Clause</th>
+                  <th>Rule Target</th>
+                  <th>Observed Value</th>
+                  <th>Registry Source</th>
+                  <th>Outcome</th>
+                </tr>
+              </thead>
+              <tbody id="matrixTableBody">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- View 3: Risk Engine & Final Officer Qualification -->
+          <div class="mockup-view" id="view3">
+            <div style="font-size:0.75rem; color:var(--text-3); margin-bottom:0.6rem; text-transform:uppercase; font-family:var(--font-mono);">
+              Risk Radar & Procurement Officer Action
+            </div>
+            <div id="riskSignalsContainer" style="margin-bottom:1rem;">
+              <!-- Injected via JavaScript -->
+            </div>
+            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); padding:1rem; border-radius:var(--radius-sm); display:flex; align-items:center; justify-content:space-between;">
+              <div>
+                <div style="font-size:0.85rem; font-weight:600; color:#FFF;">Officer Qualification Decision</div>
+                <div style="font-size:0.75rem; color:var(--text-2);">Attributed to: Rajesh Kumar (PO-4021)</div>
+              </div>
+              <div style="display:flex; gap:0.5rem;">
+                <button class="btn btn-primary btn-sm" id="btnQualify">QUALIFY</button>
+                <button class="btn btn-secondary btn-sm" id="btnReview">MANUAL REVIEW</button>
+                <button class="btn btn-ghost btn-sm" style="color:var(--critical);" id="btnDisqualify">DISQUALIFY</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       SECTION 7: NUMBERS THAT MATTER
+       ========================================================================== -->
+  <section class="numbers-section" id="numbers">
+    <div class="container">
+      <div class="section-header reveal-on-scroll">
+        <h2 class="section-title">Measurable outcomes. <em>Verifiable at scale.</em></h2>
+      </div>
+
+      <div class="numbers-grid reveal-on-scroll">
+        <div class="number-col">
+          <div class="big-num"><span class="count-up" data-target="94">0</span><em>%</em></div>
+          <p class="big-num-desc">Reduction in technical bid scrutiny turnaround time across pilot procurement committees.</p>
+        </div>
+        <div class="number-col">
+          <div class="big-num"><span class="count-up" data-target="100">0</span><em>%</em></div>
+          <p class="big-num-desc">Deterministic rule replay accuracy reconstructed from immutable input snapshots.</p>
+        </div>
+        <div class="number-col">
+          <div class="big-num">&lt;4<em>s</em></div>
+          <p class="big-num-desc">Average time to complete 6-registry live gateway cross-checks per bidder submission.</p>
+        </div>
+      </div>
+
+      <div class="numbers-source reveal-on-scroll">
+        Source: NIC GeM IT Hardware Procurement Pilot Data & Performance Hardening Benchmarks (Phase 12).
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       SECTION 8: THE CREED
+       ========================================================================== -->
+  <section class="creed-section">
+    <div class="container">
+      <div class="glass-card creed-card reveal-on-scroll">
+        <div class="section-eyebrow" style="margin-bottom:1.5rem;">THE ARGUS ARCHITECTURAL CREED</div>
+        <blockquote class="creed-text">
+          <span class="creed-line">“AI understands. RAG retrieves. ML detects. Agents coordinate.</span>
+          <span class="creed-line creed-highlight">Rules decide. Humans authorize. Audit trails prove why.”</span>
+        </blockquote>
+        <p class="creed-subtext">
+          In public procurement, non-deterministic AI can never be the judge, jury, or record-keeper. ARGUS strictly limits AI models to non-authoritative candidate extraction, while deterministic code and verified procurement officers hold the ultimate legal authority.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       SECTION 9: EVIDENCE TRACE
+       ========================================================================== -->
+  <section class="evidence-section" id="evidence">
+    <div class="container evidence-layout">
+      <!-- Left Info -->
+      <div class="reveal-on-scroll">
+        <div class="section-eyebrow">FORENSIC PROVENANCE</div>
+        <h2 class="section-title">Every determination backed by <em>cryptographic evidence.</em></h2>
+        <p class="section-subtitle">No anonymous determinations. Every single PASS or FAIL decision links back to an exact page number, text snippet, and live registry check.</p>
+
+        <div class="evidence-bullets">
+          <div class="glass-card evidence-bullet-card">
+            <svg class="evidence-bullet-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path></svg>
+            <div>
+              <h4 class="evidence-bullet-title">Page-Level PDF Extraction</h4>
+              <p class="evidence-bullet-desc">Inspect exact bounding boxes and source coordinates extracted from bidder CA certificates.</p>
+            </div>
+          </div>
+          <div class="glass-card evidence-bullet-card">
+            <svg class="evidence-bullet-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            <div>
+              <h4 class="evidence-bullet-title">Truthful Source Separation</h4>
+              <p class="evidence-bullet-desc">Clean boundary between claimed document facts and authoritative live registry responses.</p>
+            </div>
+          </div>
+          <div class="glass-card evidence-bullet-card">
+            <svg class="evidence-bullet-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <div>
+              <h4 class="evidence-bullet-title">Immutable Snapshot Anchoring</h4>
+              <p class="evidence-bullet-desc">Snapshot preserves exact inputs at evaluation time to prevent report drift during RTI inquiries.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Mockup Card -->
+      <div class="glass-card evidence-mockup-card reveal-on-scroll">
+        <div class="evidence-header-row">
+          <div>
+            <div style="font-size:0.75rem; color:var(--text-3); font-family:var(--font-mono);">EVIDENCE INSPECTOR #EV-8819</div>
+            <div style="font-size:1.05rem; font-weight:600; color:#FFF;">Turnover Certificate Verification</div>
+          </div>
+          <span class="badge badge-pass">VERIFIED MATCH</span>
+        </div>
+
+        <div style="font-size:0.82rem; color:var(--text-2); margin-bottom:0.75rem;">
+          Tender Rule: <strong style="color:#FFF;">Clause 2.3 — Average Annual Turnover ≥ ₹1.00 Cr</strong>
+        </div>
+
+        <div class="source-snippet-box">
+          <div style="font-size:0.7rem; color:var(--accent); margin-bottom:0.35rem;">
+            SOURCE: turnover_certificate.pdf (Page 3, Line 14-18) • SHA-256: 7f8a32b91c...
+          </div>
+          “This is to certify that M/s Alpha Infotech Pvt Ltd having registered office at New Delhi has achieved an <mark>average annual turnover of INR 1,85,40,000 (One Crore Eighty Five Lakh Forty Thousand Only)</mark> for the consecutive financial years 2023-24, 2024-25, and 2025-26.”
+        </div>
+
+        <div class="registry-proof-grid">
+          <div class="proof-item">
+            <div class="proof-label">REGISTRY ADAPTER</div>
+            <div class="proof-val" style="color:var(--accent);">GSTN GSTR-3B Live API</div>
+          </div>
+          <div class="proof-item">
+            <div class="proof-label">REGISTRY OBSERVED</div>
+            <div class="proof-val">₹1,85,40,000 (INR)</div>
+          </div>
+          <div class="proof-item">
+            <div class="proof-label">OBSERVATION TIME</div>
+            <div class="proof-val">2026-09-08 14:32 UTC</div>
+          </div>
+          <div class="proof-item">
+            <div class="proof-label">VERIFICATION STATUS</div>
+            <div class="proof-val" style="color:var(--pass);">VERIFIED (Exact Match)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       SECTION 10: GOVERNANCE & AUDITOR STUDIO
+       ========================================================================== -->
+  <section class="governance-section" id="governance">
+    <div class="container">
+      <div class="section-header reveal-on-scroll">
+        <h2 class="section-title">Engineered for Officers. <em>Built for CAG Auditors.</em></h2>
+        <p class="section-subtitle">Toggle between operational procurement and statutory vigilance perspectives.</p>
+      </div>
+
+      <div class="perspective-toggle-bar reveal-on-scroll">
+        <button class="perspective-btn active" id="btnProcurementView">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle></svg>
+          Procurement Officer Perspective
+        </button>
+        <button class="perspective-btn" id="btnAuditorView">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          Vigilance & Auditor Perspective
+        </button>
+      </div>
+
+      <div class="governance-layout reveal-on-scroll">
+        <!-- Panel 1: Dynamic Perspective Content -->
+        <div class="glass-card" style="padding:2rem;" id="perspectiveCard">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="color:#FFF; font-size:1.25rem;" id="perspectiveTitle">Procurement Officer Workflow</h3>
+            <span class="badge badge-pass" id="perspectiveBadge">ACTION MODE</span>
+          </div>
+          <p style="color:var(--text-2); font-size:0.92rem; line-height:1.6; margin-bottom:1.5rem;" id="perspectiveDesc">
+            Procurement officers evaluate technical tenders at speed. View side-by-side snippet comparisons, trigger batch registry validations, approve candidate rules, and issue automated defect notices.
+          </p>
+          <div style="display:flex; flex-direction:column; gap:0.75rem;" id="perspectiveBullets">
+            <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;">
+              <span style="color:var(--accent);">✓</span> One-click rule approval for AI candidates
+            </div>
+            <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;">
+              <span style="color:var(--accent);">✓</span> Automated GeM qualification notices with clause citations
+            </div>
+            <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;">
+              <span style="color:var(--accent);">✓</span> Anti-spoofing JWT attribution on every decision
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel 2: Live Audit Event Stream -->
+        <div class="glass-card" style="padding:1.5rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; padding-bottom:0.75rem; border-bottom:1px solid rgba(255,255,255,0.08);">
+            <div style="font-size:0.85rem; font-weight:600; color:#FFF;">Cryptographic Audit Event Stream</div>
+            <span class="badge badge-neutral">MONOTONIC SEQ</span>
+          </div>
+          <div style="display:flex; flex-direction:column;" id="auditStream">
+            <div class="audit-event-row">
+              <div>
+                <span style="color:var(--text-3);">#001</span>
+                <span style="color:#FFF; margin-left:0.5rem;">DOCUMENT_UPLOADED</span>
+              </div>
+              <span style="color:var(--text-2);">PO-4021</span>
+              <span style="color:var(--accent);">2026-09-08 14:10</span>
+            </div>
+            <div class="audit-event-row">
+              <div>
+                <span style="color:var(--text-3);">#002</span>
+                <span style="color:#FFF; margin-left:0.5rem;">REQUIREMENTS_APPROVED</span>
+              </div>
+              <span style="color:var(--text-2);">PO-4021</span>
+              <span style="color:var(--accent);">2026-09-08 14:15</span>
+            </div>
+            <div class="audit-event-row">
+              <div>
+                <span style="color:var(--text-3);">#003</span>
+                <span style="color:#FFF; margin-left:0.5rem;">COMPLIANCE_RUN_COMPLETED</span>
+              </div>
+              <span style="color:var(--text-2);">SYSTEM</span>
+              <span style="color:var(--accent);">2026-09-08 14:20</span>
+            </div>
+            <div class="audit-event-row">
+              <div>
+                <span style="color:var(--text-3);">#004</span>
+                <span style="color:#FFF; margin-left:0.5rem;">QUALIFICATION_RECORDED</span>
+              </div>
+              <span style="color:var(--text-2);">PO-4021</span>
+              <span style="color:var(--accent);">2026-09-08 14:25</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       SECTION 11: FOOTER
+       ========================================================================== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div>
+          <div class="brand-logo" style="margin-bottom:1rem;">ARGUS<span class="brand-dot"></span></div>
+          <p style="color:var(--text-2); font-size:0.88rem; line-height:1.6; margin-bottom:1.5rem;">
+            AI-Powered Integrated Bid Compliance Verification Platform for GeM Procurement. Supporting procurement officers with transparent, evidence-backed eligibility determinations.
+          </p>
+          <div class="badge badge-neutral">MeitY & NIC ALIGNED</div>
+        </div>
+
+        <div>
+          <h4 class="footer-col-title">PLATFORM</h4>
+          <ul class="footer-links">
+            <li><a href="#pipeline">Verification Pipeline</a></li>
+            <li><a href="#capabilities">Platform Capabilities</a></li>
+            <li><a href="#dashboard">Deterministic Engine</a></li>
+            <li><a href="#evidence">Evidence Inspector</a></li>
+            <li><a href="#governance">Audit Stream</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 class="footer-col-title">COMPLIANCE & LEGAL</h4>
+          <ul class="footer-links">
+            <li><a href="#">GFR 2017 Rules</a></li>
+            <li><a href="#">GeM SOP v3.2</a></li>
+            <li><a href="#">CVC Circulars</a></li>
+            <li><a href="#">Data Sovereignty</a></li>
+            <li><a href="#">Cert-In Standards</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 class="footer-col-title">GOVERNMENT LINKS</h4>
+          <ul class="footer-links">
+            <li><a href="https://gem.gov.in" target="_blank" rel="noopener">GeM Portal</a></li>
+            <li><a href="https://services.gst.gov.in" target="_blank" rel="noopener">GSTN Services</a></li>
+            <li><a href="https://udyamregistration.gov.in" target="_blank" rel="noopener">MSME Udyam</a></li>
+            <li><a href="https://mca.gov.in" target="_blank" rel="noopener">MCA21 Portal</a></li>
+            <li><a href="https://epfindia.gov.in" target="_blank" rel="noopener">EPFO Services</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer-bottom">
+        <div>Copyright © 2026 ARGUS Platform. Restricted Government & Enterprise Demo.</div>
+        <div style="display:flex; gap:1.5rem;">
+          <a href="#" style="color:var(--text-3); text-decoration:none;">Privacy Policy</a>
+          <a href="#" style="color:var(--text-3); text-decoration:none;">Terms of Procurement</a>
+          <a href="#" style="color:var(--text-3); text-decoration:none;">Security Architecture</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ==========================================================================
+       SECTION 15: AUTH & ROLE MODAL
+       ========================================================================== -->
+  <div class="modal-overlay" id="authModal">
+    <div class="modal-card">
+      <button class="modal-close" id="modalCloseBtn">&times;</button>
+      
+      <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">
+        <span class="brand-logo" style="font-size:1.3rem;">ARGUS<span class="brand-dot"></span></span>
+        <span class="badge badge-pass">OFFICER SIGN IN</span>
+      </div>
+      <div style="font-size:0.85rem; color:var(--text-2); margin-bottom:1.15rem;">Enter credentials to access the Procurement Workspace</div>
+
+      <div style="display:flex; flex-direction:column; gap:0.85rem;">
+        <!-- Primary: Credential Entry Form -->
+        <div style="background:rgba(0,230,118,0.04); border:1px solid rgba(0,230,118,0.25); padding:1.25rem; border-radius:var(--radius-md);">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
+            <div style="font-weight:600; font-size:0.9rem; color:#FFF;">ARGUS Local Development Sign In</div>
+            <span class="badge badge-pass" style="font-size:0.65rem;">LOCAL DEV AUTH</span>
+          </div>
+
+          <form id="devSignInForm" style="display:flex; flex-direction:column; gap:0.75rem;">
+            <div>
+              <label for="devAuthEmail" style="display:block; font-size:0.75rem; color:var(--text-2); margin-bottom:0.25rem; font-family:'JetBrains Mono', monospace;">Email Address</label>
+              <input type="email" id="devAuthEmail" required placeholder="demo.procurement@argus.local" autocomplete="username" style="width:100%; padding:0.55rem 0.75rem; border-radius:var(--radius-sm); background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.15); color:#FFF; font-size:0.85rem; box-sizing:border-box;">
+            </div>
+
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+                <label for="devAuthPassword" style="font-size:0.75rem; color:var(--text-2); font-family:'JetBrains Mono', monospace;">Password</label>
+                <button type="button" id="btnFillDevCredentials" style="background:none; border:none; color:var(--sapphire); font-size:0.72rem; cursor:pointer; text-decoration:underline;">
+                  Use Dev Credentials
+                </button>
+              </div>
+              <input type="password" id="devAuthPassword" required placeholder="••••••••••••" autocomplete="current-password" style="width:100%; padding:0.55rem 0.75rem; border-radius:var(--radius-sm); background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.15); color:#FFF; font-size:0.85rem; box-sizing:border-box;">
+            </div>
+
+            <div>
+              <label for="devAuthRole" style="display:block; font-size:0.75rem; color:var(--text-2); margin-bottom:0.25rem; font-family:'JetBrains Mono', monospace;">Workspace Role</label>
+              <select id="devAuthRole" style="width:100%; padding:0.55rem 0.75rem; border-radius:var(--radius-sm); background:rgba(15,23,42,0.9); border:1px solid rgba(255,255,255,0.15); color:#FFF; font-size:0.85rem; box-sizing:border-box;">
+                <option value="PROCUREMENT_OFFICER" selected>Procurement Officer</option>
+                <option value="REVIEWER">Reviewer</option>
+                <option value="AUDITOR">Auditor</option>
+                <option value="ADMIN">Administrator</option>
+              </select>
+            </div>
+
+            <div style="font-size:0.72rem; color:var(--text-3); font-family:'JetBrains Mono', monospace; line-height:1.4;">
+              Default: <code style="color:var(--text-2);">demo.procurement@argus.local</code> / <code style="color:var(--text-2);">ArgusDemo2026!</code>
+            </div>
+
+            <div id="signInError" style="display:none; color:#F87171; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); padding:0.5rem 0.75rem; border-radius:var(--radius-sm); font-size:0.75rem; font-family:'JetBrains Mono', monospace;"></div>
+
+            <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; margin-top:0.25rem;" id="btnSubmitCredentials">
+              Sign In
+            </button>
+          </form>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0.5rem; margin:0.25rem 0; font-size:0.7rem; color:var(--text-3); text-transform:uppercase; letter-spacing:0.06em;">
+          <div style="flex:1; height:1px; background:rgba(255,255,255,0.1);"></div>
+          <span>Secondary Access Options</span>
+          <div style="flex:1; height:1px; background:rgba(255,255,255,0.1);"></div>
+        </div>
+
+        <!-- Secondary Option 1: Demo Workspace -->
+        <div style="background:rgba(99,102,241,0.06); border:1px solid rgba(99,102,241,0.2); padding:0.85rem; border-radius:var(--radius-md);">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.25rem;">
+            <div style="font-weight:600; font-size:0.85rem; color:#FFF;">Synthetic Demo Workspace</div>
+            <span class="badge" style="background:rgba(255,176,32,0.15); border:1px solid rgba(255,176,32,0.3); color:#FFB020; font-size:0.6rem;">SYNTHETIC DATA</span>
+          </div>
+          <p style="font-size:0.75rem; color:var(--text-2); margin-bottom:0.6rem; line-height:1.35;">
+            Explore deterministic evaluation pipeline with synthetic fixtures. Zero backend mutations; no credentials required.
+          </p>
+          <button class="btn btn-secondary" style="width:100%; justify-content:center; font-size:0.8rem; padding:0.45rem 1rem;" id="btnEnterDemo">
+            Enter Demo Workspace
+          </button>
+        </div>
+
+        <!-- Secondary Option 2: Authorized Access (Bearer Token) -->
+        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07); padding:0.85rem; border-radius:var(--radius-md);">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <div style="font-weight:600; font-size:0.85rem; color:#FFF;">Authorized Access</div>
+            <button type="button" id="toggleAuthToken" style="background:none; border:none; color:var(--sapphire); font-size:0.75rem; text-decoration:underline; cursor:pointer;">
+              Advanced: Authorized Bearer Token
+            </button>
+          </div>
+          <div id="authorizedTokenSection" style="display:none; margin-top:0.6rem;">
+            <input type="password" id="authTokenInput" placeholder="Paste Bearer JWT token..." style="width:100%; padding:0.5rem; border-radius:var(--radius-sm); background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.15); color:#FFF; font-family:'JetBrains Mono', monospace; font-size:0.75rem; margin-bottom:0.5rem; box-sizing:border-box;">
+            <button class="btn btn-secondary" style="width:100%; justify-content:center; font-size:0.8rem; padding:0.45rem 1rem;" id="btnSubmitAuthToken">
+              Verify Authorized Session
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- ==========================================================================
+       JAVASCRIPT: CLIENT-SIDE INTERACTIVITY & DATA MODEL
+       ========================================================================== -->
+  <script>
+    // State management
+    const state = {
+      activeRole: 'PROCUREMENT OFFICER',
+      currentBidderIndex: 0,
+      activeStoryStep: 1,
+      ruleApproved: true,
+      bidders: [
+        {
+          name: 'Alpha Infotech Pvt Ltd',
+          gstin: '07AAAAA0000A1Z5',
+          status: 'QUALIFIED',
+          passRate: '100%',
+          riskCount: '0 Flags',
+          badgeClass: 'badge-pass',
+          matrix: [
+            { clause: '2.1', target: 'Valid GSTIN', observed: 'Active (Tax Regular)', source: 'GSTN Portal API', outcome: 'PASS', class: 'badge-pass' },
+            { clause: '2.2', target: 'Udyam Certificate', observed: 'Small Enterprise', source: 'MSME Udyam Gateway', outcome: 'PASS', class: 'badge-pass' },
+            { clause: '2.3', target: 'Annual Turnover ≥ ₹1.00 Cr', observed: '₹1.85 Cr (Avg 3 FY)', source: 'CA Cert + GST Returns', outcome: 'PASS', class: 'badge-pass' },
+            { clause: '2.4', target: 'Experience ≥ 3 Years', observed: '4.2 Years (NIC/Railways)', source: 'Work Order Copies', outcome: 'PASS', class: 'badge-pass' },
+            { clause: '2.5', target: 'Debarment Status', observed: 'Clean Record', source: 'Central Debarment DB', outcome: 'PASS', class: 'badge-pass' }
+          ],
+          risks: []
+        },
+        {
+          name: 'Bharat Systems & Solutions',
+          gstin: '27BBBBB1111B1Z9',
+          status: 'DISQUALIFIED',
+          passRate: '60%',
+          riskCount: '2 Flags',
+          badgeClass: 'badge-fail',
+          matrix: [
+            { clause: '2.1', target: 'Valid GSTIN', observed: 'Active Status', source: 'GSTN Portal API', outcome: 'PASS', class: 'badge-pass' },
+            { clause: '2.2', target: 'Udyam Certificate', observed: 'Expired Verification', source: 'MSME Udyam Gateway', outcome: 'REVIEW_REQUIRED', class: 'badge-high' },
+            { clause: '2.3', target: 'Annual Turnover ≥ ₹1.00 Cr', observed: '₹0.82 Cr (Below Threshold)', source: 'P&L Statement', outcome: 'FAIL', class: 'badge-fail' },
+            { clause: '2.4', target: 'Experience ≥ 3 Years', observed: '3.1 Years', source: 'Work Order Copies', outcome: 'PASS', class: 'badge-pass' },
+            { clause: '2.5', target: 'Debarment Status', observed: 'Clean Record', source: 'Central Debarment DB', outcome: 'PASS', class: 'badge-pass' }
+          ],
+          risks: [
+            { title: 'CONFLICTING_TURNOVER_SAME_FY', severity: 'HIGH', desc: 'Turnover in submitted certificate (₹1.20 Cr) differs from GST return filing (₹0.82 Cr).' },
+            { title: 'DUPLICATE_DOCUMENT_HASH_CROSS_BIDDER', severity: 'CRITICAL', desc: 'Submitted experience certificate SHA-256 matches Bidder Crest Enterprise.' }
+          ]
+        }
+      ]
+    };
+
+    // Toast Engine
+    function showToast(message, type = 'pass') {
+      const container = document.getElementById('toastContainer');
+      if (!container) return;
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      
+      let icon = type === 'pass' ? '✓' : type === 'critical' ? '✕' : '⚠';
+      toast.innerHTML = `<span style="font-weight:bold;">${icon}</span><span>${message}</span>`;
+      container.appendChild(toast);
+
+      setTimeout(() => toast.classList.add('show'), 10);
+      setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 400);
+      }, 3500);
+    }
+
+    // Role Switching
+    function setRole(role) {
+      state.activeRole = role;
+      const roleTextEl = document.getElementById('activeRoleText');
+      if (roleTextEl) roleTextEl.textContent = role;
+      const drawerRoleTextEl = document.getElementById('drawerRoleText');
+      if (drawerRoleTextEl) drawerRoleTextEl.textContent = role;
+      closeModal();
+      showToast(`Switched active role to ${role}`, 'pass');
+
+      // Update Perspective if Auditor
+      if (role === 'AUDITOR') {
+        renderPerspective('auditor');
+      } else {
+        renderPerspective('procurement');
+      }
+    }
+
+    // Modal Controls
+    const modal = document.getElementById('authModal');
+    function openModal() {
+      if (!modal) return;
+      modal.classList.add('open');
+    }
+    function closeModal() {
+      if (!modal) return;
+      modal.classList.remove('open');
+    }
+
+    document.getElementById('navSignInBtn')?.addEventListener('click', () => {
+      openModal();
+    });
+    document.getElementById('drawerRoleBtn')?.addEventListener('click', () => {
+      toggleDrawer(false);
+      openModal();
+    });
+    document.getElementById('mobileSignInBtn')?.addEventListener('click', () => {
+      toggleDrawer(false);
+      openModal();
+    });
+    document.getElementById('modalCloseBtn')?.addEventListener('click', closeModal);
+    if (modal) {
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+      window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+    }
+
+    // Helper function to verify token with backend /api/v1/auth/me
+    async function verifyAndEnterWorkspace(token) {
+      const apiBase = 'http://127.0.0.1:8000';
+      try {
+        const response = await fetch(`${apiBase}/api/v1/auth/me`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (response.status === 200) {
+          const principal = await response.json();
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem('argus_auth_token', token);
+            sessionStorage.setItem('argus_workspace_mode', 'authorized');
+            localStorage.removeItem('argus_auth_token');
+          }
+          showToast(`Authenticated: ${principal.name || principal.user_id} (${principal.role})`, 'pass');
+          setTimeout(() => {
+            window.location.href = '/workspace?mode=authorized';
+          }, 350);
+          return true;
+        } else if (response.status === 401) {
+          showToast('Session Required / Token Expired', 'critical');
+          return false;
+        } else if (response.status === 403) {
+          showToast('Access Denied / Role Not Authorized', 'critical');
+          return false;
+        } else {
+          showToast(`Authentication Error (${response.status})`, 'critical');
+          return false;
+        }
+      } catch (err) {
+        showToast('Backend Unavailable: Server unreachable at ' + apiBase, 'critical');
+        return false;
+      }
+    }
+
+    // Form Error Helper
+    const signInError = document.getElementById('signInError');
+    function setFormError(msg) {
+      if (!signInError) return;
+      if (msg) {
+        signInError.textContent = msg;
+        signInError.style.display = 'block';
+      } else {
+        signInError.textContent = '';
+        signInError.style.display = 'none';
+      }
+    }
+
+    // Helper: Autofill Dev Credentials
+    document.getElementById('btnFillDevCredentials')?.addEventListener('click', () => {
+      const emailInput = document.getElementById('devAuthEmail');
+      const passInput = document.getElementById('devAuthPassword');
+      if (emailInput) emailInput.value = 'demo.procurement@argus.local';
+      if (passInput) passInput.value = 'ArgusDemo2026!';
+      setFormError(null);
+    });
+
+    // Primary: Submit Dev Sign In Credentials Form
+    const devSignInForm = document.getElementById('devSignInForm');
+    const btnSubmitCredentials = document.getElementById('btnSubmitCredentials');
+    devSignInForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setFormError(null);
+
+      const emailInput = document.getElementById('devAuthEmail');
+      const passInput = document.getElementById('devAuthPassword');
+      const roleSelect = document.getElementById('devAuthRole');
+      const email = emailInput ? emailInput.value.trim() : '';
+      const password = passInput ? passInput.value : '';
+      const role = roleSelect ? roleSelect.value : 'PROCUREMENT_OFFICER';
+
+      if (!email || !password) {
+        setFormError('Please enter both email and password.');
+        return;
+      }
+
+      const origText = btnSubmitCredentials.textContent;
+      btnSubmitCredentials.disabled = true;
+      btnSubmitCredentials.textContent = 'Validating credentials & role...';
+
+      try {
+        const res = await fetch('/api/auth/dev-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, role }),
+        });
+
+        if (res.status === 401) {
+          const errData = await res.json().catch(() => ({}));
+          setFormError(errData.error || 'Invalid email or password');
+          btnSubmitCredentials.disabled = false;
+          btnSubmitCredentials.textContent = origText;
+          return;
+        }
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          setFormError(errData.error || `Sign-in failed (status ${res.status})`);
+          btnSubmitCredentials.disabled = false;
+          btnSubmitCredentials.textContent = origText;
+          return;
+        }
+
+        const data = await res.json();
+        if (!data.token) {
+          setFormError('No token returned by local dev authentication service.');
+          btnSubmitCredentials.disabled = false;
+          btnSubmitCredentials.textContent = origText;
+          return;
+        }
+
+        btnSubmitCredentials.textContent = 'Verifying with /auth/me...';
+        const ok = await verifyAndEnterWorkspace(data.token);
+        if (!ok) {
+          btnSubmitCredentials.disabled = false;
+          btnSubmitCredentials.textContent = origText;
+        }
+      } catch (err) {
+        setFormError('Sign-in error: ' + (err.message || String(err)));
+        btnSubmitCredentials.disabled = false;
+        btnSubmitCredentials.textContent = origText;
+      }
+    });
+
+    // Secondary Option 1: Enter Demo Workspace
+    document.getElementById('btnEnterDemo')?.addEventListener('click', () => {
+      closeModal();
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('argus_workspace_mode', 'demo');
+        sessionStorage.removeItem('argus_auth_token');
+        localStorage.removeItem('argus_auth_token');
+      }
+      window.location.href = '/workspace?mode=demo';
+    });
+
+    // Secondary Option 2: Authorized Access Toggle & Submit
+    document.getElementById('toggleAuthToken')?.addEventListener('click', () => {
+      const sec = document.getElementById('authorizedTokenSection');
+      if (sec) sec.style.display = sec.style.display === 'none' ? 'block' : 'none';
+    });
+
+    document.getElementById('btnSubmitAuthToken')?.addEventListener('click', async () => {
+      const input = document.getElementById('authTokenInput');
+      const token = input ? input.value.trim() : '';
+      if (!token) {
+        showToast('Please paste an authorized Bearer token', 'high');
+        return;
+      }
+      await verifyAndEnterWorkspace(token);
+    });
+
+    // Mobile Drawer
+    const drawer = document.getElementById('mobileDrawer');
+    const drawerOverlay = document.getElementById('drawerOverlay');
+    document.getElementById('hamburgerBtn')?.addEventListener('click', () => {
+      drawer?.classList.add('open');
+      drawerOverlay?.classList.add('open');
+    });
+    const closeDrawer = () => {
+      drawer?.classList.remove('open');
+      drawerOverlay?.classList.remove('open');
+    };
+    document.getElementById('drawerCloseBtn')?.addEventListener('click', closeDrawer);
+    drawerOverlay?.addEventListener('click', closeDrawer);
+
+    // Navbar Scroll Effect
+    window.addEventListener('scroll', () => {
+      const navbar = document.getElementById('navbar');
+      if (!navbar) return;
+      if (window.scrollY > 60) {
+        navbar.classList.add('scrolled');
+      } else {
+        navbar.classList.remove('scrolled');
+      }
+    });
+
+    // Render Mockup Data
+    function renderMockup() {
+      const bidder = state.bidders[state.currentBidderIndex];
+      const nameEl = document.getElementById('currentBidderName');
+      if (nameEl) nameEl.textContent = bidder.name;
+
+      const statusBadge = document.getElementById('mockupStatusBadge');
+      if (statusBadge) {
+        statusBadge.textContent = bidder.status;
+        statusBadge.className = `badge ${bidder.badgeClass}`;
+      }
+
+      const passRateEl = document.getElementById('metricPassRate');
+      if (passRateEl) passRateEl.textContent = bidder.passRate;
+
+      const riskCountEl = document.getElementById('metricRiskCount');
+      if (riskCountEl) riskCountEl.textContent = bidder.riskCount;
+
+      // Render Matrix Rows
+      const tbody = document.getElementById('matrixTableBody');
+      if (tbody) {
+        tbody.innerHTML = '';
+        bidder.matrix.forEach(row => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><strong>${row.clause}</strong></td>
+            <td>${row.target}</td>
+            <td>${row.observed}</td>
+            <td>${row.source}</td>
+            <td><span class="badge ${row.class}">${row.outcome}</span></td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      // Render Risks
+      const riskContainer = document.getElementById('riskSignalsContainer');
+      if (riskContainer) {
+        riskContainer.innerHTML = '';
+        if (bidder.risks.length === 0) {
+          riskContainer.innerHTML = `
+            <div style="background:rgba(0,230,118,0.08); border:1px solid rgba(0,230,118,0.25); padding:0.85rem; border-radius:var(--radius-sm); display:flex; align-items:center; gap:0.5rem;">
+              <span style="color:var(--pass); font-weight:bold;">✓</span>
+              <span style="font-size:0.8rem; color:var(--text-1);">Zero risk flags detected. Identity, filings, and CA certificates fully consistent.</span>
+            </div>
+          `;
+        } else {
+          bidder.risks.forEach(r => {
+            const div = document.createElement('div');
+            div.style = `background:rgba(255,77,77,0.08); border:1px solid rgba(255,77,77,0.25); padding:0.75rem; border-radius:var(--radius-sm); margin-bottom:0.5rem;`;
+            div.innerHTML = `
+              <div style="display:flex; justify-content:space-between; margin-bottom:0.25rem;">
+                <strong style="color:#FF4D4D; font-size:0.8rem;">${r.title}</strong>
+                <span class="badge badge-fail">${r.severity}</span>
+              </div>
+              <div style="font-size:0.75rem; color:var(--text-2);">${r.desc}</div>
+            `;
+            riskContainer.appendChild(div);
+          });
+        }
+      }
+    }
+
+    renderMockup();
+
+    // Mockup View Switching
+    function setStoryStep(step) {
+      state.activeStoryStep = step;
+      [1, 2, 3].forEach(i => {
+        document.getElementById(`pill${i}`)?.classList.toggle('active', i === step);
+        document.getElementById(`view${i}`)?.classList.toggle('active', i === step);
+      });
+      document.querySelectorAll('.story-tab-btn').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.step) === step);
+      });
+
+      const title = document.getElementById('storyTitle');
+      const desc = document.getElementById('storyDesc');
+
+      if (title && desc) {
+        if (step === 1) {
+          title.textContent = "The Full Compliance Picture. Instantaneously.";
+          desc.textContent = "Tender GEM/2026/B/4521089 requirements automatically extracted. Review and authorize rules before deterministic evaluation begins.";
+        } else if (step === 2) {
+          title.textContent = "Deterministic Rules Meet Live Government Registries.";
+          desc.textContent = "Pure mathematical verification cross-referencing GSTN, Udyam, and MCA databases in 4 seconds with zero hallucinations.";
+        } else if (step === 3) {
+          title.textContent = "Collusion & Risk Radar with Human Authorization.";
+          desc.textContent = "Detect cross-bidder document sharing and conflicting filings. Authorize the evidence-backed qualification decision.";
+        }
+      }
+    }
+
+    document.querySelectorAll('.story-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => setStoryStep(parseInt(btn.dataset.step)));
+    });
+
+    document.getElementById('switchBidderBtn')?.addEventListener('click', () => {
+      state.currentBidderIndex = (state.currentBidderIndex + 1) % state.bidders.length;
+      const targetName = state.currentBidderIndex === 0 ? 'Bidder Bharat' : 'Bidder Alpha';
+      const nameEl = document.getElementById('switchBidderName');
+      if (nameEl) {
+        nameEl.textContent = targetName;
+      } else {
+        const btn = document.getElementById('switchBidderBtn');
+        if (btn) btn.innerHTML = `<span class="switch-bidder-sub">Switch to</span><span class="switch-bidder-name" id="switchBidderName">${targetName}</span>`;
+      }
+      renderMockup();
+      showToast(`Active bidder switched to ${state.bidders[state.currentBidderIndex].name}`);
+    });
+
+    // Decision Buttons
+    document.getElementById('btnQualify')?.addEventListener('click', () => {
+      showToast('Decision Recorded: Bidder QUALIFIED (Audit trail committed)', 'pass');
+    });
+    document.getElementById('btnReview')?.addEventListener('click', () => {
+      showToast('Decision Recorded: Marked for MANUAL REVIEW by Committee', 'high');
+    });
+    document.getElementById('btnDisqualify')?.addEventListener('click', () => {
+      showToast('Decision Recorded: Bidder DISQUALIFIED with clause citation', 'critical');
+    });
+
+    // Perspective Views
+    function renderPerspective(view) {
+      const title = document.getElementById('perspectiveTitle');
+      const badge = document.getElementById('perspectiveBadge');
+      const desc = document.getElementById('perspectiveDesc');
+      const bullets = document.getElementById('perspectiveBullets');
+      const btnProc = document.getElementById('btnProcurementView');
+      const btnAudit = document.getElementById('btnAuditorView');
+
+      if (!title || !desc || !bullets) return;
+
+      if (view === 'procurement') {
+        btnProc?.classList.add('active');
+        btnAudit?.classList.remove('active');
+        title.textContent = "Procurement Officer Workflow";
+        if (badge) {
+          badge.textContent = "ACTION MODE";
+          badge.className = "badge badge-pass";
+        }
+        desc.textContent = "Procurement officers evaluate technical tenders at speed. View side-by-side snippet comparisons, trigger batch registry validations, approve candidate rules, and issue automated defect notices.";
+        bullets.innerHTML = `
+          <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;"><span style="color:var(--accent);">✓</span> One-click rule approval for AI candidates</div>
+          <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;"><span style="color:var(--accent);">✓</span> Automated GeM qualification notices with clause citations</div>
+          <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;"><span style="color:var(--accent);">✓</span> Anti-spoofing JWT attribution on every decision</div>
+        `;
+      } else {
+        btnAudit?.classList.add('active');
+        btnProc?.classList.remove('active');
+        title.textContent = "Vigilance & CAG Auditor View";
+        if (badge) {
+          badge.textContent = "READ-ONLY PROVENANCE";
+          badge.className = "badge badge-high";
+        }
+        desc.textContent = "Auditors inspect frozen snapshot records. Verify that historical determinations match recorded inputs without risk of database drift or retrospective manipulation.";
+        bullets.innerHTML = `
+          <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;"><span style="color:var(--accent);">✓</span> Monotonic sequence allocation under DB row locks</div>
+          <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;"><span style="color:var(--accent);">✓</span> Immutable input_snapshot_json historical reconstruction</div>
+          <div style="display:flex; align-items:center; gap:0.65rem; color:var(--text-1); font-size:0.85rem;"><span style="color:var(--accent);">✓</span> Audit-ready SHA-256 evidence chain verification</div>
+        `;
+      }
+    }
+
+    document.getElementById('btnProcurementView')?.addEventListener('click', () => renderPerspective('procurement'));
+    document.getElementById('btnAuditorView')?.addEventListener('click', () => renderPerspective('auditor'));
+
+    // Rule Approval Toggle inside Live Mockup Chassis
+    document.getElementById('ruleRow23')?.addEventListener('click', () => {
+      state.ruleApproved = !state.ruleApproved;
+      const badge = document.getElementById('mockupRuleBadge');
+      if (state.ruleApproved) {
+        if (badge) {
+          badge.textContent = 'APPROVED';
+          badge.className = 'badge badge-pass';
+        }
+        showToast('Rule Clause 2.3 Approved by PO-4021', 'pass');
+      } else {
+        if (badge) {
+          badge.textContent = 'PENDING APPROVAL';
+          badge.className = 'badge badge-high';
+        }
+        showToast('Rule Clause 2.3 status reverted to Pending', 'high');
+      }
+    });
+
+    // Sequential 6-Stage Pipeline Block Reveal & Dynamic SVG Line
+    const pipelineGrid = document.getElementById('pipelineGrid');
+    if (pipelineGrid) {
+      const pipelineCards = pipelineGrid.querySelectorAll('.pipeline-card');
+      const pipelineProgressLine = document.getElementById('pipelineProgressLine');
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      // Measure actual path length dynamically across responsive layouts
+      let totalLen = 1000;
+      if (pipelineProgressLine) {
+        totalLen = (typeof pipelineProgressLine.getTotalLength === 'function')
+          ? pipelineProgressLine.getTotalLength()
+          : 1000;
+        if (prefersReduced) {
+          pipelineProgressLine.style.strokeDashoffset = '0';
+        } else {
+          pipelineProgressLine.style.strokeDasharray = `${totalLen}`;
+          pipelineProgressLine.style.strokeDashoffset = `${totalLen}`;
+        }
+      }
+      
+      const pipeObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            if (prefersReduced) {
+              if (pipelineProgressLine) pipelineProgressLine.style.strokeDashoffset = '0';
+              pipelineCards.forEach(card => card.classList.add('is-revealed'));
+            } else {
+              // Animate dynamic SVG connecting line using measured totalLength
+              if (pipelineProgressLine) {
+                pipelineProgressLine.style.transition = 'stroke-dashoffset 1.4s cubic-bezier(0.16, 1, 0.3, 1)';
+                requestAnimationFrame(() => {
+                  pipelineProgressLine.style.strokeDashoffset = '0';
+                });
+              }
+
+              // Staggered sequential reveal of cards (0.15s increment)
+              pipelineCards.forEach((card, idx) => {
+                setTimeout(() => {
+                  card.classList.add('is-revealed');
+                }, idx * 150);
+              });
+            }
+
+            pipeObserver.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.15 });
+
+      pipeObserver.observe(pipelineGrid);
+    }
+
+    // Genuine Metric Count Up Engine (with prefers-reduced-motion check)
+    function animateCountUp(el, target, duration = 1800) {
+      if (el.dataset.animated) return;
+      el.dataset.animated = 'true';
+
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (prefersReduced) {
+        el.textContent = target.toLocaleString('en-IN');
+        return;
+      }
+
+      let startTime = null;
+      function step(timestamp) {
+        if (!startTime) startTime = timestamp;
+        const progress = Math.min((timestamp - startTime) / duration, 1);
+        const easeOut = 1 - Math.pow(1 - progress, 5); // easeOutQuint
+        const current = Math.floor(easeOut * target);
+        el.textContent = current.toLocaleString('en-IN');
+        if (progress < 1) {
+          requestAnimationFrame(step);
+        } else {
+          el.textContent = target.toLocaleString('en-IN');
+        }
+      }
+      requestAnimationFrame(step);
+    }
+
+    // Scroll Observer for Story Lines & General Elements
+    const revealObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('revealed');
+        }
+      });
+    }, { threshold: 0.12 });
+
+    document.querySelectorAll('.reveal-on-scroll, .story-line').forEach(el => revealObserver.observe(el));
+
+    // Dedicated Scroll-driven Sequential Loader for the 9 Capabilities Cards
+    (function initFeatureCardsScrollLoader() {
+      const featureCards = document.querySelectorAll('.features-grid .feature-card');
+      if (!featureCards.length) return;
+
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        featureCards.forEach(c => c.classList.add('revealed'));
+        return;
+      }
+
+      const revealQueue = [];
+      let isRevealing = false;
+
+      function triggerNextInQueue() {
+        if (revealQueue.length === 0) {
+          isRevealing = false;
+          return;
+        }
+        isRevealing = true;
+        const card = revealQueue.shift();
+        card.classList.add('revealed');
+        // 160ms cadence so cards animate into view one by one as user scrolls
+        setTimeout(triggerNextInQueue, 160);
+      }
+
+      const cardScrollObserver = new IntersectionObserver((entries) => {
+        const newlyIntersecting = [];
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const card = entry.target;
+            cardScrollObserver.unobserve(card);
+            if (!card.classList.contains('revealed') && !revealQueue.includes(card)) {
+              newlyIntersecting.push(card);
+            }
+          }
+        });
+
+        if (newlyIntersecting.length > 0) {
+          // Sort by natural DOM position so cards always load in logical order (left-to-right, top-to-bottom)
+          newlyIntersecting.sort((a, b) => {
+            return Array.from(featureCards).indexOf(a) - Array.from(featureCards).indexOf(b);
+          });
+          revealQueue.push(...newlyIntersecting);
+          if (!isRevealing) {
+            triggerNextInQueue();
+          }
+        }
+      }, {
+        threshold: 0.12,
+        rootMargin: '0px 0px -40px 0px'
+      });
+
+      featureCards.forEach(card => cardScrollObserver.observe(card));
+    })();
+
+    // Dedicated Counter Observer for Genuine Metrics
+    const countObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const counter = entry.target;
+          const target = parseInt(counter.dataset.target, 10);
+          if (!isNaN(target)) {
+            animateCountUp(counter, target);
+            countObserver.unobserve(counter);
+          }
+        }
+      });
+    }, { threshold: 0.2 });
+
+    document.querySelectorAll('.count-up').forEach(el => countObserver.observe(el));
+
+    // Mouse-Responsive Card Tilt Depth Controller (RAF with subtle damping)
+    function canTilt() {
+      return window.innerWidth >= 1024 &&
+             window.matchMedia('(hover: hover) and (pointer: fine)').matches &&
+             !window.matchMedia('(pointer: coarse)').matches &&
+             !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    const tiltCards = document.querySelectorAll('.tilt-card');
+    tiltCards.forEach(card => {
+      let rafId = null;
+      let targetRotateX = 0;
+      let targetRotateY = 0;
+      let currentRotateX = 0;
+      let currentRotateY = 0;
+      let isHovered = false;
+
+      function updateTilt() {
+        if (!isHovered && Math.abs(currentRotateX) < 0.05 && Math.abs(currentRotateY) < 0.05) {
+          card.style.transform = '';
+          rafId = null;
+          return;
+        }
+        currentRotateX += (targetRotateX - currentRotateX) * 0.15;
+        currentRotateY += (targetRotateY - currentRotateY) * 0.15;
+        card.style.transform = `perspective(1000px) rotateX(${currentRotateX.toFixed(2)}deg) rotateY(${currentRotateY.toFixed(2)}deg)`;
+        rafId = requestAnimationFrame(updateTilt);
+      }
+
+      card.addEventListener('pointerenter', () => {
+        if (!canTilt()) return;
+        isHovered = true;
+        if (!rafId) rafId = requestAnimationFrame(updateTilt);
+      });
+
+      card.addEventListener('pointermove', (e) => {
+        if (!canTilt()) return;
+        // Exclude interactive child controls (tables, forms, buttons, inputs)
+        const interactive = e.target.closest('table, tbody, tr, td, th, button, input, textarea, select, .story-controls, .compliance-table, #riskSignalsContainer');
+        if (interactive && card.classList.contains('mockup-frame')) {
+          targetRotateX = 0;
+          targetRotateY = 0;
+          return;
+        }
+
+        const rect = card.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+        const maxTilt = 8; // Max 8 degrees per specification
+
+        targetRotateX = ((y - centerY) / centerY) * -maxTilt;
+        targetRotateY = ((x - centerX) / centerX) * maxTilt;
+
+        if (!rafId) rafId = requestAnimationFrame(updateTilt);
+      });
+
+      card.addEventListener('pointerleave', () => {
+        isHovered = false;
+        targetRotateX = 0;
+        targetRotateY = 0;
+      });
+    });
+  </script>
+</body>
+</html>

@@ -4,11 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:token": "python ../../services/api/scripts/generate_dev_token.py --user-id argus-local-demo-officer --role PROCUREMENT_OFFICER --name \"Demo Procurement Officer\" --email \"demo.procurement@argus.local\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint ."
   },
   "dependencies": {
+    "lucide-react": "^1.43.0",
     "next": "16.3.4",
     "react": "19.2.0",
     "react-dom": "19.2.0"

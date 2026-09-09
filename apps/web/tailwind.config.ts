@@ -7,7 +7,19 @@ const config: Config = {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}"
   ],
   theme: {
-    extend: {}
+    extend: {
+      colors: {
+        void: "#020329",
+        midnight: "#03045A",
+        frost: "#C9D6E8",
+        glacier: "#EAF2FA",
+        pass: "#00E676",
+        high: "#FFB020",
+        critical: "#FF4D4D",
+        unknown: "#9D7BFF",
+        steel: "#5FA8D3",
+      }
+    }
   },
   plugins: []
 };
