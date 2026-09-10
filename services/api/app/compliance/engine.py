@@ -52,8 +52,24 @@ class ComplianceEngine:
     OPERATOR_SEMANTICS_VERSION = "1.1.0"
     FINANCIAL_CONTEXT_POLICY_VERSION = "1.0.0"
     TEMPORAL_POLICY_VERSION = "1.0.0"
+    EVIDENCE_CONFIDENCE_POLICY_VERSION = "1.0.0"
 
     SUPPORTED_REPLAY_VERSIONS = {"2.0.0"}
+    # Minimum extraction confidence for a fact to solely determine a definitive
+    # outcome. Mirrors the intelligence service's ARGUS_LOW_CONFIDENCE_THRESHOLD
+    # default so both ends of the pipeline agree on what "low confidence" means.
+    # Overridable per evaluation via context["min_fact_confidence"].
+    MIN_FACT_CONFIDENCE = 0.6
+
+    # Metadata flags marking a fact as human-attested rather than model-extracted.
+    # Such facts bypass the confidence gate and evaluate deterministically.
+    TRUSTED_FACT_METADATA_FLAGS = (
+        "human_verified",
+        "officer_verified",
+        "manually_approved",
+    )
+    TRUSTED_FACT_SOURCES = frozenset({"MANUAL_OFFICER_ENTRY", "HUMAN_ATTESTED"})
+
 
     MAX_INPUT_STR_LENGTH = 100
     MAX_DECIMAL_DIGITS = 38
@@ -1109,6 +1125,46 @@ class ComplianceEngine:
             return None, ReasonCode.UNVERIFIED_EXEMPTION_ELIGIBILITY, []
 
         return None, "UNKNOWN_APPLICABILITY", []
+    @classmethod
+    def _resolve_min_fact_confidence(cls, context: dict[str, Any]) -> float:
+        """Returns the active minimum fact-confidence threshold for this evaluation."""
+        raw = context.get("min_fact_confidence")
+        if raw is None:
+            return cls.MIN_FACT_CONFIDENCE
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return cls.MIN_FACT_CONFIDENCE
+        if value < 0.0 or value > 1.0:
+            return cls.MIN_FACT_CONFIDENCE
+        return value
+
+    @classmethod
+    def _is_trusted_fact(cls, fact: Any) -> bool:
+        """True when a fact is human-attested and therefore exempt from the confidence gate."""
+        meta = getattr(fact, "metadata_json", None) or {}
+        if not isinstance(meta, dict):
+            return False
+        for flag in cls.TRUSTED_FACT_METADATA_FLAGS:
+            if meta.get(flag) is True:
+                return True
+        source = meta.get("verification_source") or meta.get("fact_source")
+        if isinstance(source, str) and source.strip().upper() in cls.TRUSTED_FACT_SOURCES:
+            return True
+        return False
+
+    @classmethod
+    def _fact_confidence(cls, fact: Any) -> float:
+        """Returns a fact's extraction confidence, defaulting to fully confident when absent."""
+        raw = getattr(fact, "confidence", None)
+        if raw is None:
+            return 1.0
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            # An unparseable confidence is treated as untrusted rather than trusted.
+            return 0.0
+
 
     @classmethod
     def _is_time_dependent_rule(cls, rule: TenderRequirementRead) -> bool:
@@ -1335,6 +1391,37 @@ class ComplianceEngine:
                     rule_version=f"{cls.ENGINE_VERSION}",
                     evaluated_at=eval_ts,
                 )
+        # PRECEDENCE 5.5: Low-confidence extracted evidence guard.
+        #
+        # Applies only when the outcome would rest SOLELY on an extracted fact —
+        # i.e. no usable registry verification exists for this field to corroborate
+        # it. A corroborated claim has already been reconciled by PRECEDENCE 5 and
+        # is unaffected. Human-attested facts are exempt.
+        #
+        # This never converts a determination into PASS; it only withholds a
+        # definitive determination that would otherwise rest on untrusted model
+        # output, and routes it to a human via REVIEW_REQUIRED.
+        if facts_with_val and not verified_with_val:
+            min_conf = cls._resolve_min_fact_confidence(context)
+            low_confidence_facts = [
+                f
+                for f in facts_with_val
+                if not cls._is_trusted_fact(f) and cls._fact_confidence(f) < min_conf
+            ]
+            if low_confidence_facts:
+                return RuleEvaluationRead(
+                    id=eval_id,
+                    bidder_id=context.get("bidder_id", "UNKNOWN_BIDDER"),
+                    requirement_id=rule.id,
+                    status=ComplianceStatus.REVIEW_REQUIRED,
+                    reason_code=ReasonCode.LOW_CONFIDENCE_EVIDENCE,
+                    observed_value=facts_with_val[0].value,
+                    expected_value=rule.expected_value,
+                    evidence_ids=[f.id for f in low_confidence_facts],
+                    rule_version=f"{cls.ENGINE_VERSION}",
+                    evaluated_at=eval_ts,
+                )
+
 
         # Determine single primary contributing input for standard evaluation
         primary_input_ids = []

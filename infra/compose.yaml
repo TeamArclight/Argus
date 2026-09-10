@@ -14,6 +14,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  # One-shot schema migration. api and worker wait for this to complete
+  # successfully, so neither ever starts against a database with no schema.
+  # Moves the schema forward only: no create_all, no downgrade, no stamp, no reset.
+  migrate:
+    build:
+      context: ..
+      dockerfile: infra/docker/api.Dockerfile
+    command: ["argus-migrate"]
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://argus:argus@postgres:5432/argus}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 
   api:
     build:
@@ -22,19 +40,32 @@ services:
     env_file:
       - ../.env
     environment:
+      APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql://argus:argus@postgres:5432/argus}
       ARGUS_STORAGE_LOCAL_PATH: /app/data/uploads
+      # Internal service-to-service addressing over the compose network.
+      # Never localhost: inside this container localhost is this container.
+      ARGUS_INTELLIGENCE_BASE_URL: http://intelligence:8100
       ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL: http://intelligence:8100/extract-tender
       ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL: http://intelligence:8100/extract-document
+      ARGUS_INTELLIGENCE_RAG_URL: http://intelligence:8100/rag-query
+      ARGUS_INTELLIGENCE_API_KEY: ${ARGUS_INTELLIGENCE_API_KEY:-}
     ports:
-      - "8000:8000"
+      # The browser calls this origin directly, so it stays publishable by
+      # default. Set API_BIND_ADDRESS=127.0.0.1 and front it with a TLS reverse
+      # proxy for any deployment handling real procurement data.
+      - "${API_BIND_ADDRESS:-0.0.0.0}:8000:8000"
     volumes:
       - argus_uploads:/app/data/uploads
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      # Readiness, not liveness: a schema-less or unwritable deployment must
+      # report unhealthy rather than green.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/readiness')"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -44,17 +75,30 @@ services:
       context: ..
       dockerfile: infra/docker/intelligence.Dockerfile
     environment:
+      APP_ENV: ${APP_ENV:-development}
       ARGUS_RAG_DATABASE_URL: ${ARGUS_RAG_DATABASE_URL:-postgresql://argus:argus@postgres:5432/argus}
       ARGUS_MODEL_PROVIDER: ${ARGUS_MODEL_PROVIDER:-disabled}
+      ARGUS_MODEL_NAME: ${ARGUS_MODEL_NAME:-}
+      ARGUS_EMBEDDING_PROVIDER: ${ARGUS_EMBEDDING_PROVIDER:-hash}
       ARGUS_GEMINI_API_KEY: ${ARGUS_GEMINI_API_KEY:-}
       ARGUS_INTELLIGENCE_API_KEY: ${ARGUS_INTELLIGENCE_API_KEY:-}
+      ARGUS_ALLOW_ANONYMOUS_INTELLIGENCE: ${ARGUS_ALLOW_ANONYMOUS_INTELLIGENCE:-false}
+      # Mandatory allowlist for local document resolution. Without this the
+      # service resolves arbitrary filesystem paths.
+      ARGUS_ALLOWED_STORAGE_ROOTS: ${ARGUS_ALLOWED_STORAGE_ROOTS:-/app/data}
+    # Reachable by the api and worker over the compose network only. Publish to
+    # the host loopback for local inspection; never to 0.0.0.0.
     ports:
-      - "8100:8100"
+      - "127.0.0.1:8100:8100"
+    volumes:
+      - ../data/policies:/app/data/policies:ro
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      # /livez is the unauthenticated liveness probe; /health requires the
+      # service credential and reports configuration detail.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/livez')"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -67,15 +111,21 @@ services:
     env_file:
       - ../.env
     environment:
+      APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql://argus:argus@postgres:5432/argus}
       ARGUS_STORAGE_LOCAL_PATH: /app/data/uploads
+      ARGUS_INTELLIGENCE_BASE_URL: http://intelligence:8100
       ARGUS_INTELLIGENCE_EXTRACT_TENDER_URL: http://intelligence:8100/extract-tender
       ARGUS_INTELLIGENCE_EXTRACT_DOCUMENT_URL: http://intelligence:8100/extract-document
+      ARGUS_INTELLIGENCE_RAG_URL: http://intelligence:8100/rag-query
+      ARGUS_INTELLIGENCE_API_KEY: ${ARGUS_INTELLIGENCE_API_KEY:-}
     volumes:
       - argus_uploads:/app/data/uploads
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
       intelligence:
@@ -85,10 +135,28 @@ services:
     build:
       context: ..
       dockerfile: infra/docker/web.Dockerfile
+      args:
+        # Read by the BROWSER, not by this container, so it must be the origin a
+        # remote visitor can reach. NEXT_PUBLIC_* values are inlined at build
+        # time, so this is a build argument and not a runtime environment
+        # variable. Override it for any deployment that is not localhost.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NODE_ENV: production
+      APP_ENV: ${APP_ENV:-development}
+      # Local development sign-in is closed unless explicitly enabled AND
+      # credentials are supplied. It is refused outright when APP_ENV or
+      # NODE_ENV is production.
+      ARGUS_ENABLE_DEV_AUTH: ${ARGUS_ENABLE_DEV_AUTH:-false}
+      ARGUS_DEV_AUTH_EMAIL: ${ARGUS_DEV_AUTH_EMAIL:-}
+      ARGUS_DEV_AUTH_PASSWORD: ${ARGUS_DEV_AUTH_PASSWORD:-}
+      ARGUS_DEV_AUTH_ALLOWED_ROLES: ${ARGUS_DEV_AUTH_ALLOWED_ROLES:-}
+      ARGUS_DEV_AUTH_ALLOW_ADMIN: ${ARGUS_DEV_AUTH_ALLOW_ADMIN:-false}
+      ARGUS_JWT_SECRET: ${ARGUS_JWT_SECRET:-}
+      ARGUS_JWT_ISSUER: ${ARGUS_JWT_ISSUER:-argus-api}
+      ARGUS_JWT_AUDIENCE: ${ARGUS_JWT_AUDIENCE:-argus-clients}
     ports:
-      - "3000:3000"
+      - "${WEB_BIND_ADDRESS:-0.0.0.0}:3000:3000"
     depends_on:
       - api
 

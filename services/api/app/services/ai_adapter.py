@@ -628,6 +628,13 @@ class AIServiceAdapter:
                             retryable=False,
                             message="Intelligence service response missing required 'facts' list for contract_version 1.0.",
                         )
+                    # Confidence signals reported by the intelligence service. These are
+                    # advisory metadata only: the authoritative per-fact confidence lives
+                    # on each fact and is what the deterministic engine gates on.
+                    reported_low_conf = envelope.low_confidence_fields or []
+                    low_conf_field_set = {str(f) for f in reported_low_conf if f}
+                    review_required = bool(envelope.review_required) or bool(low_conf_field_set)
+
 
                     validated_facts = []
                     for item in raw_facts:
@@ -652,6 +659,13 @@ class AIServiceAdapter:
                             item_meta["document_sha256"] = document_sha256
                             if envelope.provider_model:
                                 item_meta["provider_model"] = envelope.provider_model
+                            # Preserve the extraction-confidence signal alongside the fact so
+                            # it survives into ExtractedFact.metadata_json and is visible in
+                            # evidence and reports (audit finding C-6).
+                            if item.get("field") in low_conf_field_set:
+                                item_meta["low_confidence"] = True
+                            item_meta["review_required"] = review_required
+
 
                             item["metadata_json"] = item_meta
 
@@ -673,6 +687,8 @@ class AIServiceAdapter:
                         error_code=None,
                         retryable=False,
                         message=f"Successfully extracted {len(validated_facts)} facts from bidder document.",
+                        review_required=review_required,
+                        low_confidence_fields=sorted(low_conf_field_set),
                     )
 
             except (httpx.ConnectError, httpx.ConnectTimeout) as conn_err:

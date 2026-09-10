@@ -8,7 +8,19 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_principal
 from app.db.session import SessionLocal, get_db
 from app.models.domain import Bidder, JobEvent, ProcessingJob, Tender
-from app.schemas.canonical import AuthenticatedPrincipal, JobRead, JobStatus, UserRole
+from app.schemas.canonical import (
+    AuthenticatedPrincipal,
+    JobRead,
+    JobStatus,
+    TERMINAL_JOB_STATUSES,
+    TERMINAL_JOB_STATUS_VALUES,
+    UserRole,
+)
+
+# Hard ceiling on how long one SSE connection may stay open. A job that never
+# reaches a terminal state must not hold a connection and a DB polling loop open
+# indefinitely.
+MAX_STREAM_SECONDS = 600.0
 
 router = APIRouter(prefix="/jobs", tags=["Jobs & SSE"])
 
@@ -112,10 +124,18 @@ async def stream_job_events(
         nonlocal last_seen_seq
         ping_interval = 15.0
         elapsed_ping = 0.0
+        elapsed_total = 0.0
 
         while True:
             if await request.is_disconnected():
                 break
+            if elapsed_total >= MAX_STREAM_SECONDS:
+                yield (
+                    "event: job_stream_timeout\n"
+                    f"data: {json.dumps({'job_id': id, 'message': 'Stream closed after reaching the maximum duration; reconnect to continue.'})}\n\n"
+                )
+                break
+
 
             events_to_send = []
             is_terminal = False
@@ -146,8 +166,11 @@ async def stream_job_events(
                     })
                     last_seen_seq = ev.seq
 
-                # Check terminal state
-                if current_job.status in (JobStatus.COMPLETED, JobStatus.FAILED, "COMPLETED", "FAILED"):
+                # Check terminal state (COMPLETED / FAILED / REVIEW_REQUIRED)
+                if (
+                    current_job.status in TERMINAL_JOB_STATUSES
+                    or str(current_job.status) in TERMINAL_JOB_STATUS_VALUES
+                ):
                     is_terminal = True
                     stage_str = current_job.current_stage.value if hasattr(current_job.current_stage, "value") else str(current_job.current_stage)
                     status_str = current_job.status.value if hasattr(current_job.status, "value") else str(current_job.status)
@@ -170,6 +193,7 @@ async def stream_job_events(
 
             await asyncio.sleep(0.5)
             elapsed_ping += 0.5
+            elapsed_total += 0.5
 
             if elapsed_ping >= ping_interval:
                 # SSE heartbeat ping comment (does not create DB records or advance event IDs)

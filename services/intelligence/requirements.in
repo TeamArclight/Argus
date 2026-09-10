@@ -1,0 +1,40 @@
+# Human-maintained dependency ranges for the ARGUS intelligence service.
+#
+# This file is the SOURCE. requirements.txt is the LOCK that Docker installs
+# from, and must be regenerated whenever this file changes:
+#
+#     ./scripts/freeze-requirements.sh
+#
+# Rationale (audit finding H-14): the service previously installed directly from
+# open ranges with no lock, so two builds a week apart resolved different code.
+# The most dangerous of those was langgraph, whose range spanned the 0.x -> 1.x
+# transition that changes the `interrupt` and checkpointer APIs used directly by
+# argus_ai/agents/workflow.py.
+
+pydantic>=2.9,<3
+fastapi>=0.115,<1
+uvicorn[standard]>=0.31,<1
+httpx>=0.27,<1
+boto3>=1.35,<2
+
+# Model provider. Kept to a single major.
+google-genai>=1,<2
+
+psycopg[binary]>=3.2,<4
+
+# WARNING: pin this to the exact installed version in requirements.txt before
+# any demo. The 0.x -> 1.x transition changes langgraph.types.interrupt and
+# checkpointer construction, both of which argus_ai/agents/workflow.py calls.
+langgraph>=0.2,<2
+
+# PDF text extraction and optional scanned-document OCR.
+pypdf>=5,<7
+python-docx>=1.1,<2
+openpyxl>=3.1,<4
+Pillow>=10,<12
+
+# Optional scanned-PDF OCR; requires system Tesseract and Poppler binaries.
+pytesseract>=0.3,<1
+pdf2image>=1.17,<2
+
+pytest>=8,<9

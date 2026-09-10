@@ -12,8 +12,21 @@ from urllib.parse import unquote, urlparse
 import httpx
 
 MAX_DOCUMENT_BYTES = int(os.getenv("ARGUS_MAX_DOCUMENT_BYTES", str(30 * 1024 * 1024)))
+_LOCAL_ENVIRONMENTS = {"development", "local", "test"}
+
 
 class DocumentResolutionError(ValueError): pass
+
+def _unrestricted_local_paths_permitted() -> bool:
+    """Resolving arbitrary local paths needs an explicit opt-in AND a local environment.
+
+    Used only as the escape hatch for local development and the test suite; any
+    other environment must configure ARGUS_ALLOWED_STORAGE_ROOTS.
+    """
+    opted_in = (os.getenv("ARGUS_ALLOW_UNRESTRICTED_LOCAL_PATHS") or "").strip().lower() in {"true", "1", "yes"}
+    is_local = (os.getenv("APP_ENV", "development") or "").strip().lower() in _LOCAL_ENVIRONMENTS
+    return opted_in and is_local
+
 
 def _public_host(hostname: str) -> None:
     """Reject literal/private endpoints before downloading signed URLs."""
@@ -56,11 +69,24 @@ def resolved_document(uri: Union[str, Path]) -> Iterator[Path]:
             resolved = path.resolve()
         except Exception as exc:
             raise DocumentResolutionError("invalid document path") from exc
+        # The storage-root allowlist is MANDATORY. It was previously applied only
+        # when ARGUS_ALLOWED_STORAGE_ROOTS happened to be set — and it is set
+        # nowhere in .env.example or compose — so every shipped configuration
+        # resolved arbitrary filesystem paths (audit finding C-4).
 
         allowed_roots_str = os.getenv("ARGUS_ALLOWED_STORAGE_ROOTS", "").strip()
-        if allowed_roots_str:
+        if not allowed_roots_str:
+            if not _unrestricted_local_paths_permitted():
+                raise DocumentResolutionError(
+                    "local document resolution requires ARGUS_ALLOWED_STORAGE_ROOTS to be configured"
+                )
+        else:
             allowed_roots = [Path(r.strip()).resolve() for r in allowed_roots_str.split(",") if r.strip()]
-            if allowed_roots and not any(resolved.is_relative_to(root) for root in allowed_roots):
+            if not allowed_roots:
+                raise DocumentResolutionError(
+                    "ARGUS_ALLOWED_STORAGE_ROOTS is set but contains no usable path"
+                )
+            if not any(resolved.is_relative_to(root) for root in allowed_roots):
                 raise DocumentResolutionError("local document path escapes allowed storage roots")
 
         if not resolved.is_file():

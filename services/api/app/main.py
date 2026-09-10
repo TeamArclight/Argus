@@ -73,20 +73,58 @@ app.include_router(providers_router, prefix="/api/v1")
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    # Liveness probe. Says the process is up and nothing more.
+    # Deliberately touches no dependency: an orchestrator uses this to decide
+    # whether to restart the container, which a database outage must not trigger.
+    # Deployment readiness is /health/readiness.
     return {"status": "ok", "service": "argus-api"}
+#: One representative table per core domain. Their presence is what distinguishes
+#: a usable database from a connected-but-empty one.
+_SCHEMA_PROBE_TABLES = ("tenders", "bidders", "processing_jobs")
+
+
 
 
 @app.get("/health/readiness")
 def health_readiness() -> JSONResponse:
     """Readiness probe checking database connectivity and storage availability."""
+    # Connectivity alone is not readiness. Before this check a database with no
+    # schema — the state a deploy is left in when migrations never run — answered
+    # SELECT 1 and reported ready, so the container went healthy and every real
+    # request then failed (audit finding C-5).
     db_connected = False
+    schema_present = False
     storage_writable = False
+    schema_revision: str | None = None
     req_id = get_request_id()
 
     try:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
             db_connected = True
+
+            missing_tables = []
+            for table in _SCHEMA_PROBE_TABLES:
+                try:
+                    db.execute(text(f"SELECT 1 FROM {table} LIMIT 1"))
+                except Exception:
+                    missing_tables.append(table)
+            schema_present = not missing_tables
+            if missing_tables:
+                logger.error(
+                    "Readiness schema probe failed; missing tables: %s. "
+                    "Run 'alembic upgrade head' before serving traffic.",
+                    ", ".join(missing_tables),
+                )
+
+            # Informational only: reports the applied Alembic revision when the
+            # schema is migration-managed. Not a readiness gate, so a database
+            # provisioned by other means still reports ready when it is usable.
+            try:
+                revision = db.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
+                schema_revision = str(revision) if revision else None
+            except Exception:
+                schema_revision = None
     except Exception as e:
         logger.error(f"Readiness DB probe failed: {e}")
 
@@ -102,7 +140,7 @@ def health_readiness() -> JSONResponse:
     except Exception as e:
         logger.error(f"Readiness storage probe failed: {e}")
 
-    is_ready = db_connected and storage_writable
+    is_ready = db_connected and schema_present and storage_writable
     status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
     return JSONResponse(
@@ -113,8 +151,10 @@ def health_readiness() -> JSONResponse:
             "request_id": req_id,
             "components": {
                 "database": "connected" if db_connected else "disconnected",
+                "schema": "present" if schema_present else "missing",
                 "storage": "writable" if storage_writable else "unwritable",
             },
+            "schema_revision": schema_revision,
         },
     )
 

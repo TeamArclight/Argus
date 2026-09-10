@@ -1,3 +1,26 @@
+# ARGUS intelligence service dependencies.
+#
+# ============================================================================
+# NOT YET LOCKED -- run ./scripts/freeze-requirements.sh before the demo.
+# ============================================================================
+#
+# Audit finding H-14. The source of truth is requirements.in; this file is meant
+# to be an exact pinned lock generated from it. It could not be generated in the
+# environment this change was authored in (PyPI egress blocked), so the ranges
+# below are carried over unchanged and this file is NOT yet reproducible.
+#
+# One command, on any machine with PyPI and Docker access, closes this:
+#
+#     cd services/intelligence && ./scripts/freeze-requirements.sh
+#
+# That resolves requirements.in inside the same python:3.11-slim base image the
+# service ships on and rewrites this file with exact ==pins. Commit the result.
+#
+# Until then, the highest-risk entry is langgraph: the range spans the 0.x -> 1.x
+# transition, which changes langgraph.types.interrupt and checkpointer
+# construction -- both called directly by argus_ai/agents/workflow.py. If you pin
+# nothing else, pin that one to the version you have working.
+
 pydantic>=2.9,<3
 fastapi>=0.115,<1
 uvicorn[standard]>=0.31,<1
@@ -15,4 +38,3 @@ Pillow>=10,<12
 pytesseract>=0.3,<1
 pdf2image>=1.17,<2
 pytest>=8,<9
-
