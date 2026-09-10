@@ -3023,7 +3023,7 @@
 
     // Helper function to verify token with backend /api/v1/auth/me
     async function verifyAndEnterWorkspace(token) {
-      const apiBase = 'http://127.0.0.1:8000';
+      const apiBase = 'https://argus-api-h93c.onrender.com';
       try {
         const response = await fetch(`${apiBase}/api/v1/auth/me`, {
           headers: {
