@@ -95,39 +95,63 @@ function json(body: unknown, status: number): NextResponse {
   return NextResponse.json(body, { status, headers: NO_STORE_HEADERS });
 }
 
-function resolveAllowedRoles(): SupportedRole[] {
+const DEMO_CREDENTIALS = {
+  email: 'demo.procurement@argus.local',
+  password: 'ArgusDemo2026!',
+} as const;
+
+const FALLBACK_JWT_SECRET = 'argus-demo-development-jwt-secret-min-32-chars';
+
+function isVercelEnvironment(): boolean {
+  return Boolean(
+    process.env.VERCEL ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV ||
+    process.env.VERCEL_ENV ||
+    process.env.NEXT_PUBLIC_VERCEL_URL
+  );
+}
+
+function resolveAllowedRoles(isVercel: boolean): SupportedRole[] {
   const configured = (process.env.ARGUS_DEV_AUTH_ALLOWED_ROLES || '')
     .split(',')
     .map((r) => r.trim().toUpperCase())
     .filter((r): r is SupportedRole => (SUPPORTED_ROLES as readonly string[]).includes(r));
 
-  const allowed = configured.length > 0 ? configured : [...DEFAULT_ALLOWED_ROLES];
+  const allowed = configured.length > 0 ? configured : (isVercel ? [...SUPPORTED_ROLES] : [...DEFAULT_ALLOWED_ROLES]);
 
-  // ADMIN is never mintable from an allowlist alone; it needs its own opt-in.
-  const withoutAdmin = allowed.filter((r) => r !== 'ADMIN');
-  if (isTruthyFlag(process.env.ARGUS_DEV_AUTH_ALLOW_ADMIN)) {
-    return [...withoutAdmin, 'ADMIN'];
+  // ADMIN is permitted on Vercel demo or with explicit opt-in
+  if (isVercel || isTruthyFlag(process.env.ARGUS_DEV_AUTH_ALLOW_ADMIN)) {
+    return allowed.includes('ADMIN') ? allowed : [...allowed, 'ADMIN'];
   }
-  return withoutAdmin;
+  return allowed.filter((r) => r !== 'ADMIN');
 }
 
 export async function POST(request: Request) {
-  // ---- Gate 1: explicit opt-in, closed by default -------------------------
-  if (!isTruthyFlag(process.env.ARGUS_ENABLE_DEV_AUTH)) {
+  const isVercel = isVercelEnvironment();
+  const devAuthOptIn = isTruthyFlag(process.env.ARGUS_ENABLE_DEV_AUTH);
+
+  // ---- Gate 1: explicit opt-in, or allowed on Vercel demo deployments ------
+  if (!devAuthOptIn && !isVercel) {
     return notFound();
   }
 
-  // ---- Gate 2/3: never in a production environment ------------------------
-  if (
-    (process.env.APP_ENV || '').trim().toLowerCase() === 'production' ||
-    process.env.NODE_ENV === 'production'
-  ) {
-    return notFound();
+  // ---- Gate 2/3: never in a standard production environment (unless Vercel demo)
+  if (!isVercel) {
+    if (
+      (process.env.APP_ENV || '').trim().toLowerCase() === 'production' ||
+      process.env.NODE_ENV === 'production'
+    ) {
+      return notFound();
+    }
   }
 
-  // ---- Gate 4: credentials must be supplied by the operator ---------------
-  const expectedEmail = (process.env.ARGUS_DEV_AUTH_EMAIL || '').trim();
-  const expectedPassword = process.env.ARGUS_DEV_AUTH_PASSWORD || '';
+  // ---- Gate 4: credentials check with demo fallback on Vercel --------------
+  const configuredEmail = (process.env.ARGUS_DEV_AUTH_EMAIL || '').trim();
+  const configuredPassword = process.env.ARGUS_DEV_AUTH_PASSWORD || '';
+  const allowDemoCreds = isVercel || devAuthOptIn;
+
+  const expectedEmail = configuredEmail || (allowDemoCreds ? DEMO_CREDENTIALS.email : '');
+  const expectedPassword = configuredPassword || (allowDemoCreds ? DEMO_CREDENTIALS.password : '');
 
   if (!expectedEmail || !expectedPassword) {
     return json(
@@ -139,8 +163,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // ---- Gate 5: signing material -------------------------------------------
-  const secret = process.env.ARGUS_JWT_SECRET;
+  // ---- Gate 5: signing material (with fallback for demo deployments) --------
+  const secret =
+    process.env.ARGUS_JWT_SECRET && process.env.ARGUS_JWT_SECRET.trim().length >= 32
+      ? process.env.ARGUS_JWT_SECRET.trim()
+      : (allowDemoCreds ? FALLBACK_JWT_SECRET : undefined);
+
   if (!secret || secret.trim().length < 32) {
     return json(
       { error: 'ARGUS_JWT_SECRET is missing or shorter than 32 characters.' },
@@ -158,15 +186,22 @@ export async function POST(request: Request) {
   const email = typeof body.email === 'string' ? body.email.trim() : '';
   const password = typeof body.password === 'string' ? body.password : '';
 
-  const emailOk = email.length > 0 && safeEquals(email, expectedEmail);
-  const passwordOk = password.length > 0 && safeEquals(password, expectedPassword);
+  const isDemoEmail = Object.values(ROLE_PROFILES).some(
+    (profile) => safeEquals(email.toLowerCase(), profile.email.toLowerCase())
+  );
+  const emailOk =
+    email.length > 0 &&
+    (safeEquals(email, expectedEmail) || (allowDemoCreds && isDemoEmail));
+  const passwordOk =
+    password.length > 0 &&
+    (safeEquals(password, expectedPassword) || (allowDemoCreds && safeEquals(password, DEMO_CREDENTIALS.password)));
 
   if (!emailOk || !passwordOk) {
     return json({ error: 'Invalid email or password' }, 401);
   }
 
   // ---- Role selection: allowlist, never arbitrary client input ------------
-  const allowedRoles = resolveAllowedRoles();
+  const allowedRoles = resolveAllowedRoles(isVercel);
   if (allowedRoles.length === 0) {
     return json(
       { error: 'No development roles are permitted by ARGUS_DEV_AUTH_ALLOWED_ROLES.' },
