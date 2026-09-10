@@ -18,7 +18,7 @@ export const SessionRequired: React.FC<SessionRequiredProps> = ({
 }) => {
   const { enableDemoPreview, loginDevOfficer, loginWithToken, error } = useAuth();
   const [devFormOpen, setDevFormOpen] = React.useState(false);
-  const [devEmail, setDevEmail] = React.useState('demo.procurement@argus.local');
+  const [devEmail, setDevEmail] = React.useState('');
   const [devPassword, setDevPassword] = React.useState('');
   const [devRole, setDevRole] = React.useState('PROCUREMENT_OFFICER');
   const [signingIn, setSigningIn] = React.useState(false);
@@ -152,16 +152,6 @@ export const SessionRequired: React.FC<SessionRequiredProps> = ({
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
               ARGUS Local Development Sign In
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                setDevEmail('demo.procurement@argus.local');
-                setDevPassword('ArgusDemo2026!');
-              }}
-              className="text-[11px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
-            >
-              Fill Dev Account
-            </button>
           </div>
           <div>
             <label className="block text-[11px] font-mono text-slate-400 mb-1">Email Address</label>
@@ -170,7 +160,7 @@ export const SessionRequired: React.FC<SessionRequiredProps> = ({
               required
               value={devEmail}
               onChange={(e) => setDevEmail(e.target.value)}
-              placeholder="demo.procurement@argus.local"
+              placeholder="you@example.gov.in"
               className="w-full p-2 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
             />
           </div>
@@ -195,11 +185,12 @@ export const SessionRequired: React.FC<SessionRequiredProps> = ({
               <option value="PROCUREMENT_OFFICER">Procurement Officer</option>
               <option value="REVIEWER">Reviewer</option>
               <option value="AUDITOR">Auditor</option>
-              <option value="ADMIN">Administrator</option>
             </select>
           </div>
           <p className="text-[10px] text-slate-500 font-mono">
-            Default: <code>demo.procurement@argus.local</code> / <code>ArgusDemo2026!</code>
+            Credentials are set by the operator via <code>ARGUS_DEV_AUTH_EMAIL</code> and{' '}
+            <code>ARGUS_DEV_AUTH_PASSWORD</code>. Development sign-in is disabled unless{' '}
+            <code>ARGUS_ENABLE_DEV_AUTH=true</code>.
           </p>
           <div className="flex justify-end gap-2 pt-1">
             <button

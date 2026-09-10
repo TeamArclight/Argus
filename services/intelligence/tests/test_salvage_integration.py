@@ -652,6 +652,7 @@ def test_evaluate_bid_production_guard(monkeypatch, tmp_path):
 
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ARGUS_INTELLIGENCE_API_KEY", "test-key")
+    monkeypatch.setenv("ARGUS_ALLOWED_STORAGE_ROOTS", str(tmp_path))
     auth_headers = {"Authorization": "Bearer test-key"}
 
     # In production without demo enabled -> 403 Forbidden

@@ -1009,6 +1009,7 @@ async def process_bidder_documents(
     total_docs = len(documents)
     successful_docs = 0
     failed_docs = 0
+    low_confidence_fields: list[str] = []
 
     for doc in documents:
         if not doc.sha256 or not doc.sha256.strip():
@@ -1098,7 +1099,10 @@ async def process_bidder_documents(
             continue
 
         successful_docs += 1
-        
+        for lc_field in (ai_res.low_confidence_fields or []):
+            if lc_field not in low_confidence_fields:
+                low_confidence_fields.append(lc_field)
+
         # Non-destructive reprocessing: preserve ALL existing facts, non-destructive deduplication for new facts
         def _norm_fact_val(v: Any) -> str:
             if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -1139,10 +1143,28 @@ async def process_bidder_documents(
             entity_id=doc.id,
             actor_id=principal.user_id,
             actor_role=principal.role.value,
-            payload={"job_id": job.id, "request_id": req_id, "bidder_id": bidder_id, "facts_count": len(ai_res.data)},
+            payload={
+                "job_id": job.id,
+                "request_id": req_id,
+                "bidder_id": bidder_id,
+                "facts_count": len(ai_res.data),
+                "review_required": bool(ai_res.review_required),
+                "low_confidence_fields": list(ai_res.low_confidence_fields or []),
+            },
         )
 
-    if successful_docs == total_docs:
+    if successful_docs == total_docs and low_confidence_fields:
+        # Extraction succeeded but at least one field came back below the
+        # intelligence service's confidence threshold. Surface it rather than
+        # reporting a clean completion (audit finding C-6).
+        job.status = JobStatus.REVIEW_REQUIRED
+        job.progress = 100
+        job.completed_at = datetime.now(timezone.utc)
+        job.error_message = (
+            "Extraction completed with low-confidence fields requiring officer review: "
+            + ", ".join(sorted(low_confidence_fields))
+        )
+    elif successful_docs == total_docs:
         job.status = JobStatus.COMPLETED
         job.progress = 100
         job.completed_at = datetime.now(timezone.utc)

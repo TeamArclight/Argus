@@ -168,6 +168,17 @@ class JobStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
+#: Job statuses from which a job will never advance. REVIEW_REQUIRED is terminal:
+#: the workflow sets it whenever an outcome needs a human, and treating it as
+#: non-terminal left SSE streams and the UI polling forever (audit finding H-2).
+TERMINAL_JOB_STATUSES: frozenset[JobStatus] = frozenset(
+    {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.REVIEW_REQUIRED}
+)
+
+#: Same set as plain strings, for comparing values read back from String columns.
+TERMINAL_JOB_STATUS_VALUES: frozenset[str] = frozenset(s.value for s in TERMINAL_JOB_STATUSES)
+
+
 
 
 class JobStage(str, Enum):
@@ -707,6 +718,10 @@ class AIServiceResult(BaseModel):
     error_code: str | None = None
     retryable: bool = False
     message: str | None = None
+    # Extraction-confidence signals surfaced by the intelligence service so the
+    # backend can record which extracted fields need human review.
+    review_required: bool = False
+    low_confidence_fields: list[str] = Field(default_factory=list)
 
 
 class AIResponseEnvelope(BaseModel):
@@ -722,6 +737,11 @@ class AIResponseEnvelope(BaseModel):
     requirements: list[dict[str, Any]] | None = None
     facts: list[dict[str, Any]] | None = None
     provider_model: str | None = None
+    # Confidence signals computed by the intelligence service. Optional so that an
+    # older intelligence build remains contract-compatible; absent is treated as
+    # "not reported" and the per-fact confidence still governs evaluation.
+    review_required: bool | None = None
+    low_confidence_fields: list[str] | None = None
     error: str | None = None
     message: str | None = None
 

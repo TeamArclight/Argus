@@ -85,23 +85,30 @@ def build_argus_workflow(*, gateway=None, rag=None, compliance_tool=None, report
     from argus_ai.model_gateway.gateway import ModelGateway
     from argus_ai.risk.context import detect_fact_risks
     from argus_ai.rag.service import InMemoryRAG
+    from argus_ai.storage import resolved_document
 
     gw = gateway or ModelGateway()
     rag_service = rag or InMemoryRAG()
+    # Document URIs reaching these nodes come from the /evaluate-bid request body.
+    # They must go through resolved_document() — the same size limit, scheme
+    # restriction and storage-root allowlist every other endpoint uses. Passing
+    # them straight to the parser bypassed all three (audit finding C-4).
 
     def _extract_tender(tender_dict):
         uri = tender_dict.get("document_uri")
         if not uri: return []
-        # extract_tender returns list[TenderRequirementDraft]
-        return [req.model_dump(mode="json") for req in _raw_extract_tender(uri, gw)]
+        with resolved_document(uri) as path:
+            # extract_tender returns list[TenderRequirementDraft]
+            return [req.model_dump(mode="json") for req in _raw_extract_tender(path, gw)]
 
     def _extract_document(document_dict):
         uri = document_dict.get("document_uri")
         if not uri: return []
         doc_id = document_dict.get("document_id", "unknown")
         bidder_id = document_dict.get("bidder_id", "unknown")
-        # extract_document returns list[ExtractedFactDraft]
-        return [fact.model_dump(mode="json") for fact in _raw_extract_document(uri, document_id=doc_id, bidder_id=bidder_id, gateway=gw)]
+        with resolved_document(uri) as path:
+            # extract_document returns list[ExtractedFactDraft]
+            return [fact.model_dump(mode="json") for fact in _raw_extract_document(path, document_id=doc_id, bidder_id=bidder_id, gateway=gw)]
 
     def _retrieve(query_dict):
         query = query_dict.get("query")

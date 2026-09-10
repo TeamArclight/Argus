@@ -30,6 +30,26 @@ _LOW_CONFIDENCE_THRESHOLD = float(os.getenv("ARGUS_LOW_CONFIDENCE_THRESHOLD", "0
 
 _MAX_DOCUMENT_BYTES = int(os.getenv("ARGUS_MAX_DOCUMENT_BYTES", str(30 * 1024 * 1024)))
 _MAX_B64_LEN = int(_MAX_DOCUMENT_BYTES * 4 / 3) + 1024
+#: Environments in which an explicit anonymous-access opt-in is honoured.
+_LOCAL_ENVIRONMENTS = {"development", "local", "test"}
+
+
+def _is_truthy(value: Optional[str]) -> bool:
+    return (value or "").strip().lower() in {"true", "1", "yes"}
+
+
+def _app_env() -> str:
+    return os.getenv("APP_ENV", "development").strip().lower()
+
+
+def _is_local_environment() -> bool:
+    return _app_env() in _LOCAL_ENVIRONMENTS
+
+
+def _anonymous_access_permitted() -> bool:
+    """Anonymous access needs BOTH an explicit opt-in and a local environment."""
+    return _is_truthy(os.getenv("ARGUS_ALLOW_ANONYMOUS_INTELLIGENCE")) and _is_local_environment()
+
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +158,14 @@ class ResumeWorkflowRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) -> FastAPI:
+    # Fail fast rather than serving an unauthenticated service outside local dev.
+    if not os.getenv("ARGUS_INTELLIGENCE_API_KEY") and not _anonymous_access_permitted():
+        if not _is_local_environment():
+            raise RuntimeError(
+                f"ARGUS_INTELLIGENCE_API_KEY is required when APP_ENV={_app_env()!r}. "
+                "Refusing to start an unauthenticated intelligence service."
+            )
+
     if rag is None:
         database_url = os.getenv("ARGUS_RAG_DATABASE_URL")
         live_rag_required = os.getenv("ARGUS_REQUIRE_LIVE_RAG", "false").lower() in {"true", "1", "yes"} or os.getenv("APP_ENV") == "production"
@@ -150,14 +178,30 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
     store = rag
 
     def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
+        """Authenticate the caller. Fails CLOSED when no API key is configured.
+
+        Previously an unset ARGUS_INTELLIGENCE_API_KEY meant "no authentication",
+        which is the shipped default in .env.example and compose — so the whole
+        service was open (audit finding C-3). Anonymous access now requires an
+        explicit opt-in AND a local environment.
+        """
         expected = os.getenv("ARGUS_INTELLIGENCE_API_KEY")
-        require_auth_flag = os.getenv("ARGUS_REQUIRE_AUTH", "false").lower() in {"true", "1", "yes"}
-        is_production = os.getenv("APP_ENV", "development").lower() == "production"
         if expected:
             if not authorization or not hmac.compare_digest(authorization, f"Bearer {expected}"):
                 raise HTTPException(status_code=401, detail="Invalid intelligence service credentials")
-        elif require_auth_flag or is_production:
-            raise HTTPException(status_code=401, detail="Intelligence service authentication is required but ARGUS_INTELLIGENCE_API_KEY is not configured")
+            return
+
+        if _anonymous_access_permitted():
+            return
+
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Intelligence service authentication is required. Set "
+                "ARGUS_INTELLIGENCE_API_KEY, or set ARGUS_ALLOW_ANONYMOUS_INTELLIGENCE=true "
+                "in a local development environment."
+            ),
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -168,6 +212,16 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
     # ------------------------------------------------------------------
     # Health
     # ------------------------------------------------------------------
+    @app.get("/livez")
+    def livez() -> dict[str, str]:
+        """Unauthenticated liveness probe: says the process is up and nothing else.
+
+        Kept deliberately free of configuration detail so container orchestrators
+        can probe it without holding the service credential. /health remains
+        authenticated because it reports provider and model configuration.
+        """
+        return {"status": "ok", "service": "argus-intelligence"}
+
 
     @app.get("/health")
     def health(_: None = Depends(require_auth)) -> dict[str, Any]:
@@ -279,6 +333,15 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
                     facts = extract_document(path, document_id=payload.document_id, bidder_id=payload.bidder_id, gateway=gw)
             else:
                 raise HTTPException(422, "Either file_bytes_base64 or document_uri is required")
+            # Confidence signals are computed once and reported on BOTH response
+            # shapes. Previously the contract-mode branch dropped them, so the
+            # backend — which always sends request_id/contract_version — never saw
+            # that an extraction was low confidence (audit finding C-6).
+            low_confidence_fields = [
+                fact.field for fact in facts if fact.confidence < _LOW_CONFIDENCE_THRESHOLD
+            ]
+            review_required = bool(low_confidence_fields)
+
 
             if payload.request_id or payload.contract_version:
                 return {
@@ -288,6 +351,9 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
                     "bidder_id": payload.bidder_id,
                     "document_sha256": payload.document_sha256 or computed_sha or "",
                     "status": "COMPLETED",
+                    "review_required": review_required,
+                    "low_confidence_fields": low_confidence_fields,
+                    "confidence_threshold": _LOW_CONFIDENCE_THRESHOLD,
                     "facts": [
                         {
                             "field": fact.field,
@@ -310,11 +376,11 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
                 }
 
             api_facts = [{k: v for k, v in fact.model_dump(mode="json").items() if k in {"field", "value", "source_page", "source_text", "confidence"}} for fact in facts]
-            low_confidence_fields = [fact.field for fact in facts if fact.confidence < _LOW_CONFIDENCE_THRESHOLD]
             return {
                 "facts": api_facts,
-                "review_required": bool(low_confidence_fields),
+                "review_required": review_required,
                 "low_confidence_fields": low_confidence_fields,
+                "confidence_threshold": _LOW_CONFIDENCE_THRESHOLD,
             }
         except (ValueError, DocumentResolutionError) as exc:
             raise HTTPException(422, str(exc)) from exc

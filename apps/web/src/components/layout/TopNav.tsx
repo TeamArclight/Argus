@@ -14,7 +14,7 @@ export const TopNav: React.FC = () => {
   const [tokenInputOpen, setTokenInputOpen] = useState(false);
   const [tokenInputValue, setTokenInputValue] = useState('');
   const [tokenSubmitting, setTokenSubmitting] = useState(false);
-  const [devEmail, setDevEmail] = useState('demo.procurement@argus.local');
+  const [devEmail, setDevEmail] = useState('');
   const [devPassword, setDevPassword] = useState('');
   const [devRole, setDevRole] = useState('PROCUREMENT_OFFICER');
   const [devLoginLoading, setDevLoginLoading] = useState(false);
@@ -194,17 +194,6 @@ export const TopNav: React.FC = () => {
           <form onSubmit={handleDevSignInSubmit} className="p-3 rounded-lg bg-indigo-950/40 border border-indigo-800/60 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-indigo-200 font-semibold font-mono">ARGUS Local Development Sign In</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setDevEmail('demo.procurement@argus.local');
-                  setDevPassword('ArgusDemo2026!');
-                  setModalError(null);
-                }}
-                className="text-[10px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
-              >
-                Fill Dev Account
-              </button>
             </div>
 
             <div>
@@ -214,7 +203,7 @@ export const TopNav: React.FC = () => {
                 required
                 value={devEmail}
                 onChange={(e) => setDevEmail(e.target.value)}
-                placeholder="demo.procurement@argus.local"
+                placeholder="you@example.gov.in"
                 className="w-full p-1.5 bg-slate-950 border border-slate-800 rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
               />
             </div>

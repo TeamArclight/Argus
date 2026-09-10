@@ -2,7 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, getApiBaseUrl, getAuthToken } from '@/services/api';
-import type { JobEventRead, JobRead, JobStage } from '@/types/api';
+import type { JobEventRead, JobRead, JobStage, JobStatus } from '@/types/api';
+
+/**
+ * Job statuses from which a job never advances. REVIEW_REQUIRED is terminal —
+ * the backend workflow sets it whenever an outcome needs a human, and treating
+ * it as non-terminal left the drawer spinning and polling forever.
+ * Mirrors TERMINAL_JOB_STATUSES in services/api/app/schemas/canonical.py.
+ */
+const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['COMPLETED', 'FAILED', 'REVIEW_REQUIRED'];
+
+function isTerminalStatus(status: string | null | undefined): boolean {
+  return !!status && (TERMINAL_JOB_STATUSES as readonly string[]).includes(status);
+}
 
 interface UseJobStreamOptions {
   jobId: string | null;
@@ -32,17 +44,22 @@ export function useJobStream({
         const currentJob = await apiClient.getJob(id);
         setJob(currentJob);
 
-        if (currentJob.status === 'COMPLETED') {
+        if (isTerminalStatus(currentJob.status)) {
           isTerminalRef.current = true;
           setIsStreaming(false);
-          onCompleted?.(currentJob);
-        } else if (currentJob.status === 'FAILED') {
-          isTerminalRef.current = true;
-          setIsStreaming(false);
-          onFailed?.(currentJob.error_message || 'Job execution failed');
+          if (currentJob.status === 'FAILED') {
+            onFailed?.(currentJob.error_message || 'Job execution failed');
+          } else {
+            // COMPLETED and REVIEW_REQUIRED are both successful terminations of
+            // the job itself; REVIEW_REQUIRED additionally needs officer attention.
+            onCompleted?.(currentJob);
+          }
         }
-      } catch {
-        // Non-fatal status poll failure
+      } catch (err: unknown) {
+        // Status polling is best-effort while the stream is the primary channel,
+        // but surface the reason so a persistent backend failure is visible.
+        const msg = err instanceof Error ? err.message : 'Unable to read job status.';
+        setError(msg);
       }
     },
     [onCompleted, onFailed]
@@ -127,7 +144,7 @@ export function useJobStream({
                     return [...prev, eventData];
                   });
 
-                  if (eventData.status === 'COMPLETED' || eventData.status === 'FAILED') {
+                  if (isTerminalStatus(eventData.status)) {
                     checkJobStatus(jobId!);
                   }
                 }
@@ -171,5 +188,7 @@ export function useJobStream({
     currentStage,
     isCompleted: job?.status === 'COMPLETED',
     isFailed: job?.status === 'FAILED',
+    isReviewRequired: job?.status === 'REVIEW_REQUIRED',
+    isTerminal: isTerminalStatus(job?.status),
   };
 }

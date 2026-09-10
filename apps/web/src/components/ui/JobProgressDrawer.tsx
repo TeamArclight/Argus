@@ -49,6 +49,11 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
   const progressPercent = job?.progress ?? stream.progress ?? (events.length > 0 ? events[events.length - 1].progress : 0);
   const isFailed = job?.status === 'FAILED' || stream.isFailed;
   const isCompleted = job?.status === 'COMPLETED' || stream.isCompleted;
+  // REVIEW_REQUIRED is a terminal job state, not an in-flight one. Without this
+  // the drawer pulsed indefinitely on the outcome the workflow produces most
+  // often (audit finding H-2).
+  const isReviewRequired = job?.status === 'REVIEW_REQUIRED' || stream.isReviewRequired;
+  const isTerminal = isCompleted || isFailed || isReviewRequired;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
@@ -57,7 +62,7 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
         <div className="p-5 border-b border-slate-800 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <span className={`w-2.5 h-2.5 rounded-full ${isCompleted ? 'bg-emerald-500' : isFailed ? 'bg-rose-500' : 'bg-indigo-500 animate-pulse'}`} />
+              <span className={`w-2.5 h-2.5 rounded-full ${isCompleted ? 'bg-emerald-500' : isFailed ? 'bg-rose-500' : isReviewRequired ? 'bg-amber-500' : 'bg-indigo-500 animate-pulse'}`} />
               <h2 className="text-base font-semibold text-slate-100">{title}</h2>
             </div>
             <p className="text-xs font-mono text-slate-400 mt-1">
@@ -81,7 +86,7 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
           <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
             <div
               className={`h-full transition-all duration-300 ${
-                isFailed ? 'bg-rose-500' : isCompleted ? 'bg-emerald-500' : 'bg-indigo-500'
+                isFailed ? 'bg-rose-500' : isCompleted ? 'bg-emerald-500' : isReviewRequired ? 'bg-amber-500' : 'bg-indigo-500'
               }`}
               style={{ width: `${progressPercent}%` }}
             />
@@ -92,7 +97,7 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
             {STAGES.map((s, idx) => {
               const stageIdx = STAGES.findIndex((st) => st.key === currentStage);
               const isPast = stageIdx > idx || isCompleted;
-              const isCurrent = stageIdx === idx && !isCompleted && !isFailed;
+              const isCurrent = stageIdx === idx && !isTerminal;
               return (
                 <div key={s.key} className="flex flex-col items-center gap-1">
                   <div
@@ -143,7 +148,15 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
         {/* Footer */}
         <div className="p-4 border-t border-slate-800 bg-slate-950 flex justify-between items-center">
           <span className="text-xs text-slate-500 font-mono">
-            {stream.isStreaming ? 'Stream: CONNECTED (SSE)' : isCompleted ? 'Status: FINISHED' : 'Stream: IDLE'}
+            {stream.isStreaming
+              ? 'Stream: CONNECTED (SSE)'
+              : isReviewRequired
+                ? 'Status: FINISHED — OFFICER REVIEW REQUIRED'
+                : isCompleted
+                  ? 'Status: FINISHED'
+                  : isFailed
+                    ? 'Status: FAILED'
+                    : 'Stream: IDLE'}
           </span>
           <button
             onClick={onClose}
