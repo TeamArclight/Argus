@@ -8,8 +8,8 @@ import {
   AlertTriangle, AlertCircle
 } from "lucide-react";
 import { api } from "@/services/api";
+import { demoStore } from "@/services/demo-store";
 import { BidderRead, ComplianceMatrixRow, HumanDecisionCreate, HumanDecisionRead } from "@/services/types";
-import { MOCK_BIDDERS, MOCK_MATRIX_ALPHA } from "@/services/mock-data";
 import { SessionRequired } from "@/components/ui/SessionRequired";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -39,19 +39,32 @@ export default function HumanReviewPage() {
     setError(null);
 
     if (isDemoPreview) {
-      const match = MOCK_BIDDERS.find(b => b.id === bidderId) || MOCK_BIDDERS[0];
+      const match = demoStore.getBidder(bidderId);
+      if (!match) {
+        setBidder(null);
+        setError("Bidder Not Found");
+        setLoading(false);
+        return;
+      }
       setBidder(match);
-      setMatrix(MOCK_MATRIX_ALPHA.rows || []);
-      setExistingDecision({
-        id: 'dec_demo_01',
-        bidder_id: bidderId,
-        officer_id: 'usr_proc_officer_01',
-        officer_name: 'Rajesh Kumar (Senior Procurement Officer)',
-        status: 'QUALIFIED',
-        reason_code: 'MANUAL_APPROVAL_COMPLIANT',
-        remarks: 'All tender criteria satisfied and statutory registry facts validated.',
-        decided_at: '2026-08-20T12:00:00Z',
-      });
+      const demoMatrix = demoStore.getComplianceMatrix(bidderId);
+      setMatrix(demoMatrix?.rows || []);
+
+      const savedDecision = demoStore.getDemoState().humanDecisions[bidderId];
+      if (savedDecision) {
+        setExistingDecision({
+          id: `dec_demo_${bidderId}`,
+          bidder_id: bidderId,
+          officer_id: 'usr_proc_officer_01',
+          officer_name: 'Rajesh Kumar (Senior Procurement Officer)',
+          status: savedDecision as "QUALIFIED" | "DISQUALIFIED",
+          reason_code: savedDecision === 'QUALIFIED' ? 'MANUAL_APPROVAL_COMPLIANT' : 'STATUTORY_NON_COMPLIANCE',
+          remarks: savedDecision === 'QUALIFIED' ? 'All tender criteria satisfied and statutory facts validated.' : 'Eligibility criteria not satisfied.',
+          decided_at: new Date().toISOString(),
+        });
+      } else {
+        setExistingDecision(null);
+      }
       setLoading(false);
       return;
     }
@@ -91,6 +104,7 @@ export default function HumanReviewPage() {
     setSubmitSuccess(false);
 
     if (isDemoPreview) {
+      demoStore.recordHumanDecision(bidderId, status);
       setExistingDecision({
         id: `dec_demo_${Date.now()}`,
         bidder_id: bidderId,
@@ -102,6 +116,7 @@ export default function HumanReviewPage() {
         decided_at: new Date().toISOString(),
       });
       setSubmitSuccess(true);
+      await loadData();
       setSubmitting(false);
       return;
     }

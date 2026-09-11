@@ -8,10 +8,10 @@ import {
   Clock, ArrowLeft, RefreshCw, Sparkles, FileText, CheckSquare, Upload, AlertCircle
 } from "lucide-react";
 import { api } from "@/services/api";
+import { demoStore } from "@/services/demo-store";
 import { BidderRead, VerificationResultRead, ComplianceMatrixRow } from "@/services/types";
 import { JobProgressDrawer } from "@/components/ui/JobProgressDrawer";
 import { SessionRequired } from "@/components/ui/SessionRequired";
-import { MOCK_BIDDERS, MOCK_VERIFICATIONS, MOCK_MATRIX_ALPHA } from "@/services/mock-data";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function BidderDetailPage() {
@@ -40,10 +40,18 @@ export default function BidderDetailPage() {
     setError(null);
 
     if (isDemoPreview) {
-      const match = MOCK_BIDDERS.find(b => b.id === bidderId) || MOCK_BIDDERS[0];
+      const match = demoStore.getBidder(bidderId);
+      if (!match) {
+        setBidder(null);
+        setError("Bidder Not Found");
+        setLoading(false);
+        return;
+      }
       setBidder(match);
-      setVerifications(MOCK_VERIFICATIONS);
-      setMatrix(MOCK_MATRIX_ALPHA.rows || []);
+      const demoVerifications = demoStore.getDemoState().verifications[bidderId] || [];
+      const demoMatrix = demoStore.getComplianceMatrix(bidderId);
+      setVerifications(demoVerifications);
+      setMatrix(demoMatrix?.rows || []);
       setLoading(false);
       return;
     }
@@ -80,9 +88,9 @@ export default function BidderDetailPage() {
     setError(null);
 
     if (isDemoPreview) {
-      setTimeout(() => {
+      setTimeout(async () => {
         setTriggeringVerify(false);
-        setVerifications(MOCK_VERIFICATIONS);
+        await loadBidderData();
       }, 500);
       return;
     }
@@ -107,9 +115,9 @@ export default function BidderDetailPage() {
     setError(null);
 
     if (isDemoPreview) {
-      setTimeout(() => {
+      setTimeout(async () => {
         setTriggeringCompliance(false);
-        setMatrix(MOCK_MATRIX_ALPHA.rows || []);
+        await loadBidderData();
       }, 500);
       return;
     }

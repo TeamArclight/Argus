@@ -13,12 +13,11 @@ import {
   Activity,
 } from 'lucide-react';
 import { apiClient } from '@/services/api';
+import { demoStore } from '@/services/demo-store';
 import {
-  MOCK_BIDDERS,
   MOCK_PROVIDERS,
-  MOCK_TENDERS,
 } from '@/services/mock-data';
-import type { BidderRead, ProviderHealthRead, TenderCreate, TenderRead } from '@/types/api';
+import type { ProviderHealthRead, TenderCreate, TenderRead } from '@/types/api';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -30,7 +29,12 @@ export default function WorkspaceDashboard() {
   const { isAuthenticated, isDemoPreview, enableDemoPreview } = useAuth();
 
   const [tenders, setTenders] = useState<TenderRead[]>([]);
-  const [bidders, setBidders] = useState<BidderRead[]>([]);
+  const [demoStats, setDemoStats] = useState({
+    activeTenders: 0,
+    qualifiedBidders: 0,
+    disqualifiedBidders: 0,
+    pendingReviewBidders: 0,
+  });
   const [providers, setProviders] = useState<ProviderHealthRead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,8 +48,10 @@ export default function WorkspaceDashboard() {
       setError(null);
 
       if (isDemoPreview) {
-        setTenders(MOCK_TENDERS);
-        setBidders(MOCK_BIDDERS);
+        const demoTenders = demoStore.getTenders();
+        const stats = demoStore.getDashboardStats();
+        setTenders(demoTenders);
+        setDemoStats(stats);
         setProviders(MOCK_PROVIDERS);
         setLoading(false);
         return;
@@ -58,14 +64,6 @@ export default function WorkspaceDashboard() {
 
       // Live mode
       const tenderList = await apiClient.getTenders();
-      let bidderList: BidderRead[] = [];
-      if (tenderList.length > 0) {
-        try {
-          bidderList = await apiClient.getTenderBidders(tenderList[0].id);
-        } catch {
-          bidderList = [];
-        }
-      }
       let providerList: ProviderHealthRead[] = [];
       try {
         providerList = await apiClient.getProviders();
@@ -74,7 +72,6 @@ export default function WorkspaceDashboard() {
       }
 
       setTenders(tenderList);
-      setBidders(bidderList);
       setProviders(providerList);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load procurement overview.');
@@ -92,19 +89,8 @@ export default function WorkspaceDashboard() {
       setIsCreating(true);
 
       if (isDemoPreview) {
-        const syntheticTender: TenderRead = {
-          id: `tender_demo_${Date.now()}`,
-          tender_number: data.tender_number,
-          title: data.title,
-          category: data.category || null,
-          authority: data.authority || null,
-          budget: data.budget || null,
-          deadline: data.deadline || null,
-          status: 'COMPLETED',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        setTenders((prev) => [syntheticTender, ...prev]);
+        demoStore.createTender(data, rfpFile);
+        await loadDashboardData();
         setCreateModalOpen(false);
         return;
       }
@@ -159,9 +145,9 @@ export default function WorkspaceDashboard() {
     );
   }
 
-  const qualifiedCount = bidders.filter((b) => b.status === 'QUALIFIED').length;
-  const disqualifiedCount = bidders.filter((b) => b.status === 'DISQUALIFIED').length;
-  const pendingCount = bidders.filter((b) => b.status === 'PENDING').length;
+  const qualifiedCount = isDemoPreview ? demoStats.qualifiedBidders : 0;
+  const disqualifiedCount = isDemoPreview ? demoStats.disqualifiedBidders : 0;
+  const pendingCount = isDemoPreview ? demoStats.pendingReviewBidders : 0;
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-12">

@@ -11,7 +11,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { apiClient } from '@/services/api';
-import { MOCK_TENDERS } from '@/services/mock-data';
+import { demoStore } from '@/services/demo-store';
 import type { TenderCreate, TenderRead } from '@/types/api';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -38,7 +38,8 @@ export default function TendersListPage() {
       setError(null);
 
       if (isDemoPreview) {
-        setTenders(MOCK_TENDERS);
+        const demoTenders = demoStore.getTenders();
+        setTenders(demoTenders);
         setLoading(false);
         return;
       }
@@ -66,19 +67,8 @@ export default function TendersListPage() {
       setIsCreating(true);
 
       if (isDemoPreview) {
-        const syntheticTender: TenderRead = {
-          id: `tender_demo_${Date.now()}`,
-          tender_number: data.tender_number,
-          title: data.title,
-          category: data.category || null,
-          authority: data.authority || null,
-          budget: data.budget || null,
-          deadline: data.deadline || null,
-          status: 'COMPLETED',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        setTenders((prev) => [syntheticTender, ...prev]);
+        demoStore.createTender(data, rfpFile);
+        await loadTenders();
         setCreateModalOpen(false);
         return;
       }

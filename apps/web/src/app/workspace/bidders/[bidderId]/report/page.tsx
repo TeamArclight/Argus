@@ -7,8 +7,8 @@ import {
   ShieldCheck, Printer, Download, ArrowLeft, RefreshCw, AlertCircle
 } from "lucide-react";
 import { api } from "@/services/api";
+import { demoStore } from "@/services/demo-store";
 import { ReportRead } from "@/services/types";
-import { MOCK_REPORT_ALPHA } from "@/services/mock-data";
 import { SessionRequired } from "@/components/ui/SessionRequired";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -27,7 +27,14 @@ export default function ReportPage() {
     setError(null);
 
     if (isDemoPreview) {
-      setReport(MOCK_REPORT_ALPHA);
+      const demoReport = demoStore.getReport(bidderId);
+      if (!demoReport) {
+        setReport(null);
+        setError("Bidder Report Not Found");
+        setLoading(false);
+        return;
+      }
+      setReport(demoReport);
       setLoading(false);
       return;
     }

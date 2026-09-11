@@ -3,13 +3,26 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Activity, LogOut, AlertCircle, Home, Sparkles, Terminal, RefreshCw } from 'lucide-react';
+import { Activity, LogOut, AlertCircle, Home, Sparkles, Terminal, RefreshCw, RotateCcw } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { demoStore } from '@/services/demo-store';
 
 export const TopNav: React.FC = () => {
   const router = useRouter();
   const { principal, isAuthenticated, isDemoPreview, enableDemoPreview, setToken, loginDevOfficer, logout, error } =
     useAuth();
+
+  const handleResetDemoData = () => {
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(
+        'Reset all synthetic demo data back to canonical default 3 scenarios? Custom tenders, bidders, and audit logs will be cleared.'
+      );
+      if (confirmed) {
+        demoStore.resetDemoState();
+        window.location.reload();
+      }
+    }
+  };
 
   const [tokenInputOpen, setTokenInputOpen] = useState(false);
   const [tokenInputValue, setTokenInputValue] = useState('');
@@ -72,8 +85,16 @@ export const TopNav: React.FC = () => {
             <span className="font-semibold tracking-wide">SYNTHETIC DEMO DATA</span>
             <span className="text-amber-400/70 hidden lg:inline">• Non-authoritative preview</span>
             <button
+              onClick={handleResetDemoData}
+              className="ml-2 px-2 py-0.5 rounded bg-amber-900/60 hover:bg-amber-800 text-amber-200 hover:text-white text-[11px] inline-flex items-center gap-1 border border-amber-700/60 cursor-pointer"
+              title="Reset all synthetic demo data back to canonical default 3 scenarios"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Demo Data</span>
+            </button>
+            <button
               onClick={() => enableDemoPreview(false)}
-              className="ml-2 underline text-amber-200 hover:text-white text-[11px] cursor-pointer"
+              className="ml-1 underline text-amber-200 hover:text-white text-[11px] cursor-pointer"
             >
               Exit Demo
             </button>

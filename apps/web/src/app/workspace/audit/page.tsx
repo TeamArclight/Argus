@@ -6,8 +6,8 @@ import {
   CheckCircle, XCircle, AlertCircle
 } from "lucide-react";
 import { api } from "@/services/api";
+import { demoStore } from "@/services/demo-store";
 import { AuditEventRead } from "@/services/types";
-import { MOCK_AUDIT_EVENTS } from "@/services/mock-data";
 import { SessionRequired } from "@/components/ui/SessionRequired";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -27,7 +27,7 @@ export default function AuditPage() {
     setError(null);
 
     if (isDemoPreview) {
-      setEvents(MOCK_AUDIT_EVENTS);
+      setEvents(demoStore.getAuditEvents());
       setLoading(false);
       return;
     }
@@ -155,12 +155,14 @@ export default function AuditPage() {
               className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-blue-500"
             >
               <option value="ALL">All Stages</option>
-              <option value="UPLOAD">Upload</option>
-              <option value="OCR">OCR & Parsing</option>
-              <option value="EXTRACTION">Extraction</option>
-              <option value="VERIFICATION">Verification</option>
-              <option value="COMPLIANCE">Compliance</option>
-              <option value="REPORTING">Reporting</option>
+              <option value="UPLOAD">UPLOAD</option>
+              <option value="PARSING">PARSING</option>
+              <option value="OCR">OCR</option>
+              <option value="EXTRACTION">EXTRACTION</option>
+              <option value="VERIFICATION">VERIFICATION</option>
+              <option value="COMPLIANCE">COMPLIANCE</option>
+              <option value="RISK_ANALYSIS">RISK_ANALYSIS</option>
+              <option value="REPORTING">REPORTING</option>
             </select>
             <select
               value={statusFilter}

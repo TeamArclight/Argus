@@ -8,10 +8,10 @@ import {
   RefreshCw, Filter, Eye, AlertCircle
 } from "lucide-react";
 import { api } from "@/services/api";
+import { demoStore } from "@/services/demo-store";
 import { ComplianceMatrixRow } from "@/services/types";
 import { EvidenceDrawer } from "@/components/ui/EvidenceDrawer";
 import { SessionRequired } from "@/components/ui/SessionRequired";
-import { MOCK_MATRIX_ALPHA } from "@/services/mock-data";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function ComplianceMatrixPage() {
@@ -36,7 +36,15 @@ export default function ComplianceMatrixPage() {
     setError(null);
 
     if (isDemoPreview) {
-      setMatrix(MOCK_MATRIX_ALPHA.rows || []);
+      const bidder = demoStore.getBidder(bidderId);
+      if (!bidder) {
+        setMatrix([]);
+        setError("Bidder Not Found");
+        setLoading(false);
+        return;
+      }
+      const demoMatrix = demoStore.getComplianceMatrix(bidderId);
+      setMatrix(demoMatrix?.rows || []);
       setLoading(false);
       return;
     }

@@ -31,6 +31,7 @@ import type {
   VerificationResultRead,
 } from '@/types/api';
 import type { AuditEventRead, RawAuditEvent } from '@/services/types';
+import { demoStore } from './demo-store';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -330,10 +331,14 @@ export const apiClient = {
 
   // Jobs & SSE
   async getJob(jobId: string): Promise<JobRead> {
+    const demoJob = demoStore.getJob(jobId);
+    if (demoJob) return demoJob;
     return request<JobRead>(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
   },
 
   async getJobEvents(jobId: string, afterSeq?: number): Promise<JobEventRead[]> {
+    const demoEvents = demoStore.getJobEvents(jobId);
+    if (demoEvents.length > 0) return demoEvents;
     const query = afterSeq !== undefined ? `?after_seq=${afterSeq}` : '';
     return request<JobEventRead[]>(`/api/v1/jobs/${encodeURIComponent(jobId)}/events${query}`);
   },

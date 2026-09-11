@@ -8,8 +8,8 @@ import {
   Clock, Plus, ArrowLeft, RefreshCw, Sparkles, AlertCircle
 } from "lucide-react";
 import { api } from "@/services/api";
-import { TenderRead, BidderRead, RequirementRead } from "@/services/types";
-import { MOCK_TENDERS, MOCK_BIDDERS, MOCK_REQUIREMENTS } from "@/services/mock-data";
+import { demoStore, DemoTender } from "@/services/demo-store";
+import { BidderRead, RequirementRead } from "@/services/types";
 import { RequirementAddModal } from "@/components/ui/RequirementAddModal";
 import { JobProgressDrawer } from "@/components/ui/JobProgressDrawer";
 import { SessionRequired } from "@/components/ui/SessionRequired";
@@ -20,7 +20,7 @@ export default function TenderDetailPage() {
   const id = params?.id as string;
   const { isAuthenticated, isDemoPreview } = useAuth();
 
-  const [tender, setTender] = useState<TenderRead | null>(null);
+  const [tender, setTender] = useState<DemoTender | null>(null);
   const [bidders, setBidders] = useState<BidderRead[]>([]);
   const [requirements, setRequirements] = useState<RequirementRead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,10 +47,16 @@ export default function TenderDetailPage() {
     setError(null);
 
     if (isDemoPreview) {
-      const match = MOCK_TENDERS.find(t => t.id === id) || MOCK_TENDERS[0];
+      const match = demoStore.getTender(id);
+      if (!match) {
+        setTender(null);
+        setError("Tender Not Found");
+        setLoading(false);
+        return;
+      }
       setTender(match);
-      setBidders(MOCK_BIDDERS);
-      setRequirements(MOCK_REQUIREMENTS);
+      setBidders(demoStore.getBidders(id));
+      setRequirements(demoStore.getRequirements(id));
       setLoading(false);
       return;
     }
@@ -87,10 +93,17 @@ export default function TenderDetailPage() {
     setError(null);
 
     if (isDemoPreview) {
-      setTimeout(() => {
+      const demoJobId = `job_extract_${Date.now()}`;
+      setActiveJobId(demoJobId);
+      try {
+        await demoStore.extractCriteria(id, demoJobId);
+        await loadTenderData();
+        setActiveTab("requirements");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to extract criteria.");
+      } finally {
         setExtractingReqs(false);
-        setRequirements(MOCK_REQUIREMENTS);
-      }, 600);
+      }
       return;
     }
 
@@ -115,17 +128,13 @@ export default function TenderDetailPage() {
     setBidderError(null);
 
     if (isDemoPreview) {
-      const synBidder: BidderRead = {
-        id: `bidder_syn_${Date.now()}`,
-        tender_id: id,
+      demoStore.createBidder(id, {
         bidder_name: newBidderName.trim(),
-        gstin: newGstin.trim() || '07AAAAA0000A1Z5',
-        cin: newCin.trim() || 'U72200DL2018PTC123456',
-        pan: newPan.trim() || 'AAAAA0000A',
-        status: 'PENDING',
-        created_at: new Date().toISOString(),
-      };
-      setBidders(prev => [...prev, synBidder]);
+        gstin: newGstin.trim() || undefined,
+        cin: newCin.trim() || undefined,
+        pan: newPan.trim() || undefined,
+      });
+      await loadTenderData();
       setShowAddBidder(false);
       setNewBidderName("");
       setNewGstin("");
@@ -240,7 +249,11 @@ export default function TenderDetailPage() {
               className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium rounded-lg shadow-sm transition-colors disabled:opacity-50"
             >
               <Sparkles className="w-4 h-4" />
-              {extractingReqs ? "Extracting..." : "Extract AI Criteria"}
+              {extractingReqs
+                ? "Extracting..."
+                : requirements.length > 0
+                ? "Re-run AI Extraction"
+                : "Extract AI Criteria"}
             </button>
             <button
               onClick={() => setShowAddBidder(true)}
@@ -283,6 +296,27 @@ export default function TenderDetailPage() {
           <p className="text-lg font-semibold text-zinc-200 mt-1">{requirements.length}</p>
         </div>
       </div>
+
+      {/* Attached RFP Document Banner */}
+      {tender?.attached_file && (
+        <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <FileText className="w-8 h-8 text-indigo-400 flex-shrink-0" />
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-semibold text-white font-mono">{tender.attached_file.filename}</h4>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950 text-amber-300 border border-amber-800/60 font-bold">
+                  SYNTHETIC DEMO DATA
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">
+                {(tender.attached_file.size_bytes / 1024 / 1024).toFixed(2)} MB • {tender.attached_file.content_type} • Uploaded {new Date(tender.attached_file.uploaded_at).toLocaleDateString()}
+              </p>
+            </div>
+          </div>
+          <span className="text-xs text-indigo-400 font-mono font-medium">RFP Document Attached</span>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="border-b border-zinc-800 flex gap-6">
