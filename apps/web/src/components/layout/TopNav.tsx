@@ -134,7 +134,7 @@ export const TopNav: React.FC = () => {
                 logout();
                 setTokenInputOpen(true);
               }}
-              title="Switch Development Role"
+              title="Switch Role"
               className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-indigo-500/40 bg-indigo-950/60 text-indigo-200 hover:bg-indigo-900/80 hover:text-white text-xs font-mono transition-colors cursor-pointer"
             >
               <RefreshCw className="w-3 h-3" />
@@ -193,7 +193,7 @@ export const TopNav: React.FC = () => {
 
           <form onSubmit={handleDevSignInSubmit} className="p-3 rounded-lg bg-indigo-950/40 border border-indigo-800/60 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-indigo-200 font-semibold font-mono">ARGUS Local Development Sign In</span>
+              <span className="text-[11px] text-indigo-200 font-semibold font-mono">ARGUS Officer Sign In</span>
             </div>
 
             <div>

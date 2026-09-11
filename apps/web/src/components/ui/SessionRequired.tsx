@@ -119,7 +119,7 @@ export const SessionRequired: React.FC<SessionRequiredProps> = ({
         >
           <Sparkles className="w-5 h-5 text-indigo-400 mb-2 group-hover:scale-110 transition-transform" />
           <span className="text-xs font-semibold text-white">Sign In with Credentials</span>
-          <span className="text-[10px] text-indigo-300/80 font-mono mt-1">Local dev account</span>
+          <span className="text-[10px] text-indigo-300/80 font-mono mt-1">Officer account</span>
         </button>
 
         {/* Option 3: Authorized Access */}
@@ -150,7 +150,7 @@ export const SessionRequired: React.FC<SessionRequiredProps> = ({
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <span className="text-xs font-semibold text-white font-mono flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              ARGUS Local Development Sign In
+              ARGUS Officer Sign In
             </span>
           </div>
           <div>
@@ -189,7 +189,7 @@ export const SessionRequired: React.FC<SessionRequiredProps> = ({
           </div>
           <p className="text-[10px] text-slate-500 font-mono">
             Credentials are set by the operator via <code>ARGUS_DEV_AUTH_EMAIL</code> and{' '}
-            <code>ARGUS_DEV_AUTH_PASSWORD</code>. Development sign-in is disabled unless{' '}
+            <code>ARGUS_DEV_AUTH_PASSWORD</code>. Sign-in is disabled unless{' '}
             <code>ARGUS_ENABLE_DEV_AUTH=true</code>.
           </p>
           <div className="flex justify-end gap-2 pt-1">

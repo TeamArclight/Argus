@@ -169,7 +169,7 @@ export default function BidderDetailPage() {
     return (
       <SessionRequired
         title="Session Required"
-        description="To inspect this bidder and run deterministic qualification rules, connect an authorized development Bearer token or explore in the Demo Workspace."
+        description="To inspect this bidder and run deterministic qualification rules, connect an authorized Bearer token or explore in the Demo Workspace."
       />
     );
   }

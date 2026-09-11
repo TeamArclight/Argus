@@ -83,7 +83,7 @@ export default function ComplianceMatrixPage() {
     return (
       <SessionRequired
         title="Session Required"
-        description="To inspect the full deterministic compliance matrix for this bidder, connect an authorized development Bearer token or explore in the Demo Workspace."
+        description="To inspect the full deterministic compliance matrix for this bidder, connect an authorized Bearer token or explore in the Demo Workspace."
       />
     );
   }

@@ -130,7 +130,7 @@ export default function HumanReviewPage() {
     return (
       <SessionRequired
         title="Session Required"
-        description="To authorize human qualification decisions and sign off audit records, connect an authorized development Bearer token or explore in the Demo Workspace."
+        description="To authorize human qualification decisions and sign off audit records, connect an authorized Bearer token or explore in the Demo Workspace."
       />
     );
   }

@@ -129,7 +129,7 @@ export default function WorkspaceDashboard() {
     return (
       <SessionRequired
         title="Session Required"
-        description="To inspect live procurement tenders and evaluate bidder binders with the live FastAPI backend, connect an authorized development Bearer token. Alternatively, open the Demo Workspace to explore the complete deterministic verification pipeline with synthetic data."
+        description="To inspect live procurement tenders and evaluate bidder binders with the live FastAPI backend, connect an authorized Bearer token. Alternatively, open the Demo Workspace to explore the complete deterministic verification pipeline with synthetic data."
       />
     );
   }

@@ -2824,8 +2824,8 @@
         <!-- Primary: Credential Entry Form -->
         <div style="background:rgba(0,230,118,0.04); border:1px solid rgba(0,230,118,0.25); padding:1.25rem; border-radius:var(--radius-md);">
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
-            <div style="font-weight:600; font-size:0.9rem; color:#FFF;">ARGUS Local Development Sign In</div>
-            <span class="badge badge-pass" style="font-size:0.65rem;">LOCAL DEV AUTH</span>
+            <div style="font-weight:600; font-size:0.9rem; color:#FFF;">ARGUS Officer Sign In</div>
+            <span class="badge badge-pass" style="font-size:0.65rem;">DEMO ACCESS</span>
           </div>
 
           <form id="devSignInForm" style="display:flex; flex-direction:column; gap:0.75rem;">
@@ -2838,7 +2838,7 @@
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
                 <label for="devAuthPassword" style="font-size:0.75rem; color:var(--text-2); font-family:'JetBrains Mono', monospace;">Password</label>
                 <button type="button" id="btnFillDevCredentials" style="background:none; border:none; color:var(--sapphire); font-size:0.72rem; cursor:pointer; text-decoration:underline;">
-                  Use Dev Credentials
+                  Use Demo Credentials
                 </button>
               </div>
               <input type="password" id="devAuthPassword" required placeholder="••••••••••••" autocomplete="current-password" style="width:100%; padding:0.55rem 0.75rem; border-radius:var(--radius-sm); background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.15); color:#FFF; font-size:0.85rem; box-sizing:border-box;">
@@ -2855,7 +2855,7 @@
             </div>
 
             <div style="font-size:0.72rem; color:var(--text-3); font-family:'JetBrains Mono', monospace; line-height:1.4;">
-              Default: <code style="color:var(--text-2);">demo.procurement@argus.local</code> / <code style="color:var(--text-2);">ArgusDemo2026!</code>
+              Demo credentials available for SIH evaluation
             </div>
 
             <div id="signInError" style="display:none; color:#F87171; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); padding:0.5rem 0.75rem; border-radius:var(--radius-sm); font-size:0.75rem; font-family:'JetBrains Mono', monospace;"></div>
@@ -3129,7 +3129,7 @@
 
         const data = await res.json();
         if (!data.token) {
-          setFormError('No token returned by local dev authentication service.');
+          setFormError('No token returned by authentication service.');
           btnSubmitCredentials.disabled = false;
           btnSubmitCredentials.textContent = origText;
           return;

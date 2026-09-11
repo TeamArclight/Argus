@@ -70,7 +70,7 @@ export default function ReportPage() {
     return (
       <SessionRequired
         title="Session Required"
-        description="To generate and export audit-ready procurement evaluation reports, connect an authorized development Bearer token or explore in the Demo Workspace."
+        description="To generate and export audit-ready procurement evaluation reports, connect an authorized Bearer token or explore in the Demo Workspace."
       />
     );
   }

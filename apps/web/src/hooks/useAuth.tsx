@@ -126,16 +126,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Dev sign-in failed (status ${res.status})`);
+        throw new Error(data.error || `Sign-in failed (status ${res.status})`);
       }
       const data = await res.json();
       if (!data.token) {
-        throw new Error('No token returned by local dev auth service.');
+        throw new Error('No token returned by auth service.');
       }
       await setToken(data.token);
       return true;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Local development sign-in failed.';
+      const msg = err instanceof Error ? err.message : 'Sign-in failed.';
       setError(msg);
       setIsLoading(false);
       return false;

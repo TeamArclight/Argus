@@ -109,7 +109,7 @@ export default function TendersListPage() {
     return (
       <SessionRequired
         title="Session Required"
-        description="To view and manage live procurement tenders, connect an authorized development Bearer token or explore in the Demo Workspace."
+        description="To view and manage live procurement tenders, connect an authorized Bearer token or explore in the Demo Workspace."
       />
     );
   }

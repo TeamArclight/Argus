@@ -178,7 +178,7 @@ export default function TenderDetailPage() {
     return (
       <SessionRequired
         title="Session Required"
-        description="To inspect this procurement tender and execute live deterministic evaluations, connect an authorized development Bearer token or explore in the Demo Workspace."
+        description="To inspect this procurement tender and execute live deterministic evaluations, connect an authorized Bearer token or explore in the Demo Workspace."
       />
     );
   }

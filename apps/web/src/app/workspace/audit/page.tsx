@@ -83,7 +83,7 @@ export default function AuditPage() {
     return (
       <SessionRequired
         title="Session Required"
-        description="To inspect the immutable audit ledger and telemetry logs from the live FastAPI backend, connect an authorized development Bearer token or explore in the Demo Workspace."
+        description="To inspect the immutable audit ledger and telemetry logs from the live FastAPI backend, connect an authorized Bearer token or explore in the Demo Workspace."
       />
     );
   }
