@@ -10,6 +10,7 @@ import type {
   BidderRead,
   BidderCreate,
   ComplianceMatrixRead,
+  ComplianceMatrixRow,
   ReportRead,
   VerificationResultRead,
   HumanDecisionStatus,
@@ -1004,6 +1005,11 @@ export const demoStore = {
     return null;
   },
 
+  getVerifications(bidderId: string): VerificationResultRead[] {
+    const state = loadFromStorage();
+    return state.verifications[bidderId] || [];
+  },
+
   createBidder(tenderId: string, data: BidderCreate): BidderRead {
     const state = loadFromStorage();
     const bidderId = `bidder_demo_${Date.now()}`;
@@ -1028,32 +1034,48 @@ export const demoStore = {
     }
     state.bidders[tenderId] = [newBidder, ...state.bidders[tenderId]];
 
+    // Ensure verifications array exists
+    if (!state.verifications) state.verifications = {};
+    state.verifications[bidderId] = [];
+
     // Default pending decision
+    if (!state.humanDecisions) state.humanDecisions = {};
     state.humanDecisions[bidderId] = 'PENDING';
 
-    // Default compliance matrix
-    state.complianceMatrices[bidderId] = {
-      bidder_id: bidderId,
-      tender_id: tenderId,
-      overall_status: 'REVIEW_REQUIRED',
-      run_id: `run_eval_${Date.now()}`,
-      historical_limitations_notice: 'Deterministic synthetic evaluation pending human officer review.',
-      rows: [
-        {
-          requirement_id: 'req_default',
-          clause: 'Clause 1.1',
-          requirement_type: 'GST',
-          field: 'tax.gstin',
-          operator: 'EQ',
-          expected_value: 'VALID_ACTIVE',
-          observed_value: data.gstin ? 'VALID_ACTIVE' : 'NOT_PROVIDED',
-          status: data.gstin ? 'PASS' : 'REVIEW_REQUIRED',
-          reason_code: data.gstin ? 'EXACT_MATCH' : 'MISSING_DOCUMENT',
+    // Compliance matrix linked to tender's actual extracted requirements
+    if (!state.complianceMatrices) state.complianceMatrices = {};
+    const tenderReqs = state.requirements[tenderId] || [];
+    if (tenderReqs.length > 0) {
+      state.complianceMatrices[bidderId] = {
+        bidder_id: bidderId,
+        tender_id: tenderId,
+        overall_status: 'REVIEW_REQUIRED',
+        run_id: `run_init_${Date.now()}`,
+        historical_limitations_notice: 'Pending compliance evaluation against extracted tender criteria.',
+        rows: tenderReqs.map((req) => ({
+          requirement_id: req.id,
+          clause: req.clause,
+          requirement_type: req.requirement_type,
+          field: req.field,
+          operator: req.operator,
+          expected_value: req.expected_value,
+          observed_value: 'PENDING_EVALUATION',
+          status: 'REVIEW_REQUIRED' as const,
+          reason_code: 'AWAITING_EVALUATION',
           evidence_ids: [],
-          review_required: !data.gstin,
-        },
-      ],
-    };
+          review_required: true,
+        })),
+      };
+    } else {
+      state.complianceMatrices[bidderId] = {
+        bidder_id: bidderId,
+        tender_id: tenderId,
+        overall_status: 'REVIEW_REQUIRED',
+        run_id: `run_init_${Date.now()}`,
+        historical_limitations_notice: 'Pending criteria extraction and compliance evaluation.',
+        rows: [],
+      };
+    }
 
     // Log audit event
     const evt: AuditEventRead = {
@@ -1072,8 +1094,506 @@ export const demoStore = {
   },
 
   // -------------------------------------------------------------------------
+  // STATUTORY CHECKS (SYNTHETIC PIPELINE)
+  // -------------------------------------------------------------------------
+  runStatutoryChecks(bidderId: string): Promise<VerificationResultRead[]> {
+    const bidder = this.getBidder(bidderId);
+    if (!bidder) {
+      return Promise.reject(new Error(`Bidder not found: ${bidderId}`));
+    }
+
+    const state = loadFromStorage();
+    const now = new Date().toISOString();
+    const results: VerificationResultRead[] = [];
+
+    // Audit event: STATUTORY_CHECKS_STARTED
+    const startEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_stat_start`,
+      job_id: `job_verify_${bidderId}`,
+      stage: 'VERIFICATION',
+      status: 'RUNNING',
+      progress: 10,
+      message: `STATUTORY_CHECKS_STARTED: Statutory verification initiated for bidder "${bidder.bidder_name}".`,
+      timestamp: now,
+    };
+    state.auditEvents = [startEvt, ...state.auditEvents];
+
+    // 1. GSTIN Check
+    if (bidder.gstin && bidder.gstin.trim() && bidder.gstin.trim() !== 'Not Registered') {
+      results.push({
+        id: `vr_${bidderId}_gstin`,
+        bidder_id: bidderId,
+        field: 'gstin',
+        claimed_value: bidder.gstin,
+        verified_value: 'Active (Tax Regular)',
+        status: 'VERIFIED',
+        source: 'GST_DEMO_DATA',
+        mode: 'DEMO',
+        checked_at: now,
+        verification_reference: `DEMO-GSTN-${Date.now().toString().slice(-7)}`,
+      });
+      state.auditEvents = [
+        {
+          id: `evt_${Date.now()}_gst`,
+          job_id: `job_verify_${bidderId}`,
+          stage: 'VERIFICATION',
+          status: 'RUNNING',
+          progress: 30,
+          message: `GST_VERIFICATION_COMPLETED: GSTIN ${bidder.gstin} verified as Active (Tax Regular).`,
+          timestamp: new Date().toISOString(),
+        },
+        ...state.auditEvents,
+      ];
+    } else {
+      results.push({
+        id: `vr_${bidderId}_gstin`,
+        bidder_id: bidderId,
+        field: 'gstin',
+        claimed_value: 'Not Registered',
+        verified_value: 'No GSTIN record found',
+        status: 'UNAVAILABLE',
+        source: 'GST_DEMO_DATA',
+        mode: 'DEMO',
+        checked_at: now,
+        verification_reference: 'DEMO-GSTN-NOT-FOUND',
+      });
+      state.auditEvents = [
+        {
+          id: `evt_${Date.now()}_gst`,
+          job_id: `job_verify_${bidderId}`,
+          stage: 'VERIFICATION',
+          status: 'RUNNING',
+          progress: 30,
+          message: `GST_VERIFICATION_COMPLETED: GSTIN not registered or unavailable.`,
+          timestamp: new Date().toISOString(),
+        },
+        ...state.auditEvents,
+      ];
+    }
+
+    // 2. PAN Check
+    if (bidder.pan && bidder.pan.trim() && bidder.pan.trim() !== 'Not Registered') {
+      results.push({
+        id: `vr_${bidderId}_pan`,
+        bidder_id: bidderId,
+        field: 'pan',
+        claimed_value: bidder.pan,
+        verified_value: 'Active and Operative (CBDT)',
+        status: 'VERIFIED',
+        source: 'MCA_DEMO_DATA',
+        mode: 'DEMO',
+        checked_at: now,
+        verification_reference: `DEMO-CBDT-${Date.now().toString().slice(-7)}`,
+      });
+      state.auditEvents = [
+        {
+          id: `evt_${Date.now()}_pan`,
+          job_id: `job_verify_${bidderId}`,
+          stage: 'VERIFICATION',
+          status: 'RUNNING',
+          progress: 55,
+          message: `PAN_VERIFICATION_COMPLETED: PAN ${bidder.pan} verified as Active and Operative (CBDT).`,
+          timestamp: new Date().toISOString(),
+        },
+        ...state.auditEvents,
+      ];
+    } else {
+      results.push({
+        id: `vr_${bidderId}_pan`,
+        bidder_id: bidderId,
+        field: 'pan',
+        claimed_value: 'Not Registered',
+        verified_value: 'No PAN record provided',
+        status: 'UNAVAILABLE',
+        source: 'MCA_DEMO_DATA',
+        mode: 'DEMO',
+        checked_at: now,
+        verification_reference: 'DEMO-CBDT-NOT-FOUND',
+      });
+      state.auditEvents = [
+        {
+          id: `evt_${Date.now()}_pan`,
+          job_id: `job_verify_${bidderId}`,
+          stage: 'VERIFICATION',
+          status: 'RUNNING',
+          progress: 55,
+          message: `PAN_VERIFICATION_COMPLETED: PAN not registered or unavailable.`,
+          timestamp: new Date().toISOString(),
+        },
+        ...state.auditEvents,
+      ];
+    }
+
+    // 3. CIN Check
+    if (bidder.cin && bidder.cin.trim() && bidder.cin.trim() !== 'Not Registered') {
+      results.push({
+        id: `vr_${bidderId}_cin`,
+        bidder_id: bidderId,
+        field: 'cin',
+        claimed_value: bidder.cin,
+        verified_value: 'Active (Incorporated - RoC MCA)',
+        status: 'VERIFIED',
+        source: 'MCA_DEMO_DATA',
+        mode: 'DEMO',
+        checked_at: now,
+        verification_reference: `DEMO-MCA-${Date.now().toString().slice(-7)}`,
+      });
+      state.auditEvents = [
+        {
+          id: `evt_${Date.now()}_cin`,
+          job_id: `job_verify_${bidderId}`,
+          stage: 'VERIFICATION',
+          status: 'RUNNING',
+          progress: 75,
+          message: `CIN_VERIFICATION_COMPLETED: Corporate Identity ${bidder.cin} verified (RoC MCA).`,
+          timestamp: new Date().toISOString(),
+        },
+        ...state.auditEvents,
+      ];
+    } else {
+      results.push({
+        id: `vr_${bidderId}_cin`,
+        bidder_id: bidderId,
+        field: 'cin',
+        claimed_value: 'Not Registered',
+        verified_value: 'No MCA/CIN record found',
+        status: 'UNAVAILABLE',
+        source: 'MCA_DEMO_DATA',
+        mode: 'DEMO',
+        checked_at: now,
+        verification_reference: 'DEMO-MCA-NOT-FOUND',
+      });
+      state.auditEvents = [
+        {
+          id: `evt_${Date.now()}_cin`,
+          job_id: `job_verify_${bidderId}`,
+          stage: 'VERIFICATION',
+          status: 'RUNNING',
+          progress: 75,
+          message: `CIN_VERIFICATION_COMPLETED: CIN not registered or unavailable.`,
+          timestamp: new Date().toISOString(),
+        },
+        ...state.auditEvents,
+      ];
+    }
+
+    // 4. UDYAM Check (only if registered or appropriate synthetic result)
+    if (bidder.udyam_number && bidder.udyam_number.trim() && bidder.udyam_number.trim() !== 'Not Registered') {
+      results.push({
+        id: `vr_${bidderId}_udyam`,
+        bidder_id: bidderId,
+        field: 'udyam_number',
+        claimed_value: bidder.udyam_number,
+        verified_value: 'Micro / Small Enterprise (MSME Udyam Verified)',
+        status: 'VERIFIED',
+        source: 'UDYAM_DEMO_DATA',
+        mode: 'DEMO',
+        checked_at: now,
+        verification_reference: `DEMO-UDYAM-${Date.now().toString().slice(-6)}`,
+      });
+      state.auditEvents = [
+        {
+          id: `evt_${Date.now()}_udyam`,
+          job_id: `job_verify_${bidderId}`,
+          stage: 'VERIFICATION',
+          status: 'RUNNING',
+          progress: 90,
+          message: `UDYAM_VERIFICATION_COMPLETED: UDYAM ${bidder.udyam_number} verified as MSME Registered.`,
+          timestamp: new Date().toISOString(),
+        },
+        ...state.auditEvents,
+      ];
+    } else {
+      // UDYAM is Not Registered: DO NOT fabricate VERIFIED.
+      results.push({
+        id: `vr_${bidderId}_udyam`,
+        bidder_id: bidderId,
+        field: 'udyam_number',
+        claimed_value: 'Not Registered',
+        verified_value: 'Not Registered / Exemption Verification Required',
+        status: 'UNAVAILABLE',
+        source: 'UDYAM_DEMO_DATA',
+        mode: 'DEMO',
+        checked_at: now,
+        verification_reference: 'DEMO-UDYAM-NOT-REGISTERED',
+      });
+    }
+
+    // Final Audit: STATUTORY_CHECKS_COMPLETED
+    const completeEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_stat_done`,
+      job_id: `job_verify_${bidderId}`,
+      stage: 'VERIFICATION',
+      status: 'COMPLETED',
+      progress: 100,
+      message: `STATUTORY_CHECKS_COMPLETED: Statutory verification checks completed (${results.length} checks recorded) for bidder "${bidder.bidder_name}".`,
+      timestamp: new Date().toISOString(),
+    };
+    state.auditEvents = [completeEvt, ...state.auditEvents];
+
+    if (!state.verifications) state.verifications = {};
+    state.verifications[bidderId] = results;
+    saveToStorage(state);
+
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve(results);
+      }, 300);
+    });
+  },
+
+  // -------------------------------------------------------------------------
   // COMPLIANCE MATRIX & REPORTS
   // -------------------------------------------------------------------------
+  evaluateCompliance(bidderId: string): Promise<ComplianceMatrixRead> {
+    const bidder = this.getBidder(bidderId);
+    if (!bidder) {
+      return Promise.reject(new Error(`Bidder not found: ${bidderId}`));
+    }
+
+    const state = loadFromStorage();
+    const tenderId = bidder.tender_id;
+    let requirements = state.requirements[tenderId] || [];
+
+    if (requirements.length === 0) {
+      const tender = this.getTender(tenderId);
+      requirements = this.generateSyntheticRequirements(tenderId, tender?.budget);
+      state.requirements[tenderId] = requirements;
+    }
+
+    const verifications = state.verifications[bidderId] || [];
+    const gstVer = verifications.find((v) => v.field === 'gstin');
+    const panVer = verifications.find((v) => v.field === 'pan');
+    const cinVer = verifications.find((v) => v.field === 'cin');
+
+    const tender = this.getTender(tenderId);
+    const budget = tender?.budget || 50000000;
+
+    // Audit: COMPLIANCE_EVALUATION_STARTED
+    const startEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_comp_start`,
+      job_id: `job_compliance_${bidderId}`,
+      stage: 'COMPLIANCE',
+      status: 'RUNNING',
+      progress: 10,
+      message: `COMPLIANCE_EVALUATION_STARTED: Evaluating compliance against tender requirements for "${bidder.bidder_name}".`,
+      timestamp: new Date().toISOString(),
+    };
+    state.auditEvents = [startEvt, ...state.auditEvents];
+
+    const rows: ComplianceMatrixRow[] = requirements.map((req) => {
+      const type = (req.requirement_type || '').toUpperCase();
+      const field = (req.field || '').toLowerCase();
+
+      // GST rule
+      if (type === 'GST' || field.includes('gst')) {
+        const isGstOk = (gstVer && gstVer.status === 'VERIFIED') || (Boolean(bidder.gstin) && bidder.gstin !== 'Not Registered');
+        if (isGstOk) {
+          return {
+            requirement_id: req.id,
+            clause: req.clause,
+            requirement_type: req.requirement_type,
+            field: req.field,
+            operator: req.operator,
+            expected_value: req.expected_value || 'VALID_ACTIVE',
+            unit: req.unit,
+            mandatory: req.mandatory,
+            status: 'PASS',
+            reason_code: 'EXACT_MATCH',
+            observed_value: 'VALID_ACTIVE',
+            evidence_ids: [`ev_gst_${bidderId}`],
+            review_required: false,
+          };
+        } else {
+          return {
+            requirement_id: req.id,
+            clause: req.clause,
+            requirement_type: req.requirement_type,
+            field: req.field,
+            operator: req.operator,
+            expected_value: req.expected_value || 'VALID_ACTIVE',
+            unit: req.unit,
+            mandatory: req.mandatory,
+            status: req.mandatory ? 'FAIL' : 'REVIEW_REQUIRED',
+            reason_code: 'MISSING_DOCUMENT',
+            observed_value: 'NOT_PROVIDED',
+            evidence_ids: [],
+            review_required: true,
+          };
+        }
+      }
+
+      // PAN rule
+      if (type === 'PAN' || field.includes('pan')) {
+        const isPanOk = (panVer && panVer.status === 'VERIFIED') || (Boolean(bidder.pan) && bidder.pan !== 'Not Registered');
+        return {
+          requirement_id: req.id,
+          clause: req.clause,
+          requirement_type: req.requirement_type,
+          field: req.field,
+          operator: req.operator,
+          expected_value: req.expected_value || 'VALID_ACTIVE',
+          unit: req.unit,
+          mandatory: req.mandatory,
+          status: isPanOk ? 'PASS' : (req.mandatory ? 'FAIL' : 'REVIEW_REQUIRED'),
+          reason_code: isPanOk ? 'EXACT_MATCH' : 'MISSING_DOCUMENT',
+          observed_value: isPanOk ? 'VALID_ACTIVE' : 'NOT_PROVIDED',
+          evidence_ids: isPanOk ? [`ev_pan_${bidderId}`] : [],
+          review_required: !isPanOk,
+        };
+      }
+
+      // CIN rule
+      if (type === 'CIN' || field.includes('cin')) {
+        const isCinOk = (cinVer && cinVer.status === 'VERIFIED') || (Boolean(bidder.cin) && bidder.cin !== 'Not Registered');
+        return {
+          requirement_id: req.id,
+          clause: req.clause,
+          requirement_type: req.requirement_type,
+          field: req.field,
+          operator: req.operator,
+          expected_value: req.expected_value || 'VALID_ACTIVE',
+          unit: req.unit,
+          mandatory: req.mandatory,
+          status: isCinOk ? 'PASS' : (req.mandatory ? 'FAIL' : 'REVIEW_REQUIRED'),
+          reason_code: isCinOk ? 'EXACT_MATCH' : 'MISSING_DOCUMENT',
+          observed_value: isCinOk ? 'VALID_ACTIVE' : 'NOT_PROVIDED',
+          evidence_ids: isCinOk ? [`ev_cin_${bidderId}`] : [],
+          review_required: !isCinOk,
+        };
+      }
+
+      // Turnover rule
+      if (type === 'TURNOVER' || field.includes('turnover')) {
+        const expectedNum = typeof req.expected_value === 'number' ? req.expected_value : budget;
+        const observedNum = Math.round(expectedNum * 1.15);
+        return {
+          requirement_id: req.id,
+          clause: req.clause,
+          requirement_type: req.requirement_type,
+          field: req.field,
+          operator: req.operator,
+          expected_value: req.expected_value,
+          unit: req.unit || 'INR',
+          mandatory: req.mandatory,
+          status: 'PASS',
+          reason_code: 'NUMERIC_GTE',
+          observed_value: observedNum,
+          evidence_ids: [`ev_to_${bidderId}`],
+          review_required: false,
+        };
+      }
+
+      // Experience rule
+      if (type === 'EXPERIENCE' || field.includes('experience')) {
+        const expectedYears = typeof req.expected_value === 'number' ? req.expected_value : 3;
+        const observedYears = expectedYears + 2;
+        return {
+          requirement_id: req.id,
+          clause: req.clause,
+          requirement_type: req.requirement_type,
+          field: req.field,
+          operator: req.operator,
+          expected_value: req.expected_value,
+          unit: req.unit || 'YEARS',
+          mandatory: req.mandatory,
+          status: 'PASS',
+          reason_code: 'NUMERIC_GTE',
+          observed_value: observedYears,
+          evidence_ids: [`ev_exp_${bidderId}`],
+          review_required: false,
+        };
+      }
+
+      // OEM Authorization / Custom certificate rule
+      if (type === 'CUSTOM' || field.includes('oem') || field.includes('authorization') || field.includes('cert')) {
+        const hasDoc = bidder.documents && bidder.documents.length > 0;
+        return {
+          requirement_id: req.id,
+          clause: req.clause,
+          requirement_type: req.requirement_type,
+          field: req.field,
+          operator: req.operator,
+          expected_value: req.expected_value || 'VALID_OEM_LETTER',
+          unit: req.unit,
+          mandatory: req.mandatory,
+          status: hasDoc ? 'PASS' : 'REVIEW_REQUIRED',
+          reason_code: hasDoc ? 'EXACT_MATCH' : 'MANUAL_DOCUMENT_VERIFICATION_REQUIRED',
+          observed_value: hasDoc ? 'VALID_OEM_LETTER' : 'PENDING_OFFICER_VERIFICATION',
+          evidence_ids: hasDoc ? [`ev_doc_${bidderId}`] : [],
+          review_required: !hasDoc,
+        };
+      }
+
+      // Generic fallback
+      return {
+        requirement_id: req.id,
+        clause: req.clause,
+        requirement_type: req.requirement_type,
+        field: req.field,
+        operator: req.operator,
+        expected_value: req.expected_value || 'COMPLIANT',
+        unit: req.unit,
+        mandatory: req.mandatory,
+        status: 'PASS',
+        reason_code: 'EXACT_MATCH',
+        observed_value: req.expected_value || 'COMPLIANT',
+        evidence_ids: [`ev_gen_${bidderId}_${req.id}`],
+        review_required: false,
+      };
+    });
+
+    let overall_status: 'PASS' | 'FAIL' | 'REVIEW_REQUIRED' = 'PASS';
+    if (rows.some((r) => r.status === 'FAIL')) {
+      overall_status = 'FAIL';
+    } else if (rows.some((r) => r.status === 'REVIEW_REQUIRED')) {
+      overall_status = 'REVIEW_REQUIRED';
+    }
+
+    // Audit: RULE_EVALUATION_COMPLETED
+    const ruleEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_rule_eval`,
+      job_id: `job_compliance_${bidderId}`,
+      stage: 'COMPLIANCE',
+      status: 'RUNNING',
+      progress: 80,
+      message: `RULE_EVALUATION_COMPLETED: Evaluated ${rows.length} tender rules for bidder "${bidder.bidder_name}".`,
+      timestamp: new Date().toISOString(),
+    };
+    state.auditEvents = [ruleEvt, ...state.auditEvents];
+
+    // Audit: COMPLIANCE_EVALUATION_COMPLETED
+    const completeEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_comp_done`,
+      job_id: `job_compliance_${bidderId}`,
+      stage: 'COMPLIANCE',
+      status: 'COMPLETED',
+      progress: 100,
+      message: `COMPLIANCE_EVALUATION_COMPLETED: Deterministic evaluation concluded with overall status: ${overall_status} (${rows.filter((r) => r.status === 'PASS').length}/${rows.length} rules satisfied).`,
+      timestamp: new Date().toISOString(),
+    };
+    state.auditEvents = [completeEvt, ...state.auditEvents];
+
+    const matrix: ComplianceMatrixRead = {
+      bidder_id: bidderId,
+      tender_id: tenderId,
+      overall_status,
+      run_id: `run_eval_${Date.now()}`,
+      historical_limitations_notice: 'Deterministic compliance evaluation based on tender RFP criteria.',
+      rows,
+    };
+
+    if (!state.complianceMatrices) state.complianceMatrices = {};
+    state.complianceMatrices[bidderId] = matrix;
+    saveToStorage(state);
+
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve(matrix);
+      }, 300);
+    });
+  },
+
   getComplianceMatrix(bidderId: string): ComplianceMatrixRead | null {
     const state = loadFromStorage();
     return state.complianceMatrices[bidderId] || null;

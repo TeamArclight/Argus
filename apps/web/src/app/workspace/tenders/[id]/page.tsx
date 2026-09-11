@@ -38,6 +38,7 @@ export default function TenderDetailPage() {
   const [newGstin, setNewGstin] = useState("");
   const [newCin, setNewCin] = useState("");
   const [newPan, setNewPan] = useState("");
+  const [newUdyam, setNewUdyam] = useState("");
   const [bidderSubmitting, setBidderSubmitting] = useState(false);
   const [bidderError, setBidderError] = useState<string | null>(null);
 
@@ -151,6 +152,7 @@ export default function TenderDetailPage() {
         gstin: newGstin.trim() || undefined,
         cin: newCin.trim() || undefined,
         pan: newPan.trim() || undefined,
+        udyam_number: newUdyam.trim() || undefined,
       });
       await loadTenderData();
       setShowAddBidder(false);
@@ -158,6 +160,7 @@ export default function TenderDetailPage() {
       setNewGstin("");
       setNewCin("");
       setNewPan("");
+      setNewUdyam("");
       setBidderSubmitting(false);
       return;
     }
@@ -167,7 +170,8 @@ export default function TenderDetailPage() {
         bidder_name: newBidderName.trim(),
         gstin: newGstin.trim() || undefined,
         cin: newCin.trim() || undefined,
-        pan: newPan.trim() || undefined
+        pan: newPan.trim() || undefined,
+        udyam_number: newUdyam.trim() || undefined,
       });
       setBidders(prev => [...prev, created]);
       setShowAddBidder(false);
@@ -175,6 +179,7 @@ export default function TenderDetailPage() {
       setNewGstin("");
       setNewCin("");
       setNewPan("");
+      setNewUdyam("");
     } catch (err: unknown) {
       setBidderError(err instanceof Error ? err.message : "Failed to register bidder on backend.");
     } finally {
@@ -537,6 +542,16 @@ export default function TenderDetailPage() {
                     className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-sm font-mono focus:outline-none focus:border-blue-500"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1">UDYAM Number (Optional / MSME)</label>
+                <input
+                  type="text"
+                  value={newUdyam}
+                  onChange={(e) => setNewUdyam(e.target.value)}
+                  placeholder="e.g. UDYAM-WB-01-0012345 (leave blank if Not Registered)"
+                  className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 text-sm font-mono focus:outline-none focus:border-blue-500"
+                />
               </div>
               <div className="flex justify-end gap-3 pt-2">
                 <button

@@ -91,10 +91,15 @@ export default function BidderDetailPage() {
     setError(null);
 
     if (isDemo) {
-      setTimeout(async () => {
-        setTriggeringVerify(false);
+      try {
+        const results = await demoStore.runStatutoryChecks(bidderId);
+        setVerifications(results);
         await loadBidderData();
-      }, 500);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to trigger statutory verification.");
+      } finally {
+        setTriggeringVerify(false);
+      }
       return;
     }
 
@@ -118,10 +123,15 @@ export default function BidderDetailPage() {
     setError(null);
 
     if (isDemo) {
-      setTimeout(async () => {
-        setTriggeringCompliance(false);
+      try {
+        const matrixResult = await demoStore.evaluateCompliance(bidderId);
+        setMatrix(matrixResult.rows || []);
         await loadBidderData();
-      }, 500);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to trigger compliance evaluation.");
+      } finally {
+        setTriggeringCompliance(false);
+      }
       return;
     }
 
@@ -255,7 +265,11 @@ export default function BidderDetailPage() {
               className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               <ShieldCheck className="w-4 h-4" />
-              {triggeringVerify ? "Verifying..." : "Run Statutory Checks"}
+              {triggeringVerify
+                ? "Verifying..."
+                : verifications.length > 0
+                ? "Re-run Statutory Checks"
+                : "Run Statutory Checks"}
             </button>
             <button
               onClick={handleRunCompliance}
@@ -263,7 +277,11 @@ export default function BidderDetailPage() {
               className="inline-flex items-center gap-2 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               <Sparkles className="w-4 h-4" />
-              {triggeringCompliance ? "Evaluating..." : "Evaluate Compliance"}
+              {triggeringCompliance
+                ? "Evaluating..."
+                : matrix.length > 0 && matrix.some((r) => r.observed_value !== 'PENDING_EVALUATION')
+                ? "Re-evaluate Compliance"
+                : "Evaluate Compliance"}
             </button>
           </div>
         </div>
