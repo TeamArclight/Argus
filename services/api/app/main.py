@@ -189,13 +189,20 @@ def health_integrations() -> IntegrationsHealthResponse:
 
         if mode == VerificationMode.LIVE:
             configured = bool(api_url and api_key)
-            details = f"Live authorized {domain.upper()} API gateway configured." if configured else f"Live {domain.upper()} provider unconfigured; missing API URL or credentials."
-        elif mode in (VerificationMode.PORTAL_CACHED, VerificationMode.DOCUMENT):
+            details = (
+                f"Live authorized {domain.upper()} API gateway configured; operational health UNKNOWN until active ping."
+                if configured
+                else f"Live {domain.upper()} provider unconfigured; missing API URL or credentials."
+            )
+        elif mode == VerificationMode.DOCUMENT:
             configured = True
-            details = f"Active {mode.value} provider configured."
+            details = f"Document extraction mode active for {domain.upper()}; external connection UNKNOWN."
+        elif mode == VerificationMode.PORTAL_CACHED:
+            configured = True
+            details = f"Portal cached dataset mode active for {domain.upper()}."
         else:  # DEMO
             configured = True
-            details = "Deterministic SIH demo provider active."
+            details = "Deterministic SIH demo provider active (DEMO mode)."
         return IntegrationServiceStatus(mode=mode, configured=configured, details=details)
 
     intel_caps = []

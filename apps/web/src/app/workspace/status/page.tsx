@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { 
   Activity, CheckCircle, AlertTriangle, XCircle, RefreshCw, 
-  Server, Cpu, HelpCircle, AlertCircle, ShieldCheck, Database, FileText, KeyRound, ArrowLeft
+  Server, Cpu, HelpCircle, AlertCircle, ShieldCheck, Database, FileText, KeyRound, ArrowLeft, Sparkles
 } from "lucide-react";
 import { apiClient, ApiError } from "@/services/api";
 import { ProviderHealthRead, IntegrationsHealthResponse, AuthenticatedPrincipal } from "@/types/api";
@@ -45,7 +45,7 @@ export default function StatusPage() {
       if (hData && (hData.status === "ok" || hData.status === "healthy")) {
         setApiHealth("CONNECTED");
       } else {
-        setApiHealth("CONNECTED");
+        setApiHealth("UNAVAILABLE");
       }
     } catch {
       setApiHealth("UNAVAILABLE");
@@ -98,17 +98,30 @@ export default function StatusPage() {
       case "AUTHENTICATED":
       case "AVAILABLE":
       case "HEALTHY":
-      case "CONFIGURED":
       case "OK":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-            <CheckCircle className="w-3 h-3" /> {status}
+            <CheckCircle className="w-3 h-3" /> CONNECTED
+          </span>
+        );
+      case "CONFIGURED":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">
+            <CheckCircle className="w-3 h-3" /> CONFIGURED
+          </span>
+        );
+      case "DEMO":
+      case "SYNTHETIC":
+      case "DEMO / SYNTHETIC":
+      case "DEMO_MODE":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30 font-mono">
+            <Sparkles className="w-3 h-3" /> DEMO / SYNTHETIC
           </span>
         );
       case "NOT_AUTHENTICATED":
       case "NOT AUTHENTICATED":
       case "UNCONFIGURED":
-      case "DEGRADED":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">
             <AlertTriangle className="w-3 h-3" /> {status.replace("_", " ")}
@@ -118,11 +131,13 @@ export default function StatusPage() {
       case "OFFLINE":
       case "ERROR":
       case "DOWN":
+      case "DEGRADED":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">
             <XCircle className="w-3 h-3" /> {status}
           </span>
         );
+      case "UNKNOWN":
       default:
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700 font-mono">
@@ -132,17 +147,43 @@ export default function StatusPage() {
     }
   };
 
-  // Resolve integration provider state
+  // Resolve integration provider state truthfully
   const getProviderState = (key: keyof IntegrationsHealthResponse): { status: string; detail: string } => {
     if (isDemoPreview) {
-      return { status: "CONNECTED", detail: "Synthetic demo adapter verified" };
+      return { status: "DEMO / SYNTHETIC", detail: "Synthetic demo adapter active (Demo preview mode)" };
     }
     if (!integrations || !integrations[key]) {
-      return { status: "UNKNOWN", detail: "Telemetry not queried or offline" };
+      return { status: "UNKNOWN", detail: "Telemetry query unverified or offline" };
     }
     const item = integrations[key];
+
+    if (item.mode === "DEMO") {
+      return { status: "DEMO / SYNTHETIC", detail: item.details || "Deterministic SIH demo provider active (DEMO mode)" };
+    }
+
+    if (item.mode === "LIVE") {
+      if (!item.configured) {
+        return { status: "UNCONFIGURED", detail: item.details || `Live ${key.toUpperCase()} provider unconfigured; missing API URL or credentials` };
+      }
+      return { status: "UNKNOWN", detail: item.details || `Live authorized ${key.toUpperCase()} API gateway configured; operational health UNKNOWN until active ping` };
+    }
+
+    if (item.mode === "DOCUMENT") {
+      if (item.configured) {
+        return { status: "CONFIGURED", detail: item.details || `Document extraction mode active for ${key.toUpperCase()}; external connection UNKNOWN` };
+      }
+      return { status: "UNCONFIGURED", detail: item.details || `Document processing mode unconfigured for ${key.toUpperCase()}` };
+    }
+
+    if (item.mode === "PORTAL_CACHED") {
+      if (item.configured) {
+        return { status: "CONFIGURED", detail: item.details || `Portal cached dataset mode active for ${key.toUpperCase()}` };
+      }
+      return { status: "UNCONFIGURED", detail: item.details || `Portal cache unconfigured for ${key.toUpperCase()}` };
+    }
+
     if (item.configured) {
-      return { status: "CONNECTED", detail: item.details || `Configured in ${item.mode} mode` };
+      return { status: "CONFIGURED", detail: item.details || "Configured mode active" };
     }
     return { status: "UNCONFIGURED", detail: item.details || "Adapter credentials not present" };
   };
@@ -420,20 +461,26 @@ export default function StatusPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {providers.map((p, idx) => (
-                  <tr key={idx} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-3 font-semibold text-white">{p.provider_identifier}</td>
-                    <td className="px-4 py-3 text-slate-300">{p.domain}</td>
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                        {p.configured_mode}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-300">{p.configuration_status}</td>
-                    <td className="px-4 py-3">{getStatusBadge(p.operational_health)}</td>
-                    <td className="px-4 py-3 text-slate-400">{p.notes || "—"}</td>
-                  </tr>
-                ))}
+                {providers.map((p, idx) => {
+                  let displayHealth: string = p.operational_health;
+                  if (p.configured_mode === "DEMO") {
+                    displayHealth = "DEMO / SYNTHETIC";
+                  }
+                  return (
+                    <tr key={idx} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="px-4 py-3 font-semibold text-white">{p.provider_identifier}</td>
+                      <td className="px-4 py-3 text-slate-300">{p.domain}</td>
+                      <td className="px-4 py-3">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                          {p.configured_mode}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">{p.configuration_status}</td>
+                      <td className="px-4 py-3">{getStatusBadge(displayHealth)}</td>
+                      <td className="px-4 py-3 text-slate-400">{p.notes || "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

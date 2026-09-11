@@ -384,11 +384,11 @@ export const MOCK_SYSTEM_HEALTH: { status: string } = {
 };
 
 export const MOCK_INTEGRATIONS_HEALTH: IntegrationsHealthResponse = {
-  gst: { mode: 'LIVE', configured: true, details: 'Tax regular API active' },
-  udyam: { mode: 'LIVE', configured: true, details: 'Certificate verification gateway active' },
-  mca: { mode: 'LIVE', configured: true, details: 'Company registry status active' },
-  epfo: { mode: 'LIVE', configured: true, details: 'EPFO portal active' },
-  esic: { mode: 'LIVE', configured: true, details: 'ESIC gateway active' },
-  blacklist: { mode: 'LIVE', configured: true, details: 'Central debarment list active' },
-  intelligence: { mode: 'LIVE', configured: true, details: 'Hybrid RAG cross-verification online' },
+  gst: { mode: 'DEMO', configured: true, details: 'Deterministic SIH demo provider active (DEMO mode)' },
+  udyam: { mode: 'DEMO', configured: true, details: 'Deterministic SIH demo provider active (DEMO mode)' },
+  mca: { mode: 'DEMO', configured: true, details: 'Deterministic SIH demo provider active (DEMO mode)' },
+  epfo: { mode: 'DEMO', configured: true, details: 'Deterministic SIH demo provider active (DEMO mode)' },
+  esic: { mode: 'DEMO', configured: true, details: 'Deterministic SIH demo provider active (DEMO mode)' },
+  blacklist: { mode: 'DEMO', configured: true, details: 'Deterministic SIH demo provider active (DEMO mode)' },
+  intelligence: { mode: 'DEMO', configured: true, details: 'Deterministic SIH demo provider active (DEMO mode)' },
 };
