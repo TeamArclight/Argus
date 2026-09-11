@@ -81,7 +81,7 @@ export const TopNav: React.FC = () => {
         ) : isAuthenticated ? (
           <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-emerald-950/60 border border-emerald-800/80 text-emerald-300 text-xs font-mono">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <span className="font-semibold tracking-wide">LOCAL DEVELOPMENT SESSION</span>
+            <span className="font-semibold tracking-wide">AUTHENTICATED SESSION</span>
           </div>
         ) : (
           <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-slate-400 text-xs font-mono">

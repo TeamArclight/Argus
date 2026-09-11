@@ -178,7 +178,7 @@ export default function WorkspaceDashboard() {
               </span>
             ) : isAuthenticated ? (
               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950 border border-emerald-800/60 text-emerald-300">
-                LOCAL DEVELOPMENT SESSION
+                AUTHENTICATED SESSION
               </span>
             ) : null}
           </div>
