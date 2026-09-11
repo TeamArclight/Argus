@@ -32,6 +32,7 @@ export interface DemoTender extends TenderRead {
 }
 
 export interface DemoState {
+  version?: number;
   tenders: DemoTender[];
   requirements: Record<string, TenderRequirementRead[]>; // tender_id -> requirements
   bidders: Record<string, BidderRead[]>; // tender_id -> bidders
@@ -43,12 +44,14 @@ export interface DemoState {
 }
 
 const DEMO_STORAGE_KEY = 'argus_demo_store_v1';
+const CURRENT_DEMO_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // CANONICAL DEFAULT DEMO SCENARIOS
 // ---------------------------------------------------------------------------
 
 const DEFAULT_DEMO_STATE: DemoState = {
+  version: CURRENT_DEMO_VERSION,
   tenders: [
     {
       id: 'tender_gem_2026_01',
@@ -599,19 +602,65 @@ function loadFromStorage(): DemoState {
   try {
     const raw = localStorage.getItem(DEMO_STORAGE_KEY);
     if (!raw) return getDefaultState();
-    const parsed = JSON.parse(raw) as Partial<DemoState>;
+    const parsed = JSON.parse(raw) as Partial<DemoState> & { version?: number };
     if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.tenders)) {
       return getDefaultState();
     }
+
+    const now = new Date().toISOString();
+
+    // Sanitize any orphaned RUNNING jobs from older unclosed sessions
+    const sanitizedJobs: Record<string, JobRead> = {};
+    if (parsed.jobs && typeof parsed.jobs === 'object') {
+      for (const [jId, job] of Object.entries(parsed.jobs)) {
+        if (job && typeof job === 'object') {
+          if (job.status === 'RUNNING') {
+            sanitizedJobs[jId] = {
+              ...job,
+              status: 'FAILED',
+              error_message: 'Demo job execution interrupted.',
+              completed_at: now,
+            };
+          } else {
+            sanitizedJobs[jId] = job;
+          }
+        }
+      }
+    }
+
+    // Sanitize any orphaned RUNNING tenders to REVIEW_REQUIRED (semantically safe)
+    let addedAuditLogs = false;
+    const recoveryAuditEvents: AuditEventRead[] = [];
+    const sanitizedTenders = parsed.tenders.map((t) => {
+      if (t.status === 'RUNNING') {
+        addedAuditLogs = true;
+        recoveryAuditEvents.push({
+          id: `evt_recover_${t.id}_${Date.now()}`,
+          job_id: `job_${t.id}`,
+          stage: 'EXTRACTION',
+          status: 'FAILED',
+          progress: 0,
+          message: `Previous demo processing session was interrupted. Re-run processing for tender "${t.title}".`,
+          timestamp: now,
+        });
+        return { ...t, status: 'REVIEW_REQUIRED' as const, updated_at: now };
+      }
+      return t;
+    });
+
+    const existingAuditEvents = Array.isArray(parsed.auditEvents) ? parsed.auditEvents : DEFAULT_DEMO_STATE.auditEvents;
+    const finalAuditEvents = addedAuditLogs ? [...recoveryAuditEvents, ...existingAuditEvents] : existingAuditEvents;
+
     return {
-      tenders: Array.isArray(parsed.tenders) ? parsed.tenders : DEFAULT_DEMO_STATE.tenders,
+      version: CURRENT_DEMO_VERSION,
+      tenders: sanitizedTenders,
       requirements: parsed.requirements && typeof parsed.requirements === 'object' ? parsed.requirements : DEFAULT_DEMO_STATE.requirements,
       bidders: parsed.bidders && typeof parsed.bidders === 'object' ? parsed.bidders : DEFAULT_DEMO_STATE.bidders,
       complianceMatrices: parsed.complianceMatrices && typeof parsed.complianceMatrices === 'object' ? parsed.complianceMatrices : DEFAULT_DEMO_STATE.complianceMatrices,
       verifications: parsed.verifications && typeof parsed.verifications === 'object' ? parsed.verifications : DEFAULT_DEMO_STATE.verifications,
       humanDecisions: parsed.humanDecisions && typeof parsed.humanDecisions === 'object' ? parsed.humanDecisions : DEFAULT_DEMO_STATE.humanDecisions,
-      auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : DEFAULT_DEMO_STATE.auditEvents,
-      jobs: parsed.jobs && typeof parsed.jobs === 'object' ? parsed.jobs : {},
+      auditEvents: finalAuditEvents,
+      jobs: sanitizedJobs,
     };
   } catch {
     return getDefaultState();

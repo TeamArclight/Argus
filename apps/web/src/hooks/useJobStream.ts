@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, getApiBaseUrl, getAuthToken } from '@/services/api';
+import { demoStore } from '@/services/demo-store';
 import type { JobEventRead, JobRead, JobStage, JobStatus } from '@/types/api';
 
 /**
@@ -50,14 +51,10 @@ export function useJobStream({
           if (currentJob.status === 'FAILED') {
             onFailed?.(currentJob.error_message || 'Job execution failed');
           } else {
-            // COMPLETED and REVIEW_REQUIRED are both successful terminations of
-            // the job itself; REVIEW_REQUIRED additionally needs officer attention.
             onCompleted?.(currentJob);
           }
         }
       } catch (err: unknown) {
-        // Status polling is best-effort while the stream is the primary channel,
-        // but surface the reason so a persistent backend failure is visible.
         const msg = err instanceof Error ? err.message : 'Unable to read job status.';
         setError(msg);
       }
@@ -79,7 +76,38 @@ export function useJobStream({
     setIsStreaming(true);
     setError(null);
 
-    // Initial check
+    // DEMO MODE SAFEGUARD: Check if this is a demo job from demoStore
+    const demoJob = demoStore.getJob(jobId);
+    if (demoJob || (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('argus_workspace_mode') === 'demo')) {
+      let isMounted = true;
+      const demoTicker = setInterval(() => {
+        if (!isMounted) return;
+        const currentDemoJob = demoStore.getJob(jobId);
+        const currentDemoEvents = demoStore.getJobEvents(jobId);
+        if (currentDemoJob) {
+          setJob(currentDemoJob);
+        }
+        setEvents(currentDemoEvents);
+
+        if (currentDemoJob && isTerminalStatus(currentDemoJob.status)) {
+          isTerminalRef.current = true;
+          setIsStreaming(false);
+          clearInterval(demoTicker);
+          if (currentDemoJob.status === 'FAILED') {
+            onFailed?.(currentDemoJob.error_message || 'Demo job execution failed');
+          } else {
+            onCompleted?.(currentDemoJob);
+          }
+        }
+      }, 200);
+
+      return () => {
+        isMounted = false;
+        clearInterval(demoTicker);
+      };
+    }
+
+    // Initial check for real backend job
     checkJobStatus(jobId);
 
     // Abort previous stream
@@ -174,7 +202,7 @@ export function useJobStream({
       abortController.abort();
       clearInterval(interval);
     };
-  }, [jobId, checkJobStatus, pollingFallbackIntervalMs]);
+  }, [jobId, checkJobStatus, pollingFallbackIntervalMs, onCompleted, onFailed]);
 
   const currentStage: JobStage =
     job?.current_stage ?? (events.length > 0 ? events[events.length - 1].stage : 'UPLOAD');

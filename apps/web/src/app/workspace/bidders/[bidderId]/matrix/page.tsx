@@ -26,16 +26,17 @@ export default function ComplianceMatrixPage() {
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
-
-  // Evidence Drawer
   const [selectedEvidenceRow, setSelectedEvidenceRow] = useState<ComplianceMatrixRow | null>(null);
+
+  const storedDemoBidder = bidderId ? demoStore.getBidder(bidderId) : null;
+  const isDemo = isDemoPreview || Boolean(storedDemoBidder);
 
   const loadMatrix = async () => {
     if (!bidderId) return;
     setLoading(true);
     setError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       const bidder = demoStore.getBidder(bidderId);
       if (!bidder) {
         setMatrix([]);
@@ -66,7 +67,7 @@ export default function ComplianceMatrixPage() {
 
   useEffect(() => {
     loadMatrix();
-  }, [bidderId, isDemoPreview, isAuthenticated]);
+  }, [bidderId, isDemo, isAuthenticated]);
 
   const filteredMatrix = matrix.filter((row) => {
     if (statusFilter !== "ALL" && row.status !== statusFilter) return false;
@@ -87,7 +88,7 @@ export default function ComplianceMatrixPage() {
     }
   };
 
-  if (!isAuthenticated && !isDemoPreview) {
+  if (!isAuthenticated && !isDemo) {
     return (
       <SessionRequired
         title="Session Required"

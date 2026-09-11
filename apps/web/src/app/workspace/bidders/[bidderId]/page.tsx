@@ -34,12 +34,15 @@ export default function BidderDetailPage() {
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  const storedDemoBidder = bidderId ? demoStore.getBidder(bidderId) : null;
+  const isDemo = isDemoPreview || Boolean(storedDemoBidder);
+
   const loadBidderData = async () => {
     if (!bidderId) return;
     setLoading(true);
     setError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       const match = demoStore.getBidder(bidderId);
       if (!match) {
         setBidder(null);
@@ -80,14 +83,14 @@ export default function BidderDetailPage() {
 
   useEffect(() => {
     loadBidderData();
-  }, [bidderId, isDemoPreview, isAuthenticated]);
+  }, [bidderId, isDemo, isAuthenticated]);
 
   const handleRunVerification = async () => {
     if (!bidderId) return;
     setTriggeringVerify(true);
     setError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       setTimeout(async () => {
         setTriggeringVerify(false);
         await loadBidderData();
@@ -114,7 +117,7 @@ export default function BidderDetailPage() {
     setTriggeringCompliance(true);
     setError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       setTimeout(async () => {
         setTriggeringCompliance(false);
         await loadBidderData();
@@ -140,15 +143,23 @@ export default function BidderDetailPage() {
     const file = e.target.files?.[0];
     if (!file || !bidderId) return;
     setUploadingDoc(true);
-    setUploadError(null);
+    setError(null);
+
+    if (isDemo) {
+      setTimeout(async () => {
+        setUploadingDoc(false);
+        await loadBidderData();
+      }, 500);
+      return;
+    }
+
     try {
-      await api.uploadBidderDoc(bidderId, file);
+      await api.uploadBidderDocument(bidderId, file, 'FINANCIAL_STATEMENT');
       await loadBidderData();
     } catch (err: unknown) {
-      setUploadError(err instanceof Error ? err.message : "Failed to upload document to backend.");
+      setError(err instanceof Error ? err.message : 'Failed to upload document.');
     } finally {
       setUploadingDoc(false);
-      if (e.target) e.target.value = "";
     }
   };
 
@@ -173,7 +184,7 @@ export default function BidderDetailPage() {
     }
   };
 
-  if (!isAuthenticated && !isDemoPreview) {
+  if (!isAuthenticated && !isDemo) {
     return (
       <SessionRequired
         title="Session Required"

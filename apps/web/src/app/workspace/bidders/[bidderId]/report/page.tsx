@@ -16,6 +16,8 @@ export default function ReportPage() {
   const params = useParams();
   const bidderId = params?.bidderId as string;
   const { isAuthenticated, isDemoPreview } = useAuth();
+  const storedDemoBidder = bidderId ? demoStore.getBidder(bidderId) : null;
+  const isDemo = isDemoPreview || Boolean(storedDemoBidder);
 
   const [report, setReport] = useState<ReportRead | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,7 +28,7 @@ export default function ReportPage() {
     setLoading(true);
     setError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       const demoReport = demoStore.getReport(bidderId);
       if (!demoReport) {
         setReport(null);
@@ -56,7 +58,7 @@ export default function ReportPage() {
 
   useEffect(() => {
     loadReport();
-  }, [bidderId, isDemoPreview, isAuthenticated]);
+  }, [bidderId, isDemo, isAuthenticated]);
 
   const handlePrint = () => {
     window.print();
@@ -73,7 +75,7 @@ export default function ReportPage() {
     URL.revokeObjectURL(url);
   };
 
-  if (!isAuthenticated && !isDemoPreview) {
+  if (!isAuthenticated && !isDemo) {
     return (
       <SessionRequired
         title="Session Required"

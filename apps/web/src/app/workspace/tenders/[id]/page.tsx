@@ -41,12 +41,15 @@ export default function TenderDetailPage() {
   const [bidderSubmitting, setBidderSubmitting] = useState(false);
   const [bidderError, setBidderError] = useState<string | null>(null);
 
+  const storedDemoTender = id ? demoStore.getTender(id) : null;
+  const isDemo = isDemoPreview || Boolean(storedDemoTender);
+
   const loadTenderData = async () => {
     if (!id) return;
     setLoading(true);
     setError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       const match = demoStore.getTender(id);
       if (!match) {
         setTender(null);
@@ -85,22 +88,37 @@ export default function TenderDetailPage() {
 
   useEffect(() => {
     loadTenderData();
-  }, [id, isDemoPreview, isAuthenticated]);
+  }, [id, isDemo, isAuthenticated]);
 
   const handleExtractRequirements = async () => {
     if (!id) return;
     setExtractingReqs(true);
     setError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       const demoJobId = `job_extract_${Date.now()}`;
       setActiveJobId(demoJobId);
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("Synthetic extraction timed out (8s limit exceeded). Please retry."));
+        }, 8000);
+      });
+
       try {
-        await demoStore.extractCriteria(id, demoJobId);
+        await Promise.race([
+          demoStore.extractCriteria(id, demoJobId),
+          timeoutPromise,
+        ]);
         await loadTenderData();
         setActiveTab("requirements");
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to extract criteria.");
+        const msg = err instanceof Error ? err.message : "Failed to extract criteria.";
+        setError(msg);
+        demoStore.updateJob(demoJobId, {
+          status: 'FAILED',
+          error_message: msg,
+        });
       } finally {
         setExtractingReqs(false);
       }
@@ -127,7 +145,7 @@ export default function TenderDetailPage() {
     setBidderSubmitting(true);
     setBidderError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       demoStore.createBidder(id, {
         bidder_name: newBidderName.trim(),
         gstin: newGstin.trim() || undefined,
@@ -183,7 +201,7 @@ export default function TenderDetailPage() {
     }
   };
 
-  if (!isAuthenticated && !isDemoPreview) {
+  if (!isAuthenticated && !isDemo) {
     return (
       <SessionRequired
         title="Session Required"

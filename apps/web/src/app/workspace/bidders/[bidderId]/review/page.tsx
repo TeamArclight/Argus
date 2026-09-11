@@ -17,7 +17,9 @@ export default function HumanReviewPage() {
   const params = useParams();
   const bidderId = params?.bidderId as string;
   const { isAuthenticated, isDemoPreview, role } = useAuth();
-  const canSubmitDecision = isDemoPreview || role === 'ADMIN' || role === 'PROCUREMENT_OFFICER';
+  const storedDemoBidder = bidderId ? demoStore.getBidder(bidderId) : null;
+  const isDemo = isDemoPreview || Boolean(storedDemoBidder);
+  const canSubmitDecision = isDemo || role === 'ADMIN' || role === 'PROCUREMENT_OFFICER';
 
   const [bidder, setBidder] = useState<BidderRead | null>(null);
   const [matrix, setMatrix] = useState<ComplianceMatrixRow[]>([]);
@@ -25,10 +27,9 @@ export default function HumanReviewPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Form State
   const [status, setStatus] = useState<"QUALIFIED" | "DISQUALIFIED">("QUALIFIED");
-  const [reasonCode, setReasonCode] = useState("MANUAL_APPROVAL_COMPLIANT");
-  const [remarks, setRemarks] = useState("");
+  const [reasonCode, setReasonCode] = useState<string>("MANUAL_APPROVAL_COMPLIANT");
+  const [remarks, setRemarks] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
@@ -38,7 +39,7 @@ export default function HumanReviewPage() {
     setLoading(true);
     setError(null);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       const match = demoStore.getBidder(bidderId);
       if (!match) {
         setBidder(null);
@@ -94,7 +95,7 @@ export default function HumanReviewPage() {
 
   useEffect(() => {
     loadData();
-  }, [bidderId, isDemoPreview, isAuthenticated]);
+  }, [bidderId, isDemo, isAuthenticated]);
 
   const handleSubmitDecision = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,7 +104,7 @@ export default function HumanReviewPage() {
     setSubmitError(null);
     setSubmitSuccess(false);
 
-    if (isDemoPreview) {
+    if (isDemo) {
       demoStore.recordHumanDecision(bidderId, status);
       setExistingDecision({
         id: `dec_demo_${Date.now()}`,
@@ -141,7 +142,7 @@ export default function HumanReviewPage() {
 
   const flaggedRows = matrix.filter((r) => r.status === "REVIEW_REQUIRED" || r.status === "FAIL" || r.review_required);
 
-  if (!isAuthenticated && !isDemoPreview) {
+  if (!isAuthenticated && !isDemo) {
     return (
       <SessionRequired
         title="Session Required"
