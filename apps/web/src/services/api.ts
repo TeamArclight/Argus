@@ -18,6 +18,8 @@ import type {
   IntegrationsHealthResponse,
   JobEventRead,
   JobRead,
+  JobStage,
+  JobStatus,
   ProviderHealthRead,
   RAGQueryRequest,
   RAGQueryResponse,
@@ -28,6 +30,7 @@ import type {
   TenderRequirementRead,
   VerificationResultRead,
 } from '@/types/api';
+import type { AuditEventRead, RawAuditEvent } from '@/services/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -348,12 +351,16 @@ export const apiClient = {
     });
   },
 
-  async getAuditLogs(params: { limit?: number; offset?: number } = {}): Promise<JobEventRead[]> {
+  async getAuditLogs(params: { limit?: number; offset?: number } = {}): Promise<AuditEventRead[]> {
     const query = params.limit ? `?limit=${params.limit}` : '';
-    return request<JobEventRead[]>(`/api/v1/audit/events${query}`);
+    const rawEvents = await request<RawAuditEvent[]>(`/api/v1/audit/events${query}`);
+    if (Array.isArray(rawEvents)) {
+      return rawEvents.map(normalizeAuditEvent);
+    }
+    return [];
   },
 
-  async getAuditEvents(params: { limit?: number; offset?: number } = {}): Promise<JobEventRead[]> {
+  async getAuditEvents(params: { limit?: number; offset?: number } = {}): Promise<AuditEventRead[]> {
     return this.getAuditLogs(params);
   },
 
@@ -379,4 +386,198 @@ export const apiClient = {
   },
 };
 
+const VALID_JOB_STAGES: JobStage[] = [
+  'UPLOAD', 'PARSING', 'OCR', 'EXTRACTION', 'VERIFICATION', 'COMPLIANCE', 'RISK_ANALYSIS', 'REPORTING'
+];
+
+const VALID_JOB_STATUSES: JobStatus[] = [
+  'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'REVIEW_REQUIRED'
+];
+
+/**
+ * Normalizes raw backend AuditEvent records into canonical AuditEventRead objects.
+ * Single adapter boundary mapping for backend shape -> UI event model.
+ */
+export function normalizeAuditEvent(raw: RawAuditEvent | Record<string, unknown>): AuditEventRead {
+  if (!raw || typeof raw !== 'object') {
+    return {
+      id: undefined,
+      job_id: null,
+      stage: null,
+      status: null,
+      progress: null,
+      message: null,
+      timestamp: null,
+    };
+  }
+
+  const rawRecord = raw as RawAuditEvent;
+  const payload = (rawRecord.payload_json || rawRecord.payload || {}) as Record<string, unknown>;
+
+  // 1. JOB ID FALLBACK:
+  // Do NOT use entity_id as generic fallback. Only map entity_id -> job_id when entity_type === "JOB".
+  // Otherwise leave job_id as null unless a real job_id / jobId / run_id exists in payload.
+  let jobId: string | null = null;
+  if (typeof rawRecord.job_id === 'string' && rawRecord.job_id.trim() !== '') {
+    jobId = rawRecord.job_id;
+  } else if (typeof payload.job_id === 'string' && payload.job_id.trim() !== '') {
+    jobId = payload.job_id;
+  } else if (typeof payload.jobId === 'string' && payload.jobId.trim() !== '') {
+    jobId = payload.jobId;
+  } else if (typeof payload.run_id === 'string' && payload.run_id.trim() !== '') {
+    jobId = payload.run_id;
+  } else if (rawRecord.entity_type === 'JOB' && typeof rawRecord.entity_id === 'string' && rawRecord.entity_id.trim() !== '') {
+    jobId = rawRecord.entity_id;
+  }
+
+  // 2. STAGE / STATUS DERIVATION:
+  // Map stage/status from payload or action when unambiguous.
+  let stageCandidate: string | null = (rawRecord.stage && rawRecord.stage !== '—')
+    ? String(rawRecord.stage)
+    : (payload.stage || payload.event_type ? String(payload.stage || payload.event_type) : null);
+
+  let statusCandidate: string | null = (rawRecord.status && rawRecord.status !== '—')
+    ? String(rawRecord.status)
+    : (payload.status || payload.event_status ? String(payload.status || payload.event_status) : null);
+
+  const action: string = rawRecord.action || '';
+
+  if (!stageCandidate && action) {
+    if (action.includes('EXTRACTION')) {
+      stageCandidate = 'EXTRACTION';
+    } else if (action.includes('VERIFICATION')) {
+      stageCandidate = 'VERIFICATION';
+    } else if (action.includes('COMPLIANCE')) {
+      stageCandidate = 'COMPLIANCE';
+    } else if (action === 'DOCUMENT_UPLOADED' || action === 'TENDER_CREATED' || action === 'BIDDER_CREATED' || action === 'TENDER_PROCESSING_STARTED') {
+      stageCandidate = 'UPLOAD';
+    } else if (action === 'HUMAN_DECISION_RECORDED') {
+      stageCandidate = 'REPORTING';
+    } else if (action.includes('OCR') || action.includes('PARSING')) {
+      stageCandidate = 'OCR';
+    }
+  }
+
+  if (!statusCandidate && action) {
+    if (action.includes('FAILED') || action.includes('ERROR') || action.includes('ORPHANED')) {
+      statusCandidate = 'FAILED';
+    } else if (action.includes('COMPLETED') || action.includes('APPROVED') || action === 'TENDER_CREATED' || action === 'BIDDER_CREATED' || action === 'DOCUMENT_UPLOADED') {
+      statusCandidate = 'COMPLETED';
+    } else if (action.includes('STARTED') || action.includes('REQUESTED')) {
+      statusCandidate = 'RUNNING';
+    }
+  }
+
+  // Safely validate enum types without forcing invalid "—" strings
+  const stage: JobStage | null = (stageCandidate && VALID_JOB_STAGES.includes(stageCandidate as JobStage))
+    ? (stageCandidate as JobStage)
+    : null;
+
+  let status: JobStatus | null = null;
+  if (statusCandidate) {
+    if (statusCandidate === 'SUCCESS') {
+      status = 'COMPLETED';
+    } else if (VALID_JOB_STATUSES.includes(statusCandidate as JobStatus)) {
+      status = statusCandidate as JobStatus;
+    }
+  }
+
+  // 3. MESSAGE NORMALIZATION:
+  let message: string | null = (rawRecord.message || payload.message || payload.detail || payload.error_message)
+    ? String(rawRecord.message || payload.message || payload.detail || payload.error_message)
+    : null;
+
+  if (!message) {
+    if (payload.error_code) {
+      message = String(payload.error_code);
+    } else if (action) {
+      switch (action) {
+        case 'DOCUMENT_EXTRACTION_FAILED':
+        case 'TENDER_EXTRACTION_FAILED':
+          message = 'Document extraction failed.';
+          break;
+        case 'DOCUMENT_EXTRACTION_COMPLETED':
+        case 'TENDER_EXTRACTION_COMPLETED':
+          message = 'Document extraction completed.';
+          break;
+        case 'TENDER_PROCESSING_STARTED':
+          message = 'Tender processing started.';
+          break;
+        case 'VERIFICATION_STARTED':
+          message = 'Registry verification workflow started.';
+          break;
+        case 'VERIFICATION_FAILED':
+          message = 'Verification workflow failed.';
+          break;
+        case 'VERIFICATION_RUN_ORPHANED':
+          message = 'Stale verification run orphaned.';
+          break;
+        case 'COMPLIANCE_EVALUATION_COMPLETED':
+        case 'COMPLIANCE_RUN_COMPLETED':
+          message = payload.overall_status
+            ? `Compliance evaluation completed (${String(payload.overall_status)}).`
+            : 'Deterministic compliance evaluation completed.';
+          break;
+        case 'HUMAN_DECISION_RECORDED':
+          message = 'Officer human decision recorded.';
+          break;
+        case 'DOCUMENT_UPLOADED':
+          message = 'Document uploaded.';
+          break;
+        case 'TENDER_CREATED':
+          message = 'Tender record created.';
+          break;
+        case 'BIDDER_CREATED':
+          message = 'Bidder record created.';
+          break;
+        case 'TENDER_REQUIREMENT_CREATED':
+          message = 'Tender requirement created.';
+          break;
+        case 'TENDER_REQUIREMENT_APPROVED':
+          message = 'Tender requirement approved.';
+          break;
+        case 'PROVIDER_HEALTH_CHECKED':
+          message = 'Provider health check passed.';
+          break;
+        default:
+          message = action;
+          break;
+      }
+    }
+  }
+
+  // 4. PROGRESS NORMALIZATION (Constraint 4):
+  // Normalize only when the value is a real finite number.
+  let progress: number | null = null;
+  if (typeof rawRecord.progress === 'number' && Number.isFinite(rawRecord.progress)) {
+    progress = rawRecord.progress;
+  } else if (typeof payload.progress === 'number' && Number.isFinite(payload.progress)) {
+    progress = payload.progress;
+  } else if (typeof payload.progress_pct === 'number' && Number.isFinite(payload.progress_pct)) {
+    progress = payload.progress_pct;
+  }
+
+  // 5. TIMESTAMP HANDLING (Constraint 1 - No fabricated timestamps):
+  // An unknown audit timestamp must remain null.
+  let timestampStr: string | null = null;
+  const rawTs = rawRecord.timestamp || rawRecord.created_at;
+  if (typeof rawTs === 'string' && rawTs.trim() !== '') {
+    timestampStr = rawTs.trim().replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/, '$1T$2');
+  }
+
+  // 6. EVENT ID HANDLING (Constraint 2 - No random generated IDs):
+  const id = typeof rawRecord.id === 'string' && rawRecord.id.trim() !== '' ? rawRecord.id : undefined;
+
+  return {
+    id,
+    job_id: jobId,
+    stage,
+    status,
+    progress,
+    message,
+    timestamp: timestampStr,
+  };
+}
+
 export const api = apiClient;
+

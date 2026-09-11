@@ -1,19 +1,19 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { 
   ShieldCheck, RefreshCw, Filter, Search, Clock, 
   CheckCircle, XCircle, AlertCircle
 } from "lucide-react";
 import { api } from "@/services/api";
-import { JobEventRead } from "@/services/types";
+import { AuditEventRead } from "@/services/types";
 import { MOCK_AUDIT_EVENTS } from "@/services/mock-data";
 import { SessionRequired } from "@/components/ui/SessionRequired";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function AuditPage() {
   const { isAuthenticated, isDemoPreview } = useAuth();
-  const [events, setEvents] = useState<JobEventRead[]>([]);
+  const [events, setEvents] = useState<AuditEventRead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +22,7 @@ export default function AuditPage() {
   const [stageFilter, setStageFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
-  const loadAuditEvents = async () => {
+  const loadAuditEvents = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -45,15 +45,20 @@ export default function AuditPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isDemoPreview, isAuthenticated]);
 
   useEffect(() => {
     loadAuditEvents();
-  }, [isDemoPreview, isAuthenticated]);
+  }, [loadAuditEvents]);
 
   const filteredEvents = events.filter((ev) => {
     if (stageFilter !== "ALL" && ev.stage !== stageFilter) return false;
-    if (statusFilter !== "ALL" && ev.status !== statusFilter) return false;
+    if (statusFilter !== "ALL") {
+      const s = (ev.status || "").toUpperCase();
+      if (statusFilter === "SUCCESS" && s !== "SUCCESS" && s !== "COMPLETED") return false;
+      if (statusFilter === "FAILED" && s !== "FAILED" && s !== "ERROR") return false;
+      if (statusFilter === "RUNNING" && s !== "RUNNING") return false;
+    }
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       const msgMatch = ev.message?.toLowerCase().includes(q);
@@ -64,7 +69,21 @@ export default function AuditPage() {
     return true;
   });
 
-  const getStatusBadge = (status: string) => {
+  const formatTimestamp = (ts?: string | null) => {
+    if (!ts || ts === "—") return "—";
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    } catch {
+      return ts;
+    }
+  };
+
+  const getStatusBadge = (status?: string | null) => {
+    if (!status || status === "—") {
+      return <span className="text-zinc-500 font-mono text-xs">—</span>;
+    }
     switch (status) {
       case "COMPLETED":
       case "SUCCESS":
@@ -136,10 +155,12 @@ export default function AuditPage() {
               className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-blue-500"
             >
               <option value="ALL">All Stages</option>
-              <option value="OCR">OCR Extraction</option>
+              <option value="UPLOAD">Upload</option>
+              <option value="OCR">OCR & Parsing</option>
+              <option value="EXTRACTION">Extraction</option>
               <option value="VERIFICATION">Verification</option>
               <option value="COMPLIANCE">Compliance</option>
-              <option value="AI_EXTRACTION">AI Extraction</option>
+              <option value="REPORTING">Reporting</option>
             </select>
             <select
               value={statusFilter}
@@ -189,22 +210,26 @@ export default function AuditPage() {
               {filteredEvents.map((ev, i) => (
                 <tr key={ev.id || i} className="hover:bg-zinc-800/30 transition-colors">
                   <td className="px-5 py-3 font-mono text-xs text-zinc-400 whitespace-nowrap">
-                    {new Date(ev.timestamp).toLocaleTimeString()}
+                    {formatTimestamp(ev.timestamp)}
                   </td>
                   <td className="px-5 py-3">
-                    <span className="px-2 py-0.5 rounded text-xs font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
-                      {ev.stage}
-                    </span>
+                    {ev.stage && String(ev.stage) !== "—" ? (
+                      <span className="px-2 py-0.5 rounded text-xs font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                        {ev.stage}
+                      </span>
+                    ) : (
+                      <span className="text-zinc-500 font-mono text-xs">—</span>
+                    )}
                   </td>
-                  <td className="px-5 py-3 font-mono text-xs text-zinc-500 truncate max-w-[120px]">
-                    {ev.job_id}
+                  <td className="px-5 py-3 font-mono text-xs text-zinc-500 truncate max-w-[120px]" title={ev.job_id ?? undefined}>
+                    {ev.job_id || "—"}
                   </td>
                   <td className="px-5 py-3">{getStatusBadge(ev.status)}</td>
                   <td className="px-5 py-3 font-mono text-xs text-blue-400">
                     {ev.progress != null ? `${ev.progress}%` : "—"}
                   </td>
                   <td className="px-5 py-3 text-xs text-zinc-300">
-                    {ev.message}
+                    {ev.message || "—"}
                   </td>
                 </tr>
               ))}
