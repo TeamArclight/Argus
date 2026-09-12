@@ -127,8 +127,13 @@ class AIServiceAdapter:
         if settings.ARGUS_INTELLIGENCE_API_KEY:
             headers["Authorization"] = f"Bearer {settings.ARGUS_INTELLIGENCE_API_KEY}"
 
-        timeout = httpx.Timeout(connect=3.0, read=15.0, write=5.0, pool=5.0)
-        max_attempts = 3
+        timeout = httpx.Timeout(
+            connect=settings.ARGUS_INTELLIGENCE_CONNECT_TIMEOUT_SECONDS,
+            read=settings.ARGUS_INTELLIGENCE_READ_TIMEOUT_SECONDS,
+            write=settings.ARGUS_INTELLIGENCE_WRITE_TIMEOUT_SECONDS,
+            pool=settings.ARGUS_INTELLIGENCE_POOL_TIMEOUT_SECONDS,
+        )
+        max_attempts = 2
 
         for attempt in range(1, max_attempts + 1):
             try:
@@ -463,8 +468,13 @@ class AIServiceAdapter:
         if settings.ARGUS_INTELLIGENCE_API_KEY:
             headers["Authorization"] = f"Bearer {settings.ARGUS_INTELLIGENCE_API_KEY}"
 
-        timeout = httpx.Timeout(connect=3.0, read=15.0, write=5.0, pool=5.0)
-        max_attempts = 3
+        timeout = httpx.Timeout(
+            connect=settings.ARGUS_INTELLIGENCE_CONNECT_TIMEOUT_SECONDS,
+            read=settings.ARGUS_INTELLIGENCE_READ_TIMEOUT_SECONDS,
+            write=settings.ARGUS_INTELLIGENCE_WRITE_TIMEOUT_SECONDS,
+            pool=settings.ARGUS_INTELLIGENCE_POOL_TIMEOUT_SECONDS,
+        )
+        max_attempts = 2
 
         for attempt in range(1, max_attempts + 1):
             try:

@@ -10,6 +10,7 @@ import {
 import { api } from "@/services/api";
 import { demoStore, DemoBidderDocument } from "@/services/demo-store";
 import { BidderRead, VerificationResultRead, ComplianceMatrixRow } from "@/services/types";
+import { DocumentRead } from "@/types/api";
 import { JobProgressDrawer } from "@/components/ui/JobProgressDrawer";
 import { SessionRequired } from "@/components/ui/SessionRequired";
 import { MismatchDetailModal, MismatchDetailItem } from "@/components/ui/MismatchDetailModal";
@@ -80,16 +81,35 @@ export default function BidderDetailPage() {
     }
 
     try {
-      const [bData, vData, mData, dData] = await Promise.all([
+      const [bData, vData, mData, dData, reportData] = await Promise.all([
         api.getBidder(bidderId),
         api.getVerificationResults(bidderId),
         api.getComplianceMatrix(bidderId),
         api.getBidderDocuments(bidderId).catch(() => []),
+        api.getReport(bidderId).catch(() => null),
       ]);
       setBidder(bData);
       setVerifications(vData);
       setMatrix(mData);
-      setDocuments(dData as DemoBidderDocument[]);
+
+      // Correlate authentic documents with direct facts and report evidence
+      const authenticDocs: DemoBidderDocument[] = (dData || []).map((doc: DocumentRead) => {
+        const directFacts = doc.facts || [];
+        const reportEvidence = (reportData?.evidence || []).filter(
+          (ev: { document_id?: string | null }) => ev.document_id === doc.id
+        );
+        const totalFactsCount = directFacts.length > 0 ? directFacts.length : reportEvidence.length;
+        const docStatus: DemoBidderDocument['status'] = totalFactsCount > 0 ? 'PROCESSED' : 'PENDING';
+
+        return {
+          ...doc,
+          status: docStatus,
+          facts_count: totalFactsCount,
+          extracted_facts: directFacts,
+        };
+      });
+
+      setDocuments(authenticDocs);
       setComplianceStale(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to load bidder records.";
@@ -230,10 +250,14 @@ export default function BidderDetailPage() {
       case "QUALIFIED":
       case "VERIFIED":
       case "PASS":
+      case "PROCESSED":
         return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><CheckCircle className="w-3 h-3" /> {status}</span>;
       case "PENDING":
       case "RUNNING":
+      case "PROCESSING":
         return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20"><Clock className="w-3 h-3 animate-spin" /> {status}</span>;
+      case "UPLOADED":
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700"><Clock className="w-3 h-3 text-zinc-400" /> {status}</span>;
       case "MANUAL_REVIEW":
       case "REVIEW_REQUIRED":
         return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"><AlertTriangle className="w-3 h-3" /> {status}</span>;
@@ -510,10 +534,21 @@ export default function BidderDetailPage() {
                         {getStatusBadge(doc.status || 'PROCESSED')}
                       </td>
                       <td className="px-5 py-3 text-xs">
-                        <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          {factsCount > 0 ? `${factsCount} Facts Extracted` : '0 Facts'}
-                        </span>
+                        {factsCount > 0 ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            {factsCount} Facts Extracted
+                          </span>
+                        ) : doc.status === 'PENDING' ? (
+                          <span className="inline-flex items-center gap-1 text-zinc-400 font-medium">
+                            <Clock className="w-3.5 h-3.5 text-zinc-500" />
+                            Facts unavailable
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-zinc-400 font-medium">
+                            0 Facts
+                          </span>
+                        )}
                         {doc.mismatches && doc.mismatches.length > 0 && (
                           <button
                             onClick={() => {

@@ -35,6 +35,11 @@ export default function WorkspaceDashboard() {
     disqualifiedBidders: 0,
     pendingReviewBidders: 0,
   });
+  const [liveStats, setLiveStats] = useState({
+    qualifiedBidders: 0,
+    disqualifiedBidders: 0,
+    pendingReviewBidders: 0,
+  });
   const [providers, setProviders] = useState<ProviderHealthRead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +78,35 @@ export default function WorkspaceDashboard() {
 
       setTenders(tenderList);
       setProviders(providerList);
+
+      // Compute authentic bidder KPIs across all fetched tenders
+      try {
+        const biddersLists = await Promise.all(
+          tenderList.map((t) => apiClient.getTenderBidders(t.id).catch(() => []))
+        );
+        let qualified = 0;
+        let disqualified = 0;
+        let pending = 0;
+        for (const bl of biddersLists) {
+          for (const b of bl) {
+            const s = (b.status || '').toUpperCase();
+            if (s === 'QUALIFIED') {
+              qualified++;
+            } else if (s === 'DISQUALIFIED') {
+              disqualified++;
+            } else {
+              pending++;
+            }
+          }
+        }
+        setLiveStats({
+          qualifiedBidders: qualified,
+          disqualifiedBidders: disqualified,
+          pendingReviewBidders: pending,
+        });
+      } catch {
+        // preserve non-blocking telemetry on partial bidder query failure
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load procurement overview.');
     } finally {
@@ -145,9 +179,9 @@ export default function WorkspaceDashboard() {
     );
   }
 
-  const qualifiedCount = isDemoPreview ? demoStats.qualifiedBidders : 0;
-  const disqualifiedCount = isDemoPreview ? demoStats.disqualifiedBidders : 0;
-  const pendingCount = isDemoPreview ? demoStats.pendingReviewBidders : 0;
+  const qualifiedCount = isDemoPreview ? demoStats.qualifiedBidders : liveStats.qualifiedBidders;
+  const disqualifiedCount = isDemoPreview ? demoStats.disqualifiedBidders : liveStats.disqualifiedBidders;
+  const pendingCount = isDemoPreview ? demoStats.pendingReviewBidders : liveStats.pendingReviewBidders;
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-12">
