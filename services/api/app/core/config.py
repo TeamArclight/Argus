@@ -111,16 +111,21 @@ class Settings(BaseSettings):
         return v
 
     # Storage Configuration
-    ARGUS_STORAGE_BACKEND: Literal["local"] = "local"
+    ARGUS_STORAGE_BACKEND: Literal["local", "supabase"] = "local"
     ARGUS_STORAGE_LOCAL_PATH: str = "./data/uploads"
     ARGUS_MAX_UPLOAD_MB: int = 20
+    ARGUS_SUPABASE_URL: str | None = None
+    ARGUS_SUPABASE_SERVICE_ROLE_KEY: str | None = None
+    ARGUS_STORAGE_SUPABASE_BUCKET: str = "documents"
+    ARGUS_STORAGE_SUPABASE_TIMEOUT_SECONDS: float = 30.0
 
     @field_validator("ARGUS_STORAGE_BACKEND")
     @classmethod
     def validate_storage_backend(cls, v: str) -> str:
-        if v not in ("local",):
-            raise ValueError("ARGUS_STORAGE_BACKEND must be 'local'.")
-        return v
+        clean = v.lower().strip()
+        if clean not in ("local", "supabase"):
+            raise ValueError("ARGUS_STORAGE_BACKEND must be 'local' or 'supabase'.")
+        return clean
 
     @field_validator("ARGUS_STORAGE_LOCAL_PATH")
     @classmethod
@@ -135,6 +140,21 @@ class Settings(BaseSettings):
         if not isinstance(v, int) or v <= 0 or v > 500:
             raise ValueError("ARGUS_MAX_UPLOAD_MB must be a positive integer <= 500.")
         return v
+
+    def get_supabase_url(self) -> str | None:
+        """Returns explicitly configured ARGUS_SUPABASE_URL or infers from Supabase DATABASE_URL."""
+        if self.ARGUS_SUPABASE_URL and self.ARGUS_SUPABASE_URL.strip():
+            return self.ARGUS_SUPABASE_URL.strip().rstrip("/")
+        db_url = getattr(self, "DATABASE_URL", "")
+        if "supabase.co" in db_url or "supabase.com" in db_url:
+            import re
+            m = re.search(r"db\.([a-zA-Z0-9_-]+)\.supabase\.co", db_url)
+            if m:
+                return f"https://{m.group(1)}.supabase.co"
+            m2 = re.search(r"postgres\.([a-zA-Z0-9_-]+):", db_url)
+            if m2:
+                return f"https://{m2.group(1)}.supabase.co"
+        return None
 
 
     def get_cors_origins(self) -> list[str]:
