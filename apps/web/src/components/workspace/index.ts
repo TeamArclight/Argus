@@ -9,3 +9,4 @@ export * from '@/components/ui/RequirementAddModal';
 export * from '@/components/ui/RiskSignalCard';
 export * from '@/components/ui/StatusBadge';
 export * from '@/components/ui/TenderCreateModal';
+export * from '@/components/ui/MismatchDetailModal';

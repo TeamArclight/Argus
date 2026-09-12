@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { 
   Activity, CheckCircle, AlertTriangle, XCircle, RefreshCw, 
@@ -24,7 +24,7 @@ export default function StatusPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -86,11 +86,11 @@ export default function StatusPage() {
     }
 
     setLoading(false);
-  };
+  }, [isDemoPreview, isAuthenticated, principal]);
 
   useEffect(() => {
     loadStatus();
-  }, [isDemoPreview, isAuthenticated]);
+  }, [loadStatus]);
 
   const getStatusBadge = (status: string) => {
     switch (status.toUpperCase()) {

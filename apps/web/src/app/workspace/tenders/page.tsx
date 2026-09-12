@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import {
   FileText,
@@ -32,7 +32,7 @@ export default function TendersListPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
-  const loadTenders = async () => {
+  const loadTenders = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -56,11 +56,11 @@ export default function TendersListPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isDemoPreview, isAuthenticated]);
 
   useEffect(() => {
     loadTenders();
-  }, [isDemoPreview, isAuthenticated]);
+  }, [loadTenders]);
 
   const handleCreateTender = async (data: TenderCreate, rfpFile?: File) => {
     try {

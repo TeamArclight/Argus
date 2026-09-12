@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import {
   FileText,
@@ -42,7 +42,7 @@ export default function WorkspaceDashboard() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -78,11 +78,11 @@ export default function WorkspaceDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isDemoPreview, isAuthenticated]);
 
   useEffect(() => {
     loadDashboardData();
-  }, [isDemoPreview, isAuthenticated]);
+  }, [loadDashboardData]);
 
   const handleCreateTender = async (data: TenderCreate, rfpFile?: File) => {
     try {

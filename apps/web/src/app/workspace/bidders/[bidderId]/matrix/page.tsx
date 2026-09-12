@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { 
@@ -31,7 +31,7 @@ export default function ComplianceMatrixPage() {
   const storedDemoBidder = bidderId ? demoStore.getBidder(bidderId) : null;
   const isDemo = isDemoPreview || Boolean(storedDemoBidder);
 
-  const loadMatrix = async () => {
+  const loadMatrix = useCallback(async () => {
     if (!bidderId) return;
     setLoading(true);
     setError(null);
@@ -63,11 +63,11 @@ export default function ComplianceMatrixPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [bidderId, isDemo, isAuthenticated]);
 
   useEffect(() => {
     loadMatrix();
-  }, [bidderId, isDemo, isAuthenticated]);
+  }, [loadMatrix]);
 
   const filteredMatrix = matrix.filter((row) => {
     if (statusFilter !== "ALL" && row.status !== statusFilter) return false;

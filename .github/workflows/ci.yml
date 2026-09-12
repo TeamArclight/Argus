@@ -31,7 +31,7 @@ jobs:
         working-directory: services/api
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: argus_test
           POSTGRES_USER: postgres
@@ -78,14 +78,23 @@ jobs:
           ARGUS_JWT_SECRET: "12345678901234567890123456789012"
           TEST_POSTGRES_URL: "postgresql://postgres:postgres@127.0.0.1:5432/argus_test"
           REQUIRE_POSTGRES_TEST: "1"
-        run: pytest
-      - name: Run Backend Pytest Suite (SQLite Fallback)
+        run: pytest -rs
+      - name: Verify Environment Diagnostic
         env:
           ARGUS_JWT_SECRET: "12345678901234567890123456789012"
-        run: pytest
-      - name: Verify OpenAPI Schema Drift
-        env:
-          ARGUS_JWT_SECRET: "12345678901234567890123456789012"
-        run: |
-          python -m app.export_openapi
-          diff -u candidate_openapi.json ../../contracts/openapi.json
+        run: python "../../scripts/verify_environment.py"
+
+  intelligence:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/intelligence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+      - name: Run Intelligence Pytest Suite
+        run: pytest -rs

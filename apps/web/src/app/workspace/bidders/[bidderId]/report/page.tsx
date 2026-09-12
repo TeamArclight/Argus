@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { 
@@ -23,7 +23,7 @@ export default function ReportPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadReport = async () => {
+  const loadReport = useCallback(async () => {
     if (!bidderId) return;
     setLoading(true);
     setError(null);
@@ -54,11 +54,11 @@ export default function ReportPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [bidderId, isDemo, isAuthenticated]);
 
   useEffect(() => {
     loadReport();
-  }, [bidderId, isDemo, isAuthenticated]);
+  }, [loadReport]);
 
   const handlePrint = () => {
     window.print();

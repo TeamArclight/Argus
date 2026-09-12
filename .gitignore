@@ -36,3 +36,7 @@ data/uploads/
 candidate_openapi.json
 services/api/candidate_openapi.json
 
+# Playwright
+test-results/
+playwright-report/
+

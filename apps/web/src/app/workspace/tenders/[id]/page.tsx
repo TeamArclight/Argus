@@ -1,15 +1,15 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { 
-  FileText, Users, CheckCircle, AlertTriangle, XCircle, 
-  Clock, Plus, ArrowLeft, RefreshCw, Sparkles, AlertCircle
+  FileText, Sparkles, Plus, CheckCircle, AlertTriangle, Clock, 
+  ArrowLeft, RefreshCw, Users, AlertCircle, XCircle
 } from "lucide-react";
 import { api } from "@/services/api";
 import { demoStore, DemoTender } from "@/services/demo-store";
-import { BidderRead, RequirementRead } from "@/services/types";
+import { TenderRead, BidderRead, TenderRequirementRead } from "@/services/types";
 import { RequirementAddModal } from "@/components/ui/RequirementAddModal";
 import { JobProgressDrawer } from "@/components/ui/JobProgressDrawer";
 import { SessionRequired } from "@/components/ui/SessionRequired";
@@ -20,12 +20,12 @@ export default function TenderDetailPage() {
   const id = params?.id as string;
   const { isAuthenticated, isDemoPreview } = useAuth();
 
-  const [tender, setTender] = useState<DemoTender | null>(null);
+  const [tender, setTender] = useState<TenderRead | null>(null);
   const [bidders, setBidders] = useState<BidderRead[]>([]);
-  const [requirements, setRequirements] = useState<RequirementRead[]>([]);
+  const [requirements, setRequirements] = useState<TenderRequirementRead[]>([]);
+  const [activeTab, setActiveTab] = useState<"bidders" | "requirements">("bidders");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"bidders" | "requirements">("bidders");
 
   // Modals & Drawers
   const [showAddReq, setShowAddReq] = useState(false);
@@ -45,7 +45,7 @@ export default function TenderDetailPage() {
   const storedDemoTender = id ? demoStore.getTender(id) : null;
   const isDemo = isDemoPreview || Boolean(storedDemoTender);
 
-  const loadTenderData = async () => {
+  const loadTenderData = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     setError(null);
@@ -85,11 +85,11 @@ export default function TenderDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, isDemo, isAuthenticated]);
 
   useEffect(() => {
     loadTenderData();
-  }, [id, isDemo, isAuthenticated]);
+  }, [loadTenderData]);
 
   const handleExtractRequirements = async () => {
     if (!id) return;
@@ -321,19 +321,19 @@ export default function TenderDetailPage() {
       </div>
 
       {/* Attached RFP Document Banner */}
-      {tender?.attached_file && (
+      {(tender as DemoTender)?.attached_file && (
         <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <FileText className="w-8 h-8 text-indigo-400 flex-shrink-0" />
             <div>
               <div className="flex items-center gap-2">
-                <h4 className="text-sm font-semibold text-white font-mono">{tender.attached_file.filename}</h4>
+                <h4 className="text-sm font-semibold text-white font-mono">{(tender as DemoTender).attached_file?.filename}</h4>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950 text-amber-300 border border-amber-800/60 font-bold">
                   SYNTHETIC DEMO DATA
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-mono mt-0.5">
-                {(tender.attached_file.size_bytes / 1024 / 1024).toFixed(2)} MB • {tender.attached_file.content_type} • Uploaded {new Date(tender.attached_file.uploaded_at).toLocaleDateString()}
+                {(((tender as DemoTender).attached_file?.size_bytes ?? 0) / 1024 / 1024).toFixed(2)} MB • {(tender as DemoTender).attached_file?.content_type} • Uploaded {new Date((tender as DemoTender).attached_file?.uploaded_at ?? 0).toLocaleDateString()}
               </p>
             </div>
           </div>

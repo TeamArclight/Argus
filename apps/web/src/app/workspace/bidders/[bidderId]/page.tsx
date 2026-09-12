@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { 
@@ -12,6 +12,7 @@ import { demoStore, DemoBidderDocument } from "@/services/demo-store";
 import { BidderRead, VerificationResultRead, ComplianceMatrixRow } from "@/services/types";
 import { JobProgressDrawer } from "@/components/ui/JobProgressDrawer";
 import { SessionRequired } from "@/components/ui/SessionRequired";
+import { MismatchDetailModal, MismatchDetailItem } from "@/components/ui/MismatchDetailModal";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function BidderDetailPage() {
@@ -39,10 +40,14 @@ export default function BidderDetailPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccessMessage, setUploadSuccessMessage] = useState<string | null>(null);
 
+  // Mismatch & Risk Explainability Modal State
+  const [mismatchModalOpen, setMismatchModalOpen] = useState(false);
+  const [selectedDocForMismatch, setSelectedDocForMismatch] = useState<DemoBidderDocument | null>(null);
+
   const storedDemoBidder = bidderId ? demoStore.getBidder(bidderId) : null;
   const isDemo = isDemoPreview || Boolean(storedDemoBidder);
 
-  const loadBidderData = async () => {
+  const loadBidderData = useCallback(async () => {
     if (!bidderId) return;
     setLoading(true);
     setError(null);
@@ -92,11 +97,11 @@ export default function BidderDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [bidderId, isDemo, isAuthenticated]);
 
   useEffect(() => {
     loadBidderData();
-  }, [bidderId, isDemo, isAuthenticated]);
+  }, [loadBidderData]);
 
   const handleRunVerification = async () => {
     if (!bidderId) return;
@@ -510,9 +515,17 @@ export default function BidderDetailPage() {
                           {factsCount > 0 ? `${factsCount} Facts Extracted` : '0 Facts'}
                         </span>
                         {doc.mismatches && doc.mismatches.length > 0 && (
-                          <div className="mt-1 text-[11px] text-amber-400">
-                            {doc.mismatches.length} mismatch(es) detected
-                          </div>
+                          <button
+                            onClick={() => {
+                              setSelectedDocForMismatch(doc);
+                              setMismatchModalOpen(true);
+                            }}
+                            className="mt-1 text-[11px] text-amber-400 hover:text-amber-300 underline font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Inspect field, claimed vs verified values, and explanation"
+                          >
+                            <AlertTriangle className="w-3 h-3 text-amber-400 flex-shrink-0" />
+                            <span>{doc.mismatches.length} mismatch(es) detected → View Details</span>
+                          </button>
                         )}
                       </td>
                       <td className="px-5 py-3 text-xs text-zinc-400 whitespace-nowrap">{formattedDate}</td>
@@ -564,6 +577,17 @@ export default function BidderDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Mismatch & Risk Signal Detail Modal */}
+      <MismatchDetailModal
+        isOpen={mismatchModalOpen}
+        onClose={() => {
+          setMismatchModalOpen(false);
+          setSelectedDocForMismatch(null);
+        }}
+        documentFilename={selectedDocForMismatch?.filename}
+        mismatches={selectedDocForMismatch?.mismatches as unknown as MismatchDetailItem[] || []}
+      />
 
       {/* Job Progress Drawer */}
       {activeJobId && (

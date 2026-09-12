@@ -16,7 +16,6 @@ import type {
   HumanDecisionCreate,
   HumanDecisionRead,
   IntegrationsHealthResponse,
-  JobEventRead,
   JobRead,
   JobStage,
   JobStatus,
@@ -334,13 +333,6 @@ export const apiClient = {
     const demoJob = demoStore.getJob(jobId);
     if (demoJob) return demoJob;
     return request<JobRead>(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
-  },
-
-  async getJobEvents(jobId: string, afterSeq?: number): Promise<JobEventRead[]> {
-    const demoEvents = demoStore.getJobEvents(jobId);
-    if (demoEvents.length > 0) return demoEvents;
-    const query = afterSeq !== undefined ? `?after_seq=${afterSeq}` : '';
-    return request<JobEventRead[]>(`/api/v1/jobs/${encodeURIComponent(jobId)}/events${query}`);
   },
 
   getJobEventSourceUrl(jobId: string, afterSeq?: number): string {

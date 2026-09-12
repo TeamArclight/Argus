@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { 
@@ -34,7 +34,7 @@ export default function HumanReviewPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!bidderId) return;
     setLoading(true);
     setError(null);
@@ -91,11 +91,11 @@ export default function HumanReviewPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [bidderId, isDemo, isAuthenticated]);
 
   useEffect(() => {
     loadData();
-  }, [bidderId, isDemo, isAuthenticated]);
+  }, [loadData]);
 
   const handleSubmitDecision = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -7,7 +7,8 @@
     "dev:token": "python ../../services/api/scripts/generate_dev_token.py --user-id argus-local-demo-officer --role PROCUREMENT_OFFICER --name \"Demo Procurement Officer\" --email \"demo.procurement@argus.local\"",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "lucide-react": "^1.43.0",
@@ -17,6 +18,7 @@
     "react-dom": "19.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "20.16.5",
     "@types/react": "19.2.1",
     "@types/react-dom": "19.2.0",
