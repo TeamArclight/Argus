@@ -316,7 +316,22 @@ class BidVerificationService:
                 )
                 .all()
             )
-            requirements_schema = [TenderRequirementRead.model_validate(r) for r in requirements_db]
+            # Ensure compliance engine only evaluates canonical distinct requirements
+            seen_rule_signatures: set[str] = set()
+            canonical_requirements = []
+            for r in requirements_db:
+                c_k = (r.clause or "").strip().lower()
+                r_type = str(r.requirement_type.value if hasattr(r.requirement_type, "value") else r.requirement_type).upper()
+                r_field = (r.field or "").strip().lower()
+                r_op = str(r.operator.value if hasattr(r.operator, "value") else r.operator).upper()
+                r_val = str(r.expected_value).strip().lower()
+                sig = f"{c_k}::{r_type}::{r_field}::{r_op}::{r_val}"
+                if sig in seen_rule_signatures:
+                    continue
+                seen_rule_signatures.add(sig)
+                canonical_requirements.append(r)
+
+            requirements_schema = [TenderRequirementRead.model_validate(r) for r in canonical_requirements]
             rules_hash = ComplianceEngine.compute_rules_hash(requirements_schema)
             run.rule_version = f"{ComplianceEngine.ENGINE_VERSION}:{rules_hash[:8]}"
 

@@ -297,7 +297,7 @@ async def process_tender(
             IdempotencyService.complete(db, record, status.HTTP_200_OK, res_payload)
             return job
 
-        # Non-destructive reprocessing: preserve all existing requirements (approved and unapproved)
+        # Canonical requirement idempotency: protect approved requirements and prevent duplicates
         existing_reqs = (
             db.query(TenderRequirement)
             .filter(TenderRequirement.tender_id == id)
@@ -307,43 +307,80 @@ async def process_tender(
         def _norm_val(v: Any) -> str:
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 return str(float(v))
+            if isinstance(v, str):
+                return v.strip().lower()
             return str(v)
 
-        # Build comprehensive lookup key for deduplication
-        existing_keys = {
-            (
-                r.clause,
-                r.requirement_type.value if hasattr(r.requirement_type, "value") else str(r.requirement_type),
-                r.field,
-                r.operator.value if hasattr(r.operator, "value") else str(r.operator),
-                _norm_val(r.expected_value),
-                r.unit or "",
-                bool(r.mandatory),
-                r.document_id,
-            )
-            for r in existing_reqs
-        }
+        def _clause_key(c: str | None) -> str:
+            return (c or "").strip().lower()
+
+        def _semantic_sig(req_type: Any, field_name: str | None, op: Any, exp_val: Any) -> tuple:
+            t = req_type.value if hasattr(req_type, "value") else str(req_type)
+            o = op.value if hasattr(op, "value") else str(op)
+            f = (field_name or "").strip().lower()
+            return (t.upper(), f, o.upper(), _norm_val(exp_val))
+
+        # Index existing requirements
+        approved_clauses: dict[str, TenderRequirement] = {}
+        approved_sigs: dict[tuple, TenderRequirement] = {}
+        approved_type_clauses: dict[tuple, TenderRequirement] = {}
+
+        unapproved_clauses: dict[str, TenderRequirement] = {}
+        unapproved_sigs: dict[tuple, TenderRequirement] = {}
+        unapproved_type_clauses: dict[tuple, TenderRequirement] = {}
+
+        for r in existing_reqs:
+            c_k = _clause_key(r.clause)
+            sig = _semantic_sig(r.requirement_type, r.field, r.operator, r.expected_value)
+            t_str = r.requirement_type.value if hasattr(r.requirement_type, "value") else str(r.requirement_type)
+            tc_sig = (c_k, t_str.upper()) if c_k else None
+
+            if r.is_approved:
+                if c_k:
+                    approved_clauses[c_k] = r
+                approved_sigs[sig] = r
+                if tc_sig:
+                    approved_type_clauses[tc_sig] = r
+            else:
+                if c_k and c_k not in unapproved_clauses:
+                    unapproved_clauses[c_k] = r
+                if sig not in unapproved_sigs:
+                    unapproved_sigs[sig] = r
+                if tc_sig and tc_sig not in unapproved_type_clauses:
+                    unapproved_type_clauses[tc_sig] = r
 
         new_count = 0
         for item in ai_result.data:
             req_obj = TenderRequirementCreate.model_validate(item)
-            
-            req_type_str = req_obj.requirement_type.value if hasattr(req_obj.requirement_type, "value") else str(req_obj.requirement_type)
-            op_str = req_obj.operator.value if hasattr(req_obj.operator, "value") else str(req_obj.operator)
-            item_key = (
-                req_obj.clause,
-                req_type_str,
-                req_obj.field,
-                op_str,
-                _norm_val(req_obj.expected_value),
-                req_obj.unit or "",
-                bool(req_obj.mandatory),
-                doc.id,
-            )
+            c_k = _clause_key(req_obj.clause)
+            sig = _semantic_sig(req_obj.requirement_type, req_obj.field, req_obj.operator, req_obj.expected_value)
+            t_str = req_obj.requirement_type.value if hasattr(req_obj.requirement_type, "value") else str(req_obj.requirement_type)
+            tc_sig = (c_k, t_str.upper()) if c_k else None
 
-            if item_key in existing_keys:
+            # 1. Protect approved requirements!
+            # If this requirement or clause has already been approved by an officer, do not duplicate or mutate.
+            if (c_k and c_k in approved_clauses) or (sig in approved_sigs) or (tc_sig and tc_sig in approved_type_clauses):
                 continue
 
+            # 2. Check if an unapproved candidate already exists (update in-place, do not duplicate)
+            existing_unapproved = None
+            if tc_sig and tc_sig in unapproved_type_clauses:
+                existing_unapproved = unapproved_type_clauses[tc_sig]
+            elif sig in unapproved_sigs:
+                existing_unapproved = unapproved_sigs[sig]
+            elif c_k and c_k in unapproved_clauses:
+                existing_unapproved = unapproved_clauses[c_k]
+
+            if existing_unapproved:
+                # Refresh unapproved candidate non-destructively
+                existing_unapproved.confidence = max(existing_unapproved.confidence or 0.0, req_obj.confidence or 0.0)
+                if req_obj.source_text and not existing_unapproved.source_text:
+                    existing_unapproved.source_text = req_obj.source_text
+                if req_obj.source_page and not existing_unapproved.source_page:
+                    existing_unapproved.source_page = req_obj.source_page
+                continue
+
+            # 3. New unique candidate requirement
             db_req = TenderRequirement(
                 tender_id=id,
                 document_id=doc.id,
@@ -358,11 +395,15 @@ async def process_tender(
                 source_text=req_obj.source_text,
                 confidence=req_obj.confidence,
                 requires_verification=req_obj.requires_verification,
-                is_approved=False,  # All AI-extracted candidate requirements default to unapproved
+                is_approved=False,
                 metadata_json=req_obj.metadata_json or {},
             )
             db.add(db_req)
-            existing_keys.add(item_key)
+            if c_k:
+                unapproved_clauses[c_k] = db_req
+            unapproved_sigs[sig] = db_req
+            if tc_sig:
+                unapproved_type_clauses[tc_sig] = db_req
             new_count += 1
 
         job.status = JobStatus.COMPLETED
@@ -412,7 +453,32 @@ def get_tender_requirements(
     if approved_only:
         query = query.filter(TenderRequirement.is_approved == True)
     requirements = query.all()
-    return requirements
+
+    # Canonical deduplication prioritizing approved requirements
+    sorted_reqs = sorted(requirements, key=lambda r: (not r.is_approved, r.created_at or datetime.min))
+    seen_sigs: set[str] = set()
+    canonical: list[TenderRequirement] = []
+    for r in sorted_reqs:
+        c_k = (r.clause or "").strip().lower()
+        t_k = str(r.requirement_type.value if hasattr(r.requirement_type, "value") else r.requirement_type).upper()
+        f_k = (r.field or "").strip().lower()
+        o_k = str(r.operator.value if hasattr(r.operator, "value") else r.operator).upper()
+        v_k = str(r.expected_value).strip().lower()
+
+        clause_type_sig = f"{c_k}::{t_k}" if c_k else None
+        semantic_sig = f"{t_k}::{f_k}::{o_k}::{v_k}"
+
+        if clause_type_sig and clause_type_sig in seen_sigs:
+            continue
+        if semantic_sig in seen_sigs:
+            continue
+
+        if clause_type_sig:
+            seen_sigs.add(clause_type_sig)
+        seen_sigs.add(semantic_sig)
+        canonical.append(r)
+
+    return canonical
 
 
 @router.post("/{tender_id}/requirements", response_model=TenderRequirementRead, status_code=status.HTTP_201_CREATED)

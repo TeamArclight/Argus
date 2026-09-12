@@ -173,6 +173,9 @@ export function useJobStream({
                   });
 
                   if (isTerminalStatus(eventData.status)) {
+                    isTerminalRef.current = true;
+                    setIsStreaming(false);
+                    abortController.abort();
                     checkJobStatus(jobId!);
                   }
                 }

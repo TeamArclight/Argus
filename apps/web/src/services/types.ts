@@ -35,13 +35,31 @@ export interface RawAuditEvent {
   created_at?: string;
 }
 
+export type AuditEventCategory =
+  | 'PIPELINE'
+  | 'PROVIDER_HEALTH'
+  | 'AUTH'
+  | 'DOCUMENT'
+  | 'TENDER'
+  | 'BIDDER'
+  | 'COMPLIANCE'
+  | 'HUMAN_DECISION'
+  | 'SYSTEM'
+  | 'OTHER';
+
 export interface AuditEventRead {
   id?: string;
   job_id?: string | null;
-  stage?: JobStage | null;
-  status?: JobStatus | null;
+  stage?: JobStage | string | null;
+  status?: JobStatus | string | null;
   progress?: number | null;
   message?: string | null;
   timestamp?: string | null;
+  event_category?: AuditEventCategory;
+  pipeline_stage?: string | null;
+  action?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  actor?: string | null;
 }
 

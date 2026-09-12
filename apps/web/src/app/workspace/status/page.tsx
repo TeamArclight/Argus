@@ -4,12 +4,13 @@ import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { 
   Activity, CheckCircle, AlertTriangle, XCircle, RefreshCw, 
-  Server, Cpu, HelpCircle, AlertCircle, ShieldCheck, Database, FileText, KeyRound, ArrowLeft, Sparkles
+  Server, Cpu, HelpCircle, AlertCircle, ShieldCheck, Database, FileText, KeyRound, ArrowLeft, Sparkles, Info
 } from "lucide-react";
 import { apiClient, ApiError } from "@/services/api";
 import { ProviderHealthRead, IntegrationsHealthResponse, AuthenticatedPrincipal } from "@/types/api";
 import { MOCK_PROVIDERS, MOCK_INTEGRATIONS_HEALTH } from "@/services/mock-data";
 import { useAuth } from "@/hooks/useAuth";
+import { resolveProviderStatus } from "@/lib/provider-status";
 
 export default function StatusPage() {
   const { isDemoPreview, isAuthenticated, principal } = useAuth();
@@ -94,6 +95,8 @@ export default function StatusPage() {
 
   const getStatusBadge = (status: string) => {
     switch (status.toUpperCase()) {
+      case "LIVE_CONNECTED":
+      case "LIVE / CONNECTED":
       case "CONNECTED":
       case "AUTHENTICATED":
       case "AVAILABLE":
@@ -101,17 +104,20 @@ export default function StatusPage() {
       case "OK":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-            <CheckCircle className="w-3 h-3" /> CONNECTED
+            <CheckCircle className="w-3 h-3" /> LIVE / CONNECTED
           </span>
         );
       case "CONFIGURED":
+      case "CONFIGURED_UNVERIFIED":
+      case "CONFIGURED / UNVERIFIED":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">
-            <CheckCircle className="w-3 h-3" /> CONFIGURED
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20 font-mono">
+            <Info className="w-3 h-3" /> CONFIGURED / UNVERIFIED
           </span>
         );
       case "DEMO":
       case "SYNTHETIC":
+      case "DEMO_SYNTHETIC":
       case "DEMO / SYNTHETIC":
       case "DEMO_MODE":
         return (
@@ -122,16 +128,17 @@ export default function StatusPage() {
       case "NOT_AUTHENTICATED":
       case "NOT AUTHENTICATED":
       case "UNCONFIGURED":
+      case "UNAVAILABLE":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700 font-mono">
             <AlertTriangle className="w-3 h-3" /> {status.replace("_", " ")}
           </span>
         );
-      case "UNAVAILABLE":
       case "OFFLINE":
       case "ERROR":
       case "DOWN":
       case "DEGRADED":
+      case "FAILED":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">
             <XCircle className="w-3 h-3" /> {status}
@@ -147,45 +154,14 @@ export default function StatusPage() {
     }
   };
 
-  // Resolve integration provider state truthfully
+  // Resolve integration provider state truthfully using shared canonical resolver
   const getProviderState = (key: keyof IntegrationsHealthResponse): { status: string; detail: string } => {
-    if (isDemoPreview) {
-      return { status: "DEMO / SYNTHETIC", detail: "Synthetic demo adapter active (Demo preview mode)" };
-    }
-    if (!integrations || !integrations[key]) {
-      return { status: "UNKNOWN", detail: "Telemetry query unverified or offline" };
-    }
-    const item = integrations[key];
-
-    if (item.mode === "DEMO") {
-      return { status: "DEMO / SYNTHETIC", detail: item.details || "Deterministic SIH demo provider active (DEMO mode)" };
-    }
-
-    if (item.mode === "LIVE") {
-      if (!item.configured) {
-        return { status: "UNCONFIGURED", detail: item.details || `Live ${key.toUpperCase()} provider unconfigured; missing API URL or credentials` };
-      }
-      return { status: "UNKNOWN", detail: item.details || `Live authorized ${key.toUpperCase()} API gateway configured; operational health UNKNOWN until active ping` };
-    }
-
-    if (item.mode === "DOCUMENT") {
-      if (item.configured) {
-        return { status: "CONFIGURED", detail: item.details || `Document extraction mode active for ${key.toUpperCase()}; external connection UNKNOWN` };
-      }
-      return { status: "UNCONFIGURED", detail: item.details || `Document processing mode unconfigured for ${key.toUpperCase()}` };
-    }
-
-    if (item.mode === "PORTAL_CACHED") {
-      if (item.configured) {
-        return { status: "CONFIGURED", detail: item.details || `Portal cached dataset mode active for ${key.toUpperCase()}` };
-      }
-      return { status: "UNCONFIGURED", detail: item.details || `Portal cache unconfigured for ${key.toUpperCase()}` };
-    }
-
-    if (item.configured) {
-      return { status: "CONFIGURED", detail: item.details || "Configured mode active" };
-    }
-    return { status: "UNCONFIGURED", detail: item.details || "Adapter credentials not present" };
+    const item = integrations ? integrations[key] : null;
+    const resolved = resolveProviderStatus(item, isDemoPreview);
+    return {
+      status: resolved.label,
+      detail: resolved.description,
+    };
   };
 
   return (
@@ -462,10 +438,7 @@ export default function StatusPage() {
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {providers.map((p, idx) => {
-                  let displayHealth: string = p.operational_health;
-                  if (p.configured_mode === "DEMO") {
-                    displayHealth = "DEMO / SYNTHETIC";
-                  }
+                  const statusInfo = resolveProviderStatus(p, isDemoPreview);
                   return (
                     <tr key={idx} className="hover:bg-slate-800/30 transition-colors">
                       <td className="px-4 py-3 font-semibold text-white">{p.provider_identifier}</td>
@@ -476,8 +449,8 @@ export default function StatusPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-slate-300">{p.configuration_status}</td>
-                      <td className="px-4 py-3">{getStatusBadge(displayHealth)}</td>
-                      <td className="px-4 py-3 text-slate-400">{p.notes || "—"}</td>
+                      <td className="px-4 py-3">{getStatusBadge(statusInfo.label)}</td>
+                      <td className="px-4 py-3 text-slate-400">{statusInfo.description || p.notes || "—"}</td>
                     </tr>
                   );
                 })}

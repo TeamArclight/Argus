@@ -19,6 +19,7 @@ export default function AuditPage() {
 
   // Filters
   const [searchTerm, setSearchTerm] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [stageFilter, setStageFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
@@ -52,7 +53,11 @@ export default function AuditPage() {
   }, [loadAuditEvents]);
 
   const filteredEvents = events.filter((ev) => {
-    if (stageFilter !== "ALL" && ev.stage !== stageFilter) return false;
+    if (categoryFilter !== "ALL" && ev.event_category !== categoryFilter) return false;
+    if (stageFilter !== "ALL") {
+      const evStage = ev.pipeline_stage || ev.stage;
+      if (evStage !== stageFilter) return false;
+    }
     if (statusFilter !== "ALL") {
       const s = (ev.status || "").toUpperCase();
       if (statusFilter === "SUCCESS" && s !== "SUCCESS" && s !== "COMPLETED") return false;
@@ -62,21 +67,45 @@ export default function AuditPage() {
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       const msgMatch = ev.message?.toLowerCase().includes(q);
-      const stageMatch = ev.stage?.toLowerCase().includes(q);
+      const stageMatch = (ev.pipeline_stage || ev.stage)?.toLowerCase().includes(q);
       const jobMatch = ev.job_id?.toLowerCase().includes(q);
-      if (!msgMatch && !stageMatch && !jobMatch) return false;
+      const actionMatch = ev.action?.toLowerCase().includes(q);
+      const entityMatch = ev.entity_id?.toLowerCase().includes(q) || ev.entity_type?.toLowerCase().includes(q);
+      const actorMatch = ev.actor?.toLowerCase().includes(q);
+      if (!msgMatch && !stageMatch && !jobMatch && !actionMatch && !entityMatch && !actorMatch) return false;
     }
     return true;
   });
 
   const formatTimestamp = (ts?: string | null) => {
-    if (!ts || ts === "—") return "—";
+    if (!ts || ts === "—" || ts === "undefined" || ts === "null") return "Time unavailable";
     try {
       const d = new Date(ts);
-      if (isNaN(d.getTime())) return ts;
+      if (isNaN(d.getTime())) return "Time unavailable";
       return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
     } catch {
-      return ts;
+      return "Time unavailable";
+    }
+  };
+
+  const getCategoryBadge = (category?: string) => {
+    switch (category) {
+      case 'PROVIDER_HEALTH':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/80 text-amber-300 border border-amber-800/60">PROVIDER</span>;
+      case 'COMPLIANCE':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-800/60">COMPLIANCE</span>;
+      case 'PIPELINE':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-950/80 text-blue-300 border border-blue-800/60">PIPELINE</span>;
+      case 'HUMAN_DECISION':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">DECISION</span>;
+      case 'TENDER':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-950/80 text-purple-300 border border-purple-800/60">TENDER</span>;
+      case 'BIDDER':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800/60">BIDDER</span>;
+      case 'AUTH':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-800/60">AUTH</span>;
+      default:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-400 border border-zinc-700">{category || 'EVENT'}</span>;
     }
   };
 
@@ -150,9 +179,25 @@ export default function AuditPage() {
           <div className="flex items-center gap-2">
             <Filter className="w-3.5 h-3.5 text-zinc-400" />
             <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
+            >
+              <option value="ALL">All Categories</option>
+              <option value="PIPELINE">Pipeline Execution</option>
+              <option value="PROVIDER_HEALTH">Provider Health</option>
+              <option value="COMPLIANCE">Compliance Engine</option>
+              <option value="TENDER">Tender Governance</option>
+              <option value="BIDDER">Bidder Management</option>
+              <option value="DOCUMENT">Document Lifecycle</option>
+              <option value="HUMAN_DECISION">Human Decisions</option>
+              <option value="AUTH">Authentication</option>
+              <option value="SYSTEM">System</option>
+            </select>
+            <select
               value={stageFilter}
               onChange={(e) => setStageFilter(e.target.value)}
-              className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-blue-500"
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
             >
               <option value="ALL">All Stages</option>
               <option value="UPLOAD">UPLOAD</option>
@@ -163,16 +208,17 @@ export default function AuditPage() {
               <option value="COMPLIANCE">COMPLIANCE</option>
               <option value="RISK_ANALYSIS">RISK_ANALYSIS</option>
               <option value="REPORTING">REPORTING</option>
+              <option value="SYSTEM / PROVIDER">SYSTEM / PROVIDER</option>
             </select>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-blue-500"
+              className="px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
             >
               <option value="ALL">All Statuses</option>
-              <option value="SUCCESS">SUCCESS</option>
+              <option value="SUCCESS">SUCCESS / COMPLETED</option>
               <option value="RUNNING">RUNNING</option>
-              <option value="FAILED">FAILED</option>
+              <option value="FAILED">FAILED / ERROR</option>
             </select>
           </div>
         </div>
@@ -201,40 +247,53 @@ export default function AuditPage() {
             <thead>
               <tr className="border-b border-zinc-800 text-xs text-zinc-400 font-semibold bg-zinc-950/40">
                 <th className="px-5 py-3">Timestamp</th>
-                <th className="px-5 py-3">Pipeline Stage</th>
+                <th className="px-5 py-3">Category / Stage</th>
                 <th className="px-5 py-3">Job ID</th>
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3">Progress</th>
-                <th className="px-5 py-3">Message</th>
+                <th className="px-5 py-3">Message & Action Traces</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
-              {filteredEvents.map((ev, i) => (
-                <tr key={ev.id || i} className="hover:bg-zinc-800/30 transition-colors">
-                  <td className="px-5 py-3 font-mono text-xs text-zinc-400 whitespace-nowrap">
-                    {formatTimestamp(ev.timestamp)}
-                  </td>
-                  <td className="px-5 py-3">
-                    {ev.stage && String(ev.stage) !== "—" ? (
-                      <span className="px-2 py-0.5 rounded text-xs font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
-                        {ev.stage}
-                      </span>
-                    ) : (
-                      <span className="text-zinc-500 font-mono text-xs">—</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 font-mono text-xs text-zinc-500 truncate max-w-[120px]" title={ev.job_id ?? undefined}>
-                    {ev.job_id || "—"}
-                  </td>
-                  <td className="px-5 py-3">{getStatusBadge(ev.status)}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-blue-400">
-                    {ev.progress != null ? `${ev.progress}%` : "—"}
-                  </td>
-                  <td className="px-5 py-3 text-xs text-zinc-300">
-                    {ev.message || "—"}
-                  </td>
-                </tr>
-              ))}
+              {filteredEvents.map((ev, i) => {
+                const stageDisplay = ev.pipeline_stage || ev.stage;
+                return (
+                  <tr key={ev.id || i} className="hover:bg-zinc-800/30 transition-colors">
+                    <td className="px-5 py-3 font-mono text-xs text-zinc-400 whitespace-nowrap">
+                      {formatTimestamp(ev.timestamp)}
+                    </td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        {getCategoryBadge(ev.event_category)}
+                        {stageDisplay && String(stageDisplay) !== "—" ? (
+                          <span className="px-2 py-0.5 rounded text-xs font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                            {stageDisplay}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-500 font-mono text-xs">—</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 font-mono text-xs text-zinc-500 truncate max-w-[120px]" title={ev.job_id ?? undefined}>
+                      {ev.job_id || "—"}
+                    </td>
+                    <td className="px-5 py-3">{getStatusBadge(ev.status)}</td>
+                    <td className="px-5 py-3 font-mono text-xs text-blue-400">
+                      {ev.progress != null ? `${ev.progress}%` : "—"}
+                    </td>
+                    <td className="px-5 py-3 text-xs text-zinc-300">
+                      <div>{ev.message || "—"}</div>
+                      {(ev.action || ev.entity_type) && (
+                        <div className="text-[11px] font-mono text-zinc-500 mt-0.5">
+                          {ev.action}
+                          {ev.entity_type ? ` • ${ev.entity_type}:${ev.entity_id}` : ''}
+                          {ev.actor ? ` • actor:${ev.actor}` : ''}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

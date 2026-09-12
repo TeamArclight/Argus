@@ -29,7 +29,7 @@ import type {
   TenderRequirementRead,
   VerificationResultRead,
 } from '@/types/api';
-import type { AuditEventRead, RawAuditEvent } from '@/services/types';
+import type { AuditEventCategory, AuditEventRead, RawAuditEvent } from '@/services/types';
 import { demoStore } from './demo-store';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
@@ -565,14 +565,52 @@ export function normalizeAuditEvent(raw: RawAuditEvent | Record<string, unknown>
   // 6. EVENT ID HANDLING (Constraint 2 - No random generated IDs):
   const id = typeof rawRecord.id === 'string' && rawRecord.id.trim() !== '' ? rawRecord.id : undefined;
 
+  // 7. CANONICAL CATEGORY & SYSTEM / PROVIDER ISOLATION:
+  const actionName = rawRecord.action || '';
+  let eventCategory: AuditEventCategory = 'OTHER';
+  let pipelineStage: string | null = stage ? String(stage) : null;
+
+  if (actionName.startsWith('PROVIDER_') || actionName.startsWith('SYSTEM_PROVIDER')) {
+    eventCategory = 'PROVIDER_HEALTH';
+    pipelineStage = 'SYSTEM / PROVIDER';
+    jobId = null;
+    progress = null;
+  } else if (actionName.startsWith('AUTH_') || actionName.includes('SESSION') || actionName.includes('LOGIN')) {
+    eventCategory = 'AUTH';
+  } else if (actionName.startsWith('DOCUMENT_')) {
+    eventCategory = 'DOCUMENT';
+  } else if (actionName.startsWith('TENDER_REQUIREMENT_')) {
+    eventCategory = 'TENDER';
+  } else if (actionName.startsWith('TENDER_')) {
+    eventCategory = 'TENDER';
+  } else if (actionName.startsWith('BIDDER_')) {
+    eventCategory = 'BIDDER';
+  } else if (actionName.startsWith('COMPLIANCE_')) {
+    eventCategory = 'COMPLIANCE';
+    pipelineStage = 'COMPLIANCE';
+  } else if (actionName.startsWith('HUMAN_DECISION_')) {
+    eventCategory = 'HUMAN_DECISION';
+    pipelineStage = 'REPORTING';
+  } else if (actionName.startsWith('JOB_') || actionName.includes('EXTRACTION') || actionName.includes('VERIFICATION')) {
+    eventCategory = 'PIPELINE';
+  } else if (actionName.startsWith('SYSTEM_')) {
+    eventCategory = 'SYSTEM';
+  }
+
   return {
     id,
     job_id: jobId,
-    stage,
+    stage: pipelineStage as JobStage | string | null,
     status,
     progress,
     message,
     timestamp: timestampStr,
+    event_category: eventCategory,
+    pipeline_stage: pipelineStage,
+    action: actionName || null,
+    entity_type: rawRecord.entity_type || null,
+    entity_id: rawRecord.entity_id || null,
+    actor: rawRecord.actor_id || rawRecord.actor_role || null,
   };
 }
 

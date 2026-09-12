@@ -15,6 +15,36 @@ import { JobProgressDrawer } from "@/components/ui/JobProgressDrawer";
 import { SessionRequired } from "@/components/ui/SessionRequired";
 import { useAuth } from "@/hooks/useAuth";
 
+function deduplicateRequirements(reqs: TenderRequirementRead[]): TenderRequirementRead[] {
+  const sorted = [...reqs].sort((a, b) => (b.is_approved ? 1 : 0) - (a.is_approved ? 1 : 0));
+  const seenSigs = new Set<string>();
+  const canonical: TenderRequirementRead[] = [];
+
+  for (const r of sorted) {
+    const clauseKey = (r.clause || "").trim().toLowerCase();
+    const typeKey = (r.requirement_type || "").trim().toUpperCase();
+    const fieldKey = (r.field || "").trim().toLowerCase();
+    const opKey = (r.operator || "").trim().toUpperCase();
+    const valKey = String(r.expected_value ?? "").trim().toLowerCase();
+
+    const clauseTypeSig = clauseKey ? `${clauseKey}::${typeKey}` : null;
+    const semanticSig = `${typeKey}::${fieldKey}::${opKey}::${valKey}`;
+
+    if (clauseTypeSig && seenSigs.has(clauseTypeSig)) {
+      continue;
+    }
+    if (seenSigs.has(semanticSig)) {
+      continue;
+    }
+
+    if (clauseTypeSig) seenSigs.add(clauseTypeSig);
+    seenSigs.add(semanticSig);
+    canonical.push(r);
+  }
+
+  return canonical;
+}
+
 export default function TenderDetailPage() {
   const params = useParams();
   const id = params?.id as string;
@@ -78,7 +108,7 @@ export default function TenderDetailPage() {
       ]);
       setTender(tData);
       setBidders(bData);
-      setRequirements(rData);
+      setRequirements(isDemo ? rData : deduplicateRequirements(rData));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to load tender details from backend.";
       setError(msg);

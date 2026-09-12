@@ -24,6 +24,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TenderCreateModal } from '@/components/ui/TenderCreateModal';
 import { SessionRequired } from '@/components/ui/SessionRequired';
 import { useAuth } from '@/hooks/useAuth';
+import { resolveProviderStatus } from '@/lib/provider-status';
 
 export default function WorkspaceDashboard() {
   const { isAuthenticated, isDemoPreview, enableDemoPreview } = useAuth();
@@ -183,6 +184,17 @@ export default function WorkspaceDashboard() {
   const disqualifiedCount = isDemoPreview ? demoStats.disqualifiedBidders : liveStats.disqualifiedBidders;
   const pendingCount = isDemoPreview ? demoStats.pendingReviewBidders : liveStats.pendingReviewBidders;
 
+  const isInactiveTender = (status?: string) => {
+    const s = (status || '').toUpperCase();
+    return ['FAILED', 'CANCELLED', 'ARCHIVED'].includes(s);
+  };
+  const activeTendersCount = isDemoPreview
+    ? (demoStats.activeTenders || tenders.length)
+    : tenders.filter((t) => !isInactiveTender(t.status)).length;
+  const failedTendersCount = isDemoPreview
+    ? 0
+    : tenders.filter((t) => (t.status || '').toUpperCase() === 'FAILED').length;
+
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-12">
       {/* Top Banner */}
@@ -234,8 +246,12 @@ export default function WorkspaceDashboard() {
             <FileText className="w-4 h-4 text-indigo-400" />
           </div>
           <div className="mt-3">
-            <span className="text-3xl font-bold text-white font-mono">{tenders.length}</span>
-            <p className="text-[11px] text-slate-500 mt-1 font-mono">Managed tenders in workspace</p>
+            <span className="text-3xl font-bold text-white font-mono">{activeTendersCount}</span>
+            <p className="text-[11px] text-slate-500 mt-1 font-mono">
+              {failedTendersCount > 0
+                ? `Managed tenders in workspace (${failedTendersCount} failed)`
+                : 'Managed tenders in workspace'}
+            </p>
           </div>
         </div>
 
@@ -352,22 +368,24 @@ export default function WorkspaceDashboard() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {providers.map((p, idx) => (
-              <div
-                key={idx}
-                className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1.5"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs font-semibold text-slate-200">{p.provider_identifier}</span>
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      p.operational_health === 'AVAILABLE' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
-                    }`}
-                  />
+            {providers.map((p, idx) => {
+              const statusInfo = resolveProviderStatus(p, isDemoPreview);
+              return (
+                <div
+                  key={idx}
+                  className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-xs font-semibold text-slate-200">{p.provider_identifier}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${statusInfo.dotClass}`} />
+                      <span className="text-[10px] font-mono text-slate-400 font-semibold">{statusInfo.label}</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-tight font-mono">{statusInfo.description || p.notes || p.operational_health}</p>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight font-mono">{p.notes || p.operational_health}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

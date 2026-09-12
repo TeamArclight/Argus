@@ -15,14 +15,28 @@ export interface JobProgressDrawerProps {
   onComplete?: () => void;
 }
 
-const STAGES: { key: JobStage; label: string }[] = [
-  { key: 'UPLOAD', label: 'Upload' },
-  { key: 'OCR', label: 'OCR & Parsing' },
-  { key: 'EXTRACTION', label: 'Extraction' },
-  { key: 'VERIFICATION', label: 'Verification' },
-  { key: 'COMPLIANCE', label: 'Compliance' },
-  { key: 'REPORTING', label: 'Reporting' },
+const STAGES: { key: JobStage; label: string; weight: number }[] = [
+  { key: 'UPLOAD', label: 'Upload', weight: 15 },
+  { key: 'OCR', label: 'Parsing / OCR', weight: 30 },
+  { key: 'EXTRACTION', label: 'Extraction', weight: 50 },
+  { key: 'VERIFICATION', label: 'Verification', weight: 70 },
+  { key: 'COMPLIANCE', label: 'Compliance', weight: 85 },
+  { key: 'REPORTING', label: 'Reporting', weight: 100 },
 ];
+
+function formatEventTimestamp(ev: JobEventRead): string {
+  const raw = ev.timestamp || (ev as Record<string, unknown>).created_at || (ev as Record<string, unknown>).occurred_at;
+  if (!raw || typeof raw !== 'string' || raw === '—' || raw === 'null' || raw === 'undefined') {
+    return 'Time unavailable';
+  }
+  try {
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return 'Time unavailable';
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return 'Time unavailable';
+  }
+}
 
 export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
   isOpen,
@@ -46,14 +60,27 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
   if (!isOpen) return null;
 
   const currentStage = job?.current_stage ?? stream.currentStage ?? 'UPLOAD';
-  const progressPercent = job?.progress ?? stream.progress ?? (events.length > 0 ? events[events.length - 1].progress : 0);
   const isFailed = job?.status === 'FAILED' || stream.isFailed;
   const isCompleted = job?.status === 'COMPLETED' || stream.isCompleted;
-  // REVIEW_REQUIRED is a terminal job state, not an in-flight one. Without this
-  // the drawer pulsed indefinitely on the outcome the workflow produces most
-  // often (audit finding H-2).
   const isReviewRequired = job?.status === 'REVIEW_REQUIRED' || stream.isReviewRequired;
   const isTerminal = isCompleted || isFailed || isReviewRequired;
+
+  const stageIdx = STAGES.findIndex((st) => st.key === currentStage);
+  const activeStageWeight = stageIdx >= 0 ? STAGES[stageIdx].weight : 15;
+
+  let progressPercent = 0;
+  if (isCompleted) {
+    progressPercent = 100;
+  } else if (isFailed) {
+    // If failed, do NOT display 100%. Set progress percentage to the stage where it failed.
+    progressPercent = activeStageWeight;
+  } else if (isReviewRequired) {
+    progressPercent = activeStageWeight;
+  } else {
+    // In-flight: use max of reported progress or stage baseline
+    const reported = job?.progress ?? stream.progress ?? (events.length > 0 ? events[events.length - 1].progress : 0);
+    progressPercent = Math.max(reported, activeStageWeight);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
@@ -61,9 +88,26 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
         {/* Header */}
         <div className="p-5 border-b border-slate-800 flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <span className={`w-2.5 h-2.5 rounded-full ${isCompleted ? 'bg-emerald-500' : isFailed ? 'bg-rose-500' : isReviewRequired ? 'bg-amber-500' : 'bg-indigo-500 animate-pulse'}`} />
               <h2 className="text-base font-semibold text-slate-100">{title}</h2>
+              {isFailed ? (
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950 border border-rose-800/60 text-rose-400">
+                  FAILED
+                </span>
+              ) : isCompleted ? (
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950 border border-emerald-800/60 text-emerald-400">
+                  COMPLETED
+                </span>
+              ) : isReviewRequired ? (
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950 border border-amber-800/60 text-amber-400">
+                  REVIEW REQUIRED
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-950 border border-indigo-800/60 text-indigo-400 animate-pulse">
+                  RUNNING
+                </span>
+              )}
             </div>
             <p className="text-xs font-mono text-slate-400 mt-1">
               Job ID: {job?.id ?? jobId ?? 'Pending...'}
@@ -95,21 +139,51 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
           {/* Stage Badges */}
           <div className="grid grid-cols-6 gap-1 pt-2">
             {STAGES.map((s, idx) => {
-              const stageIdx = STAGES.findIndex((st) => st.key === currentStage);
-              const isPast = stageIdx > idx || isCompleted;
-              const isCurrent = stageIdx === idx && !isTerminal;
+              let dotContent: React.ReactNode = idx + 1;
+              let dotClass = 'bg-slate-800 text-slate-500 border border-slate-700';
+
+              if (isFailed) {
+                if (idx < stageIdx) {
+                  dotContent = '✓';
+                  dotClass = 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+                } else if (idx === stageIdx) {
+                  dotContent = '✕';
+                  dotClass = 'bg-rose-500/20 text-rose-400 border border-rose-500/50 font-bold';
+                } else {
+                  dotContent = idx + 1;
+                  dotClass = 'bg-slate-800 text-slate-500 border border-slate-700';
+                }
+              } else if (isCompleted) {
+                dotContent = '✓';
+                dotClass = 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+              } else if (isReviewRequired) {
+                if (idx < stageIdx) {
+                  dotContent = '✓';
+                  dotClass = 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+                } else if (idx === stageIdx) {
+                  dotContent = '!';
+                  dotClass = 'bg-amber-500/20 text-amber-400 border border-amber-500/50 font-bold animate-pulse';
+                } else {
+                  dotContent = idx + 1;
+                  dotClass = 'bg-slate-800 text-slate-500 border border-slate-700';
+                }
+              } else {
+                if (idx < stageIdx) {
+                  dotContent = '✓';
+                  dotClass = 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+                } else if (idx === stageIdx && !isTerminal) {
+                  dotContent = idx + 1;
+                  dotClass = 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/60 animate-pulse';
+                } else {
+                  dotContent = idx + 1;
+                  dotClass = 'bg-slate-800 text-slate-500 border border-slate-700';
+                }
+              }
+
               return (
                 <div key={s.key} className="flex flex-col items-center gap-1">
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                      isPast
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                        : isCurrent
-                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/60 animate-pulse'
-                        : 'bg-slate-800 text-slate-500 border border-slate-700'
-                    }`}
-                  >
-                    {isPast ? '✓' : idx + 1}
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${dotClass}`}>
+                    {dotContent}
                   </div>
                   <span className="text-[10px] text-slate-400 text-center truncate w-full">
                     {s.label}
@@ -137,7 +211,7 @@ export const JobProgressDrawer: React.FC<JobProgressDrawerProps> = ({
               <div key={ev.id || i} className="p-2.5 rounded bg-slate-950/60 border border-slate-800/60 space-y-1">
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="text-indigo-400 font-semibold">{ev.stage}</span>
-                  <span className="text-slate-500">{new Date(ev.timestamp).toLocaleTimeString()}</span>
+                  <span className="text-slate-500">{formatEventTimestamp(ev)}</span>
                 </div>
                 <p className="text-slate-200">{ev.message}</p>
               </div>

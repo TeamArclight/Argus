@@ -141,9 +141,80 @@ async def execute_job(job_id: str, job_type: str, target_id: str) -> None:
             # 3. Persist results in a clean database transaction
             db = SessionLocal()
             try:
+                existing_reqs = (
+                    db.query(TenderRequirement)
+                    .filter(TenderRequirement.tender_id == target_id)
+                    .all()
+                )
+
+                def _norm_val(v: Any) -> str:
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        return str(float(v))
+                    if isinstance(v, str):
+                        return v.strip().lower()
+                    return str(v)
+
+                def _clause_key(c: str | None) -> str:
+                    return (c or "").strip().lower()
+
+                def _semantic_sig(req_type: Any, field_name: str | None, op: Any, exp_val: Any) -> tuple:
+                    t = req_type.value if hasattr(req_type, "value") else str(req_type)
+                    o = op.value if hasattr(op, "value") else str(op)
+                    f = (field_name or "").strip().lower()
+                    return (t.upper(), f, o.upper(), _norm_val(exp_val))
+
+                approved_clauses = {}
+                approved_sigs = {}
+                unapproved_clauses = {}
+                unapproved_sigs = {}
+
+                for r in existing_reqs:
+                    c_k = _clause_key(r.clause)
+                    sig = _semantic_sig(r.requirement_type, r.field, r.operator, r.expected_value)
+                    t_str = r.requirement_type.value if hasattr(r.requirement_type, "value") else str(r.requirement_type)
+                    tc_sig = (c_k, t_str.upper()) if c_k else None
+
+                    if r.is_approved:
+                        if c_k:
+                            approved_clauses[c_k] = r
+                        approved_sigs[sig] = r
+                        if tc_sig:
+                            approved_sigs[tc_sig] = r
+                    else:
+                        if c_k and c_k not in unapproved_clauses:
+                            unapproved_clauses[c_k] = r
+                        if sig not in unapproved_sigs:
+                            unapproved_sigs[sig] = r
+                        if tc_sig and tc_sig not in unapproved_sigs:
+                            unapproved_sigs[tc_sig] = r
+
                 for req_dict in (result.data or []):
+                    c_k = _clause_key(req_dict.get("clause"))
+                    sig = _semantic_sig(req_dict["requirement_type"], req_dict["field"], req_dict["operator"], req_dict["expected_value"])
+                    t_str = req_dict["requirement_type"].value if hasattr(req_dict["requirement_type"], "value") else str(req_dict["requirement_type"])
+                    tc_sig = (c_k, t_str.upper()) if c_k else None
+
+                    # Protect approved requirements
+                    if (c_k and c_k in approved_clauses) or (sig in approved_sigs) or (tc_sig and tc_sig in approved_sigs):
+                        continue
+
+                    existing_unapproved = None
+                    if tc_sig and tc_sig in unapproved_sigs:
+                        existing_unapproved = unapproved_sigs[tc_sig]
+                    elif sig in unapproved_sigs:
+                        existing_unapproved = unapproved_sigs[sig]
+                    elif c_k and c_k in unapproved_clauses:
+                        existing_unapproved = unapproved_clauses[c_k]
+
+                    if existing_unapproved:
+                        existing_unapproved.confidence = max(existing_unapproved.confidence or 0.0, req_dict.get("confidence", 1.0))
+                        if req_dict.get("source_text") and not existing_unapproved.source_text:
+                            existing_unapproved.source_text = req_dict.get("source_text")
+                        continue
+
                     req = TenderRequirement(
                         tender_id=target_id,
+                        document_id=doc_id,
                         clause=req_dict["clause"],
                         requirement_type=req_dict["requirement_type"],
                         field=req_dict["field"],
@@ -159,6 +230,11 @@ async def execute_job(job_id: str, job_type: str, target_id: str) -> None:
                         metadata_json=req_dict.get("metadata_json", {}),
                     )
                     db.add(req)
+                    if c_k:
+                        unapproved_clauses[c_k] = req
+                    unapproved_sigs[sig] = req
+                    if tc_sig:
+                        unapproved_sigs[tc_sig] = req
 
                 job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
                 if job:
