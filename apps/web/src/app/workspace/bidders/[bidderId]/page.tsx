@@ -8,7 +8,7 @@ import {
   Clock, ArrowLeft, RefreshCw, Sparkles, FileText, CheckSquare, Upload, AlertCircle
 } from "lucide-react";
 import { api } from "@/services/api";
-import { demoStore } from "@/services/demo-store";
+import { demoStore, DemoBidderDocument } from "@/services/demo-store";
 import { BidderRead, VerificationResultRead, ComplianceMatrixRow } from "@/services/types";
 import { JobProgressDrawer } from "@/components/ui/JobProgressDrawer";
 import { SessionRequired } from "@/components/ui/SessionRequired";
@@ -22,6 +22,8 @@ export default function BidderDetailPage() {
   const [bidder, setBidder] = useState<BidderRead | null>(null);
   const [verifications, setVerifications] = useState<VerificationResultRead[]>([]);
   const [matrix, setMatrix] = useState<ComplianceMatrixRow[]>([]);
+  const [documents, setDocuments] = useState<DemoBidderDocument[]>([]);
+  const [complianceStale, setComplianceStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,9 +32,12 @@ export default function BidderDetailPage() {
   const [triggeringVerify, setTriggeringVerify] = useState(false);
   const [triggeringCompliance, setTriggeringCompliance] = useState(false);
 
-  // Upload file state
+  // Upload file state & UX stages
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [uploadStage, setUploadStage] = useState<'IDLE' | 'UPLOADING' | 'PROCESSING' | 'PROCESSED'>('IDLE');
+  const [hasUploadedOnce, setHasUploadedOnce] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccessMessage, setUploadSuccessMessage] = useState<string | null>(null);
 
   const storedDemoBidder = bidderId ? demoStore.getBidder(bidderId) : null;
   const isDemo = isDemoPreview || Boolean(storedDemoBidder);
@@ -53,8 +58,13 @@ export default function BidderDetailPage() {
       setBidder(match);
       const demoVerifications = demoStore.getDemoState().verifications[bidderId] || [];
       const demoMatrix = demoStore.getComplianceMatrix(bidderId);
+      const demoDocs = demoStore.getBidderDocuments(bidderId);
+      const isStale = demoStore.isComplianceStale(bidderId);
+
       setVerifications(demoVerifications);
       setMatrix(demoMatrix?.rows || []);
+      setDocuments(demoDocs);
+      setComplianceStale(isStale);
       setLoading(false);
       return;
     }
@@ -65,14 +75,17 @@ export default function BidderDetailPage() {
     }
 
     try {
-      const [bData, vData, mData] = await Promise.all([
+      const [bData, vData, mData, dData] = await Promise.all([
         api.getBidder(bidderId),
         api.getVerificationResults(bidderId),
-        api.getComplianceMatrix(bidderId)
+        api.getComplianceMatrix(bidderId),
+        api.getBidderDocuments(bidderId).catch(() => []),
       ]);
       setBidder(bData);
       setVerifications(vData);
       setMatrix(mData);
+      setDocuments(dData as DemoBidderDocument[]);
+      setComplianceStale(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to load bidder records.";
       setError(msg);
@@ -126,6 +139,7 @@ export default function BidderDetailPage() {
       try {
         const matrixResult = await demoStore.evaluateCompliance(bidderId);
         setMatrix(matrixResult.rows || []);
+        setComplianceStale(false);
         await loadBidderData();
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to trigger compliance evaluation.");
@@ -153,24 +167,57 @@ export default function BidderDetailPage() {
     const file = e.target.files?.[0];
     if (!file || !bidderId) return;
     setUploadingDoc(true);
+    setUploadStage('UPLOADING');
     setError(null);
+    setUploadError(null);
+    setUploadSuccessMessage(null);
 
     if (isDemo) {
-      setTimeout(async () => {
-        setUploadingDoc(false);
+      try {
+        setUploadStage('PROCESSING');
+        const result = await demoStore.uploadBidderDocument(bidderId, file);
+        setUploadStage('PROCESSED');
+        setHasUploadedOnce(true);
+
+        let msg = `Document processed successfully. ${result.factsCount} bidder facts extracted.`;
+        if (result.enrichedCount > 0) {
+          msg += ` ${result.enrichedCount} bidder identifier updated from document evidence.`;
+        }
+        setUploadSuccessMessage(msg);
         await loadBidderData();
-      }, 500);
+      } catch (err: unknown) {
+        setUploadError(err instanceof Error ? err.message : 'Failed to process document.');
+        setUploadStage('IDLE');
+      } finally {
+        setUploadingDoc(false);
+        if (e.target) e.target.value = '';
+        setTimeout(() => {
+          setUploadStage('IDLE');
+        }, 3000);
+      }
       return;
     }
 
     try {
       await api.uploadBidderDocument(bidderId, file, 'FINANCIAL_STATEMENT');
+      setUploadStage('PROCESSED');
+      setHasUploadedOnce(true);
       await loadBidderData();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to upload document.');
+      setUploadError(err instanceof Error ? err.message : 'Failed to upload document.');
     } finally {
       setUploadingDoc(false);
+      setUploadStage('IDLE');
+      if (e.target) e.target.value = '';
     }
+  };
+
+  const getUploadButtonText = () => {
+    if (uploadStage === 'UPLOADING') return "Uploading...";
+    if (uploadStage === 'PROCESSING') return "Processing Document...";
+    if (uploadStage === 'PROCESSED') return "Processed";
+    if (hasUploadedOnce || documents.length > 0) return "Upload Another Document";
+    return "Upload Document";
   };
 
   const getStatusBadge = (status: string) => {
@@ -256,7 +303,7 @@ export default function BidderDetailPage() {
           <div className="flex items-center gap-3 flex-wrap">
             <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg cursor-pointer transition-colors border border-zinc-700">
               <Upload className="w-4 h-4" />
-              {uploadingDoc ? "Uploading..." : "Upload Document"}
+              {getUploadButtonText()}
               <input type="file" onChange={handleDocUpload} disabled={uploadingDoc} className="hidden" />
             </label>
             <button
@@ -286,6 +333,40 @@ export default function BidderDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Compliance Stale Banner */}
+      {complianceStale && (
+        <div className="p-4 rounded-xl bg-amber-950/30 border border-amber-500/40 text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg shadow-amber-950/20">
+          <div className="flex items-start sm:items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5 sm:mt-0" />
+            <div>
+              <p className="font-semibold text-amber-100 text-sm">Compliance Outdated</p>
+              <p className="text-xs text-amber-300/90 mt-0.5">
+                New evidence has been uploaded since the last compliance evaluation. Re-evaluate compliance to include the latest evidence.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleRunCompliance}
+            disabled={triggeringCompliance}
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap self-end sm:self-center disabled:opacity-50"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            {triggeringCompliance ? "Evaluating..." : "Re-evaluate Compliance"}
+          </button>
+        </div>
+      )}
+
+      {/* Upload Success Feedback */}
+      {uploadSuccessMessage && (
+        <div className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/40 text-emerald-200 text-sm flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <span>{uploadSuccessMessage}</span>
+          </div>
+          <button onClick={() => setUploadSuccessMessage(null)} className="text-xs underline hover:text-emerald-100 ml-3">Dismiss</button>
+        </div>
+      )}
 
       {(error || uploadError) && (
         <div className="p-4 rounded-xl bg-rose-950/20 border border-rose-800/40 text-rose-300 text-sm flex items-center justify-between">
@@ -366,6 +447,82 @@ export default function BidderDetailPage() {
             <p className="font-mono text-sm text-zinc-200 mt-1">{bidder?.udyam_number || "Not Registered"}</p>
           </div>
         </div>
+      </div>
+
+      {/* Uploaded Bidder Documents */}
+      <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-zinc-200 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-blue-400" />
+            Uploaded Bidder Documents ({documents.length})
+          </h2>
+          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-lg cursor-pointer transition-colors border border-zinc-700">
+            <Upload className="w-3.5 h-3.5" />
+            {getUploadButtonText()}
+            <input type="file" onChange={handleDocUpload} disabled={uploadingDoc} className="hidden" />
+          </label>
+        </div>
+
+        {documents.length === 0 ? (
+          <div className="p-8 text-center rounded-xl bg-zinc-950/40 border border-zinc-800/60">
+            <FileText className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+            <p className="text-sm text-zinc-400">No documents uploaded for this bidder yet.</p>
+            <p className="text-xs text-zinc-500 mt-1">Upload a bidder dossier or PDF document to extract statutory facts and verify compliance.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-zinc-800/80 bg-zinc-950/40">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800 text-xs text-zinc-400 font-semibold bg-zinc-950/60">
+                  <th className="px-5 py-3">Document Filename</th>
+                  <th className="px-5 py-3">Document Type</th>
+                  <th className="px-5 py-3">File Size</th>
+                  <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3">Facts Extracted</th>
+                  <th className="px-5 py-3">Uploaded</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/60">
+                {documents.map((doc, idx) => {
+                  const factsCount = doc.facts_count ?? (doc.extracted_facts ? doc.extracted_facts.length : (doc.facts ? doc.facts.length : 0));
+                  const formattedSize = doc.size_bytes ? (doc.size_bytes > 1048576 ? `${(doc.size_bytes / 1048576).toFixed(1)} MB` : `${Math.round(doc.size_bytes / 1024)} KB`) : '—';
+                  const formattedDate = doc.created_at ? new Date(doc.created_at).toLocaleString() : '—';
+                  return (
+                    <tr key={doc.id || idx} className="hover:bg-zinc-800/30 transition-colors">
+                      <td className="px-5 py-3 font-medium text-zinc-200">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                          <span className="font-mono text-xs truncate max-w-[240px]" title={doc.filename}>{doc.filename}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+                          {doc.document_type || 'FINANCIAL_STATEMENT'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-xs text-zinc-400">{formattedSize}</td>
+                      <td className="px-5 py-3">
+                        {getStatusBadge(doc.status || 'PROCESSED')}
+                      </td>
+                      <td className="px-5 py-3 text-xs">
+                        <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          {factsCount > 0 ? `${factsCount} Facts Extracted` : '0 Facts'}
+                        </span>
+                        {doc.mismatches && doc.mismatches.length > 0 && (
+                          <div className="mt-1 text-[11px] text-amber-400">
+                            {doc.mismatches.length} mismatch(es) detected
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-xs text-zinc-400 whitespace-nowrap">{formattedDate}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Statutory Verification Results */}

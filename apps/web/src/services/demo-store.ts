@@ -18,8 +18,11 @@ import type {
   JobEventRead,
   JobStage,
   JobStatus,
+  DocumentRead,
+  FactRead,
 } from '@/types/api';
 import type { AuditEventRead } from '@/services/types';
+import { parsePdfText, extractBidderFacts, inferDocumentType, computeSha256 } from './pdf-parser';
 
 export interface DemoAttachedFile {
   filename: string;
@@ -32,6 +35,29 @@ export interface DemoTender extends TenderRead {
   attached_file?: DemoAttachedFile | null;
 }
 
+export interface DemoBidderDocument extends DocumentRead {
+  status?: 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'FAILED';
+  facts_count?: number;
+  extracted_facts?: FactRead[];
+  mismatches?: Array<{
+    field: string;
+    existing_value: string;
+    extracted_value: string;
+  }>;
+}
+
+export interface UploadBidderDocumentResult {
+  document: DemoBidderDocument;
+  extractedFacts: FactRead[];
+  enrichedCount: number;
+  mismatches: Array<{
+    field: string;
+    existing_value: string;
+    extracted_value: string;
+  }>;
+  factsCount: number;
+}
+
 export interface DemoState {
   version?: number;
   tenders: DemoTender[];
@@ -42,6 +68,9 @@ export interface DemoState {
   humanDecisions: Record<string, HumanDecisionStatus>; // bidder_id -> decision
   auditEvents: AuditEventRead[];
   jobs: Record<string, JobRead>; // job_id -> job
+  bidderDocuments?: Record<string, DemoBidderDocument[]>; // bidder_id -> documents
+  extractedFacts?: Record<string, FactRead[]>; // bidder_id -> facts
+  complianceStale?: Record<string, boolean>; // bidder_id -> stale flag
 }
 
 const DEMO_STORAGE_KEY = 'argus_demo_store_v1';
@@ -588,6 +617,9 @@ const DEFAULT_DEMO_STATE: DemoState = {
     },
   ],
   jobs: {},
+  bidderDocuments: {},
+  extractedFacts: {},
+  complianceStale: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -662,6 +694,9 @@ function loadFromStorage(): DemoState {
       humanDecisions: parsed.humanDecisions && typeof parsed.humanDecisions === 'object' ? parsed.humanDecisions : DEFAULT_DEMO_STATE.humanDecisions,
       auditEvents: finalAuditEvents,
       jobs: sanitizedJobs,
+      bidderDocuments: parsed.bidderDocuments && typeof parsed.bidderDocuments === 'object' ? parsed.bidderDocuments : {},
+      extractedFacts: parsed.extractedFacts && typeof parsed.extractedFacts === 'object' ? parsed.extractedFacts : {},
+      complianceStale: parsed.complianceStale && typeof parsed.complianceStale === 'object' ? parsed.complianceStale : {},
     };
   } catch {
     return getDefaultState();
@@ -1008,6 +1043,408 @@ export const demoStore = {
   getVerifications(bidderId: string): VerificationResultRead[] {
     const state = loadFromStorage();
     return state.verifications[bidderId] || [];
+  },
+
+  getBidderDocuments(bidderId: string): DemoBidderDocument[] {
+    const state = loadFromStorage();
+    return state.bidderDocuments?.[bidderId] || [];
+  },
+
+  getBidderFacts(bidderId: string): FactRead[] {
+    const state = loadFromStorage();
+    return state.extractedFacts?.[bidderId] || [];
+  },
+
+  isComplianceStale(bidderId: string): boolean {
+    const state = loadFromStorage();
+    return Boolean(state.complianceStale?.[bidderId]);
+  },
+
+  async uploadBidderDocument(bidderId: string, file: File): Promise<UploadBidderDocumentResult> {
+    const bidder = this.getBidder(bidderId);
+    if (!bidder) {
+      throw new Error(`Bidder not found: ${bidderId}`);
+    }
+
+    const state = loadFromStorage();
+    if (!state.bidderDocuments) state.bidderDocuments = {};
+    if (!state.extractedFacts) state.extractedFacts = {};
+    if (!state.complianceStale) state.complianceStale = {};
+
+    const existingDocs = state.bidderDocuments[bidderId] || [];
+
+    // Read file bytes
+    const buffer = await file.arrayBuffer();
+    const sha256 = await computeSha256(buffer);
+
+    // 12. DUPLICATE DOCUMENT HANDLING
+    const isDuplicate = existingDocs.some((d) => d.sha256 === sha256);
+    if (isDuplicate) {
+      throw new Error(`Duplicate document detected: This exact document ("${file.name}") has already been uploaded for this bidder.`);
+    }
+
+    const now = new Date().toISOString();
+    const docId = `doc_demo_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const jobId = `job_doc_${docId}`;
+
+    // Audit Event 1: BIDDER_DOCUMENT_UPLOADED
+    const uploadEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_up`,
+      job_id: jobId,
+      stage: 'UPLOAD',
+      status: 'COMPLETED',
+      progress: 20,
+      message: `BIDDER_DOCUMENT_UPLOADED: Document "${file.name}" (${(file.size / 1024).toFixed(1)} KB) uploaded for bidder "${bidder.bidder_name}".`,
+      timestamp: now,
+    };
+    state.auditEvents = [uploadEvt, ...state.auditEvents];
+
+    // Audit Event 2: BIDDER_DOCUMENT_PROCESSING_STARTED
+    const procStartEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_start`,
+      job_id: jobId,
+      stage: 'PARSING',
+      status: 'RUNNING',
+      progress: 40,
+      message: `BIDDER_DOCUMENT_PROCESSING_STARTED: Starting text extraction and statutory fact identification for "${file.name}".`,
+      timestamp: new Date().toISOString(),
+    };
+    state.auditEvents = [procStartEvt, ...state.auditEvents];
+
+    // Parse PDF text client-side
+    let fullText = '';
+    let pages = [{ page: 1, text: '' }];
+    try {
+      if (file.name.toLowerCase().endsWith('.pdf') || file.type.includes('pdf')) {
+        const parsed = await parsePdfText(buffer);
+        fullText = parsed.fullText;
+        pages = parsed.pages;
+      } else {
+        const decoder = new TextDecoder('utf-8');
+        fullText = decoder.decode(buffer);
+        pages = [{ page: 1, text: fullText }];
+      }
+    } catch (parseErr: unknown) {
+      const parseErrMsg = parseErr instanceof Error ? parseErr.message : 'PDF text parsing failed';
+      const failEvt: AuditEventRead = {
+        id: `evt_${Date.now()}_fail`,
+        job_id: jobId,
+        stage: 'PARSING',
+        status: 'FAILED',
+        progress: 0,
+        message: `BIDDER_DOCUMENT_PARSING_FAILED: Could not parse text-layer from "${file.name}": ${parseErrMsg}`,
+        timestamp: new Date().toISOString(),
+      };
+      state.auditEvents = [failEvt, ...state.auditEvents];
+      saveToStorage(state);
+      throw new Error(`Failed to parse document text: ${parseErrMsg}`);
+    }
+
+    // Audit Event 3: BIDDER_DOCUMENT_PARSED
+    const parsedEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_parsed`,
+      job_id: jobId,
+      stage: 'PARSING',
+      status: 'RUNNING',
+      progress: 60,
+      message: `BIDDER_DOCUMENT_PARSED: Successfully parsed text-layer PDF "${file.name}" (${pages.length} pages, ${fullText.length} characters).`,
+      timestamp: new Date().toISOString(),
+    };
+    state.auditEvents = [parsedEvt, ...state.auditEvents];
+
+    // Extract facts
+    const candidates = extractBidderFacts({ numPages: pages.length, fullText, pages });
+    const docType = inferDocumentType(file.name, fullText);
+
+    const extractedFacts: FactRead[] = [];
+    const mismatches: Array<{ field: string; existing_value: string; extracted_value: string }> = [];
+    let enrichedCount = 0;
+
+    // Track profile enrichment changes
+    const enrichedFields: Partial<BidderRead> = {};
+
+    candidates.forEach((cand, idx) => {
+      const factId = `fact_${Date.now()}_${idx}`;
+      let reconStatus: 'MATCH' | 'ENRICHED' | 'MISMATCH' | 'NEW_DOCUMENT_FACT' = 'MATCH';
+
+      if (cand.field === 'company_name') {
+        const existingVal = bidder.bidder_name || '';
+        const normExisting = existingVal.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normExtracted = cand.value.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!existingVal || existingVal === 'Not Registered') {
+          enrichedFields.bidder_name = cand.value;
+          enrichedCount++;
+          reconStatus = 'ENRICHED';
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_enr_company`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_PROFILE_ENRICHED_FROM_DOCUMENT: Populated missing bidder company name with "${cand.value}".`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        } else if (normExisting === normExtracted || normExisting.includes(normExtracted) || normExtracted.includes(normExisting)) {
+          reconStatus = 'MATCH';
+        } else {
+          reconStatus = 'MISMATCH';
+          mismatches.push({ field: 'Company Name', existing_value: existingVal, extracted_value: cand.value });
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_mis_company`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_DOCUMENT_MISMATCH_DETECTED: Conflicting Company Name: claimed "${existingVal}" vs document "${cand.value}". Original preserved.`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        }
+      } else if (cand.field === 'gstin') {
+        const existingVal = bidder.gstin || '';
+        if (!existingVal || existingVal.trim() === 'Not Registered') {
+          enrichedFields.gstin = cand.value;
+          enrichedCount++;
+          reconStatus = 'ENRICHED';
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_enr_gstin`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_PROFILE_ENRICHED_FROM_DOCUMENT: Populated missing GSTIN with "${cand.value}".`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        } else if (existingVal.trim().toUpperCase() === cand.value.trim().toUpperCase()) {
+          reconStatus = 'MATCH';
+        } else {
+          reconStatus = 'MISMATCH';
+          mismatches.push({ field: 'GSTIN', existing_value: existingVal, extracted_value: cand.value });
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_mis_gstin`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_DOCUMENT_MISMATCH_DETECTED: Conflicting GSTIN: claimed "${existingVal}" vs document "${cand.value}". Original preserved.`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        }
+      } else if (cand.field === 'pan') {
+        const existingVal = bidder.pan || '';
+        if (!existingVal || existingVal.trim() === 'Not Registered') {
+          enrichedFields.pan = cand.value;
+          enrichedCount++;
+          reconStatus = 'ENRICHED';
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_enr_pan`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_PROFILE_ENRICHED_FROM_DOCUMENT: Populated missing PAN with "${cand.value}".`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        } else if (existingVal.trim().toUpperCase() === cand.value.trim().toUpperCase()) {
+          reconStatus = 'MATCH';
+        } else {
+          reconStatus = 'MISMATCH';
+          mismatches.push({ field: 'PAN', existing_value: existingVal, extracted_value: cand.value });
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_mis_pan`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_DOCUMENT_MISMATCH_DETECTED: Conflicting PAN: claimed "${existingVal}" vs document "${cand.value}". Original preserved.`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        }
+      } else if (cand.field === 'cin') {
+        const existingVal = bidder.cin || '';
+        if (!existingVal || existingVal.trim() === 'Not Registered') {
+          enrichedFields.cin = cand.value;
+          enrichedCount++;
+          reconStatus = 'ENRICHED';
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_enr_cin`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_PROFILE_ENRICHED_FROM_DOCUMENT: Populated missing CIN with "${cand.value}".`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        } else if (existingVal.trim().toUpperCase() === cand.value.trim().toUpperCase()) {
+          reconStatus = 'MATCH';
+        } else {
+          reconStatus = 'MISMATCH';
+          mismatches.push({ field: 'CIN', existing_value: existingVal, extracted_value: cand.value });
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_mis_cin`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_DOCUMENT_MISMATCH_DETECTED: Conflicting CIN: claimed "${existingVal}" vs document "${cand.value}". Original preserved.`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        }
+      } else if (cand.field === 'udyam_number') {
+        const existingVal = bidder.udyam_number || '';
+        if (!existingVal || existingVal.trim() === 'Not Registered') {
+          enrichedFields.udyam_number = cand.value;
+          enrichedCount++;
+          reconStatus = 'ENRICHED';
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_enr_udyam`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_PROFILE_ENRICHED_FROM_DOCUMENT: Populated missing UDYAM Number with "${cand.value}".`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        } else if (existingVal.trim().toUpperCase() === cand.value.trim().toUpperCase()) {
+          reconStatus = 'MATCH';
+        } else {
+          reconStatus = 'MISMATCH';
+          mismatches.push({ field: 'UDYAM Number', existing_value: existingVal, extracted_value: cand.value });
+          state.auditEvents = [
+            {
+              id: `evt_${Date.now()}_mis_udyam`,
+              job_id: jobId,
+              stage: 'EXTRACTION',
+              status: 'RUNNING',
+              progress: 80,
+              message: `BIDDER_DOCUMENT_MISMATCH_DETECTED: Conflicting UDYAM: claimed "${existingVal}" vs document "${cand.value}". Original preserved.`,
+              timestamp: new Date().toISOString(),
+            },
+            ...state.auditEvents,
+          ];
+        }
+      } else if (cand.field === 'bidder_reference') {
+        reconStatus = 'NEW_DOCUMENT_FACT';
+      }
+
+      // Audit Event 4: BIDDER_FACT_EXTRACTED
+      state.auditEvents = [
+        {
+          id: `evt_${Date.now()}_fact_${idx}`,
+          job_id: jobId,
+          stage: 'EXTRACTION',
+          status: 'RUNNING',
+          progress: 85,
+          message: `BIDDER_FACT_EXTRACTED: Extracted ${cand.label} (${cand.field}) = "${cand.value}" [${reconStatus}].`,
+          timestamp: new Date().toISOString(),
+        },
+        ...state.auditEvents,
+      ];
+
+      extractedFacts.push({
+        id: factId,
+        document_id: docId,
+        bidder_id: bidderId,
+        field: cand.field,
+        value: cand.value,
+        source_page: cand.sourcePage,
+        source_text: cand.sourceText,
+        confidence: cand.confidence,
+        metadata_json: {
+          provenance: 'DOCUMENT_DEMO_DATA',
+          source_document: file.name,
+          reconciliation_status: reconStatus,
+        } as unknown as Record<string, never>,
+        created_at: now,
+      });
+    });
+
+    const demoDoc: DemoBidderDocument = {
+      id: docId,
+      bidder_id: bidderId,
+      tender_id: bidder.tender_id,
+      filename: file.name,
+      document_type: docType,
+      content_type: file.type || 'application/pdf',
+      size_bytes: file.size,
+      sha256: sha256,
+      storage_uri: `demo://documents/${bidderId}/${file.name}`,
+      status: 'PROCESSED',
+      facts_count: extractedFacts.length,
+      extracted_facts: extractedFacts,
+      mismatches,
+      created_at: now,
+      metadata_json: {},
+    };
+
+    // Update bidder in state.bidders
+    for (const [tenderId, list] of Object.entries(state.bidders)) {
+      const idx = list.findIndex((b) => b.id === bidderId);
+      if (idx !== -1) {
+        const existing = list[idx];
+        const existingDocs = existing.documents || [];
+        state.bidders[tenderId][idx] = {
+          ...existing,
+          ...enrichedFields,
+          documents: [demoDoc, ...existingDocs],
+        };
+        break;
+      }
+    }
+
+    state.bidderDocuments[bidderId] = [demoDoc, ...(state.bidderDocuments[bidderId] || [])];
+    state.extractedFacts[bidderId] = [...extractedFacts, ...(state.extractedFacts[bidderId] || [])];
+
+    // 9. COMPLIANCE INVALIDATION: mark compliance stale without modifying humanDecisions
+    state.complianceStale[bidderId] = true;
+
+    // Audit Event 5: BIDDER_DOCUMENT_PROCESSING_COMPLETED
+    const compEvt: AuditEventRead = {
+      id: `evt_${Date.now()}_complete`,
+      job_id: jobId,
+      stage: 'EXTRACTION',
+      status: 'COMPLETED',
+      progress: 100,
+      message: `BIDDER_DOCUMENT_PROCESSING_COMPLETED: Finished processing "${file.name}". ${extractedFacts.length} facts extracted.${enrichedCount > 0 ? ` ${enrichedCount} profile identifier(s) enriched.` : ''}`,
+      timestamp: new Date().toISOString(),
+    };
+    state.auditEvents = [compEvt, ...state.auditEvents];
+
+    saveToStorage(state);
+
+    return {
+      document: demoDoc,
+      extractedFacts,
+      enrichedCount,
+      mismatches,
+      factsCount: extractedFacts.length,
+    };
   },
 
   createBidder(tenderId: string, data: BidderCreate): BidderRead {
@@ -1505,9 +1942,30 @@ export const demoStore = {
         };
       }
 
+      // UDYAM / MSME rule
+      if (type === 'MSME' || field.includes('udyam') || field.includes('msme')) {
+        const udyamVer = verifications.find((v) => v.field === 'udyam_number');
+        const isUdyamOk = (udyamVer && udyamVer.status === 'VERIFIED') || (Boolean(bidder.udyam_number) && bidder.udyam_number !== 'Not Registered');
+        return {
+          requirement_id: req.id,
+          clause: req.clause,
+          requirement_type: req.requirement_type,
+          field: req.field,
+          operator: req.operator,
+          expected_value: req.expected_value || 'MSME_REGISTERED',
+          unit: req.unit,
+          mandatory: req.mandatory,
+          status: isUdyamOk ? 'PASS' : (req.mandatory ? 'FAIL' : 'REVIEW_REQUIRED'),
+          reason_code: isUdyamOk ? 'EXACT_MATCH' : 'MISSING_DOCUMENT',
+          observed_value: isUdyamOk ? (bidder.udyam_number || 'MSME_REGISTERED') : 'NOT_REGISTERED',
+          evidence_ids: isUdyamOk ? [`ev_udyam_${bidderId}`] : [],
+          review_required: !isUdyamOk,
+        };
+      }
+
       // OEM Authorization / Custom certificate rule
       if (type === 'CUSTOM' || field.includes('oem') || field.includes('authorization') || field.includes('cert')) {
-        const hasDoc = bidder.documents && bidder.documents.length > 0;
+        const hasDoc = (bidder.documents && bidder.documents.length > 0) || (state.bidderDocuments?.[bidderId] && state.bidderDocuments[bidderId].length > 0);
         return {
           requirement_id: req.id,
           clause: req.clause,
@@ -1585,6 +2043,8 @@ export const demoStore = {
 
     if (!state.complianceMatrices) state.complianceMatrices = {};
     state.complianceMatrices[bidderId] = matrix;
+    if (!state.complianceStale) state.complianceStale = {};
+    state.complianceStale[bidderId] = false;
     saveToStorage(state);
 
     return new Promise((resolve) => {
@@ -1625,6 +2085,11 @@ export const demoStore = {
     state.auditEvents = [evt, ...state.auditEvents];
 
     saveToStorage(state);
+  },
+
+  getHumanDecision(bidderId: string): HumanDecisionStatus | null {
+    const state = loadFromStorage();
+    return state.humanDecisions[bidderId] || null;
   },
 
   getReport(bidderId: string): ReportRead | null {
