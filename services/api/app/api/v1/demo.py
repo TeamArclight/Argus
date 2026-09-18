@@ -675,64 +675,80 @@ async def _execute_demo_seed(
             # Log error but continue so partial failures do not halt overall scenario seed
             print(f"Warning: Demo verification workflow for bidder {actual_id} emitted error: {err}")
 
-    # Stage 4.5: RAG Ingest — index flagship tender into pgvector for authentic retrieval
-    # This is a BLOCKING call within the seed so that the demo is RAG-ready when seed returns.
+    # Stage 4.5: RAG Ingest — index all demo tenders into pgvector for authentic retrieval
     job.progress = 80
     db.commit()
 
-    flagship_tender_id = tender_id_map.get("tender_gem_2026_01", "tender_gem_2026_01")
-    tender_doc_storage_key = f"tenders/{flagship_tender_id}/tender_gem_2026_B_4521089.pdf"
-
-    rag_chunks_indexed = 0
-    rag_ingest_status = "NOT_ATTEMPTED"
     try:
         from app.services.rag_adapter import RAGServiceAdapter
         from app.schemas.canonical import RAGQueryRequest
         rag = RAGServiceAdapter()
-        ingest_result = await rag.ingest_document(
-            document_id="doc_tender_gem_2026_01",
-            title="GEM/2026/B/4521089 — IT Infrastructure Tender",
-            document_uri=tender_doc_storage_key,
-            document_type="TENDER",
-            tender_id=flagship_tender_id,
-            clause=None,
-            security_level="INTERNAL",
-        )
-        if ingest_result.get("success") and ingest_result.get("chunks_indexed", 0) > 0:
-            rag_chunks_indexed = ingest_result["chunks_indexed"]
-            rag_ingest_status = "COMPLETED"
-        else:
-            # Check if pgvector already has indexed chunks for this flagship tender
-            existing_check = await rag.retrieve(RAGQueryRequest(query="EMD", tender_id=flagship_tender_id, top_k=5))
-            if existing_check and existing_check.results and any("doc_tender_gem_2026_01" in (r.entity_id or "") for r in existing_check.results):
-                rag_chunks_indexed = len(existing_check.results)
-                rag_ingest_status = "COMPLETED"
-                logger.info(f"Demo RAG verified: {rag_chunks_indexed} existing chunks in pgvector")
-            else:
-                rag_chunks_indexed = 0
-                rag_ingest_status = f"FAILED:{ingest_result.get('error_code', 'UNKNOWN')}"
-        logger.info(
-            f"Demo RAG ingest: status={rag_ingest_status} chunks={rag_chunks_indexed} doc=doc_tender_gem_2026_01"
-        )
-    except Exception as rag_exc:
-        rag_ingest_status = f"ERROR:{rag_exc}"
-        logger.warning(f"Demo RAG ingest failed: {rag_exc}")
 
-    AuditLogger.log(
-        db,
-        action="RAG_INGEST",
-        entity_type="DOCUMENT",
-        entity_id="doc_tender_gem_2026_01",
-        actor_id=actor_id,
-        actor_role=actor_role,
-        payload={
-            "tender_id": flagship_tender_id,
-            "storage_key": tender_doc_storage_key,
-            "chunks_indexed": rag_chunks_indexed,
-            "status": rag_ingest_status,
-        },
-    )
-    db.commit()
+        demo_rag_targets = [
+            ("doc_tender_gem_2026_01", "tender_gem_2026_01", "tender_gem_2026_B_4521089.pdf", "tender/tender_gem_2026_B_4521089.pdf", "GEM/2026/B/4521089 — IT Infrastructure Tender"),
+            ("doc_tender_gem_2026_02", "tender_gem_2026_02", "meity_cloud_cluster_rfp.pdf", "tender/meity_cloud_cluster_rfp.pdf", "MeitY Cloud Cluster RFP"),
+            ("doc_tender_gem_2026_03", "tender_gem_2026_03", "seci_solar_grid_rfp.pdf", "tender/seci_solar_grid_rfp.pdf", "SECI Smart Solar Grid Micro-Inverter Deployment (Phase IV)"),
+        ]
+
+        for doc_id, t_key, fname, rel_path, title in demo_rag_targets:
+            t_id = tender_id_map.get(t_key, t_key)
+            t_storage_key = f"tenders/{t_id}/{fname}"
+            pdf_bytes = None
+            if pdf_root:
+                pdf_file = pdf_root / rel_path
+                if pdf_file.exists():
+                    pdf_bytes = pdf_file.read_bytes()
+            if not pdf_bytes and storage.file_exists(t_storage_key):
+                try:
+                    pdf_bytes = storage.read_file(t_storage_key)
+                except Exception:
+                    pass
+
+            rag_chunks_indexed = 0
+            rag_ingest_status = "NOT_ATTEMPTED"
+            try:
+                ingest_result = await rag.ingest_document(
+                    document_id=doc_id,
+                    title=title,
+                    document_uri=t_storage_key,
+                    document_type="TENDER",
+                    tender_id=t_id,
+                    clause=None,
+                    security_level="INTERNAL",
+                    file_bytes=pdf_bytes,
+                )
+                if ingest_result.get("success") and ingest_result.get("chunks_indexed", 0) > 0:
+                    rag_chunks_indexed = ingest_result["chunks_indexed"]
+                    rag_ingest_status = "COMPLETED"
+                else:
+                    existing_check = await rag.retrieve(RAGQueryRequest(query="EMD", tender_id=t_id, top_k=5))
+                    if existing_check and existing_check.results and any(doc_id in (r.entity_id or "") for r in existing_check.results):
+                        rag_chunks_indexed = len(existing_check.results)
+                        rag_ingest_status = "COMPLETED"
+                    else:
+                        rag_chunks_indexed = 0
+                        rag_ingest_status = f"FAILED:{ingest_result.get('error_code', 'UNKNOWN')}"
+            except Exception as rag_err:
+                rag_ingest_status = f"ERROR:{rag_err}"
+                logger.warning(f"Demo RAG ingest failed for {t_id}: {rag_err}")
+
+            AuditLogger.log(
+                db,
+                action="RAG_INGEST",
+                entity_type="DOCUMENT",
+                entity_id=doc_id,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                payload={
+                    "tender_id": t_id,
+                    "storage_key": t_storage_key,
+                    "chunks_indexed": rag_chunks_indexed,
+                    "status": rag_ingest_status,
+                },
+            )
+        db.commit()
+    except Exception as rag_exc:
+        logger.warning(f"Demo RAG batch ingest failed: {rag_exc}")
 
     # Stage 5: Finalization & Audit
     job.current_stage = JobStage.REPORTING

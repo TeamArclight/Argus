@@ -244,7 +244,7 @@ class BidVerificationService:
 
             verifications_schema: list[VerificationResultRead] = []
 
-            AuditLogger.create_entry(
+            AuditLogger.log_live(
                 self.db,
                 action="STATUTORY_CHECKS_STARTED",
                 entity_type="BIDDER",
@@ -264,7 +264,7 @@ class BidVerificationService:
             if bidder.gstin:
                 gst_res = await self.gst_adapter.verify(bidder_data, "general.gstin")
                 verifications_schema.append(gst_res)
-                AuditLogger.create_entry(
+                AuditLogger.log_live(
                     self.db,
                     action="GST_VERIFICATION_COMPLETED",
                     entity_type="BIDDER",
@@ -287,7 +287,7 @@ class BidVerificationService:
             if bidder.udyam_number:
                 udyam_res = await self.udyam_adapter.verify(bidder_data, "general.udyam")
                 verifications_schema.append(udyam_res)
-                AuditLogger.create_entry(
+                AuditLogger.log_live(
                     self.db,
                     action="UDYAM_VERIFICATION_COMPLETED",
                     entity_type="BIDDER",
@@ -310,7 +310,7 @@ class BidVerificationService:
             if bidder.cin:
                 mca_res = await self.mca_adapter.verify(bidder_data, "general.cin")
                 verifications_schema.append(mca_res)
-                AuditLogger.create_entry(
+                AuditLogger.log_live(
                     self.db,
                     action="CIN_VERIFICATION_COMPLETED",
                     entity_type="BIDDER",
@@ -333,7 +333,7 @@ class BidVerificationService:
             if bidder.pan or bidder.bidder_name:
                 epfo_res = await self.epfo_adapter.verify(bidder_data, "general.epfo")
                 verifications_schema.append(epfo_res)
-                AuditLogger.create_entry(
+                AuditLogger.log_live(
                     self.db,
                     action="EPFO_VERIFICATION_COMPLETED",
                     entity_type="BIDDER",
@@ -356,7 +356,7 @@ class BidVerificationService:
             if bidder.pan or bidder.bidder_name:
                 esic_res = await self.esic_adapter.verify(bidder_data, "general.esic")
                 verifications_schema.append(esic_res)
-                AuditLogger.create_entry(
+                AuditLogger.log_live(
                     self.db,
                     action="ESIC_VERIFICATION_COMPLETED",
                     entity_type="BIDDER",
@@ -378,7 +378,7 @@ class BidVerificationService:
             # Run Blacklist Verification
             blk_res = await self.blacklist_adapter.verify(bidder_data, "debarment.status")
             verifications_schema.append(blk_res)
-            AuditLogger.create_entry(
+            AuditLogger.log_live(
                 self.db,
                 action="BLACKLIST_VERIFICATION_COMPLETED",
                 entity_type="BIDDER",
@@ -397,7 +397,7 @@ class BidVerificationService:
                 },
             )
 
-            AuditLogger.create_entry(
+            AuditLogger.log_live(
                 self.db,
                 action="STATUTORY_CHECKS_COMPLETED",
                 entity_type="BIDDER",
@@ -480,7 +480,7 @@ class BidVerificationService:
             evaluations_schema: list[RuleEvaluationRead] = []
             risk_signals_schema: list[RiskSignalRead] = []
 
-            AuditLogger.create_entry(
+            AuditLogger.log_live(
                 self.db,
                 action="COMPLIANCE_EVALUATION_STARTED",
                 entity_type="BIDDER",
@@ -546,7 +546,7 @@ class BidVerificationService:
                     f"Required {req_op_str} {eval_res.expected_value} | Observed: {eval_res.observed_value or 'None'} -> {status_str}"
                 )
 
-                AuditLogger.create_entry(
+                AuditLogger.log_live(
                     self.db,
                     action="CLAUSE_EVALUATED",
                     entity_type="RULE_EVALUATION",

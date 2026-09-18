@@ -222,6 +222,8 @@ class RAGServiceAdapter:
         source_uri: str | None = None,
         clause: str | None = None,
         security_level: str = "INTERNAL",
+        file_bytes: bytes | None = None,
+        text: str | None = None,
     ) -> dict[str, Any]:
         """Ingests a parsed document into the intelligence service RAG index."""
         url = settings.ARGUS_INTELLIGENCE_RAG_INGEST_URL
@@ -247,7 +249,16 @@ class RAGServiceAdapter:
         if settings.ARGUS_INTELLIGENCE_API_KEY:
             headers["Authorization"] = f"Bearer {settings.ARGUS_INTELLIGENCE_API_KEY}"
 
-        payload = {
+        if file_bytes is None and document_uri:
+            try:
+                from app.storage.factory import get_storage_provider
+                storage = get_storage_provider()
+                if storage.file_exists(document_uri):
+                    file_bytes = storage.read_file(document_uri)
+            except Exception:
+                pass
+
+        payload: dict[str, Any] = {
             "document_id": document_id,
             "title": title,
             "document_uri": document_uri,
@@ -257,6 +268,11 @@ class RAGServiceAdapter:
             "clause": clause,
             "security_level": security_level,
         }
+        if file_bytes:
+            import base64
+            payload["file_bytes_base64"] = base64.b64encode(file_bytes).decode("ascii")
+        if text:
+            payload["text"] = text
 
         timeout = httpx.Timeout(settings.ARGUS_INTELLIGENCE_READ_TIMEOUT_SECONDS)
         try:

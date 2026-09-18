@@ -356,6 +356,7 @@ async def process_tender(
                 document_type="TENDER",
                 tender_id=id,
                 source_uri=doc.storage_uri,
+                file_bytes=file_bytes,
             )
             if rag_ingest_res.get("success"):
                 AuditLogger.log(

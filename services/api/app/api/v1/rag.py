@@ -1,6 +1,8 @@
 import re
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from app.db.session import get_db
 from app.auth.dependencies import get_current_principal
 from app.schemas.canonical import (
     AuthenticatedPrincipal,
@@ -20,8 +22,41 @@ rag_adapter = RAGServiceAdapter()
 async def query_rag_evidence(
     payload: RAGQueryRequest,
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
 ):
     response = await rag_adapter.retrieve(payload)
+    if not response.results and payload.tender_id:
+        try:
+            from app.models.domain import Document, DocumentType, Tender
+            from app.storage.factory import get_storage_provider
+            tdoc = db.query(Document).filter(
+                Document.tender_id == payload.tender_id,
+                Document.document_type == DocumentType.TENDER,
+            ).first()
+            if not tdoc:
+                t = db.query(Tender).filter(
+                    (Tender.id == payload.tender_id) | (Tender.tender_number == payload.tender_id)
+                ).first()
+                if t:
+                    tdoc = db.query(Document).filter(
+                        Document.tender_id == t.id,
+                        Document.document_type == DocumentType.TENDER,
+                    ).first()
+            if tdoc and tdoc.storage_uri:
+                storage = get_storage_provider()
+                t_bytes = storage.read_file(tdoc.storage_uri) if storage.file_exists(tdoc.storage_uri) else None
+                ingest_res = await rag_adapter.ingest_document(
+                    document_id=tdoc.id,
+                    title=tdoc.filename,
+                    document_uri=tdoc.storage_uri,
+                    document_type="TENDER",
+                    tender_id=payload.tender_id,
+                    file_bytes=t_bytes,
+                )
+                if ingest_res.get("success") and ingest_res.get("chunks_indexed", 0) > 0:
+                    response = await rag_adapter.retrieve(payload)
+        except Exception:
+            pass
     return response
 
 
@@ -125,7 +160,11 @@ def classify_query_intent(query: str) -> dict:
     elif is_numeric:
         intent = "GENERAL_NUMERIC"
     else:
-        intent = "GENERAL"
+        clause_match = re.search(r"\b(?:clause|section|rule)?\s*([0-9]+(?:\.[0-9]+)+[a-z]?)\b", q)
+        if clause_match:
+            intent = "CLAUSE_LOOKUP"
+        else:
+            intent = "GENERAL"
 
     return {
         "intent": intent,
@@ -156,6 +195,14 @@ def evaluate_evidence_sufficiency(
     meta = chunk.location_metadata or {}
     score = float(meta.get("relevance_score", 0.0))
     intent = intent_info["intent"]
+
+    # Explicit clause number match check
+    clause_match = re.search(r"\b(?:clause|section|rule)?\s*([0-9]+(?:\.[0-9]+)+[a-z]?)\b", query.lower())
+    if clause_match:
+        target_clause = clause_match.group(1)
+        chunk_clause = str(meta.get("clause") or "").lower()
+        if target_clause in chunk_clause or f"clause {target_clause}" in text_lower or f"section {target_clause}" in text_lower or re.search(rf"\b{re.escape(target_clause)}\b", text_lower):
+            return True, True, f"Exact clause/section number match ({target_clause})"
 
     # 1. Domain / Entity Mismatch Check
     if query_domain_terms:
@@ -283,7 +330,7 @@ def extract_candidate_segments(snippet: str) -> list[str]:
     return candidates
 
 
-def extract_direct_answer(snippet: str, intent: str) -> str:
+def extract_direct_answer(snippet: str, intent: str, query: str = "") -> str:
     """Extracts the intent-aware, answer-bearing sentence or clause from direct evidence,
     stripping all document formatting artifacts and separators.
     """
@@ -307,7 +354,16 @@ def extract_direct_answer(snippet: str, intent: str) -> str:
             return f"Retrieved evidence states: {fallback[:200]}"
         return "ARGUS could not find an indexed clause that directly answers this question."
 
-    # 1. Intent-Aware Extraction
+    # 1. Clause / Section Number Match
+    clause_match = re.search(r"\b(?:clause|section|rule)?\s*([0-9]+(?:\.[0-9]+)+[a-z]?)\b", f"{query} {intent}".lower())
+    if clause_match:
+        target_c = clause_match.group(1)
+        for c in candidates:
+            cl = c.lower()
+            if target_c in cl or f"clause {target_c}" in cl or f"section {target_c}" in cl:
+                return c
+
+    # 2. Intent-Aware Extraction
     if intent == "EMD_AMOUNT":
         for c in candidates:
             cl = c.lower()
@@ -352,7 +408,7 @@ def extract_direct_answer(snippet: str, intent: str) -> str:
             if threshold_pattern.search(cl) or monetary_pattern.search(cl):
                 return c
 
-    # 2. Substantive Fallback: Return first non-title, non-uppercase candidate of substantial length
+    # 3. Substantive Fallback: Return first non-title, non-uppercase candidate of substantial length
     for c in candidates:
         if len(c) >= 20 and not c.endswith(":") and not c.isupper():
             return c
@@ -376,6 +432,7 @@ def extract_related_context(snippet: str) -> str:
 async def explain_policy_or_clause(
     payload: RAGExplainRequest,
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
 ):
     """Provides advisory policy explanation and clause intelligence for procurement officers.
 
@@ -393,6 +450,40 @@ async def explain_policy_or_clause(
         top_k=payload.top_k,
     )
     rag_res = await rag_adapter.retrieve(query_req)
+
+    # Self-healing indexing if pgvector was never ingested for this tender
+    if not rag_res.results and payload.tender_id:
+        try:
+            from app.models.domain import Document, DocumentType, Tender
+            from app.storage.factory import get_storage_provider
+            tdoc = db.query(Document).filter(
+                Document.tender_id == payload.tender_id,
+                Document.document_type == DocumentType.TENDER,
+            ).first()
+            if not tdoc:
+                t = db.query(Tender).filter(
+                    (Tender.id == payload.tender_id) | (Tender.tender_number == payload.tender_id)
+                ).first()
+                if t:
+                    tdoc = db.query(Document).filter(
+                        Document.tender_id == t.id,
+                        Document.document_type == DocumentType.TENDER,
+                    ).first()
+            if tdoc and tdoc.storage_uri:
+                storage = get_storage_provider()
+                t_bytes = storage.read_file(tdoc.storage_uri) if storage.file_exists(tdoc.storage_uri) else None
+                ingest_res = await rag_adapter.ingest_document(
+                    document_id=tdoc.id,
+                    title=tdoc.filename,
+                    document_uri=tdoc.storage_uri,
+                    document_type="TENDER",
+                    tender_id=payload.tender_id,
+                    file_bytes=t_bytes,
+                )
+                if ingest_res.get("success") and ingest_res.get("chunks_indexed", 0) > 0:
+                    rag_res = await rag_adapter.retrieve(query_req)
+        except Exception:
+            pass
 
     intent_info = classify_query_intent(payload.query)
     query_domain_terms = extract_subject_domain_terms(payload.query)
@@ -428,7 +519,7 @@ async def explain_policy_or_clause(
     if direct_citations:
         result_class = "DIRECT_EVIDENCE"
         top_direct = direct_citations[0]
-        direct_answer = extract_direct_answer(top_direct.snippet, intent_info["intent"])
+        direct_answer = extract_direct_answer(top_direct.snippet, intent_info["intent"], payload.query)
         if len(direct_answer) > 300:
             direct_answer = direct_answer[:297] + "..."
 

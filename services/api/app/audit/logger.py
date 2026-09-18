@@ -122,3 +122,78 @@ class AuditLogger:
         db.commit()
         db.refresh(audit_entry)
         return audit_entry
+
+    @staticmethod
+    def log_live(
+        db: Session,
+        action: str,
+        entity_type: str,
+        entity_id: str,
+        actor_id: str = "SYSTEM",
+        actor_role: str = "SYSTEM",
+        payload: dict[str, Any] | None = None,
+        actor_name: str | None = None,
+        actor_email: str | None = None,
+        principal: Any | None = None,
+    ) -> AuditEvent:
+        """Immediately writes and commits an AuditEvent in an isolated session/transaction.
+        This provides real-time telemetry to polling clients while preserving the caller's
+        uncommitted business transaction on `db`.
+        """
+        bind = None
+        try:
+            bind = db.get_bind()
+        except Exception:
+            pass
+
+        isolated_db = None
+        try:
+            if bind is not None:
+                from sqlalchemy.orm import sessionmaker
+                IsolatedSession = sessionmaker(autocommit=False, autoflush=False, bind=bind)
+                isolated_db = IsolatedSession()
+            else:
+                from app.db.session import SessionLocal
+                isolated_db = SessionLocal()
+
+            entry = AuditLogger.create_entry(
+                isolated_db,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                payload=payload,
+                actor_name=actor_name,
+                actor_email=actor_email,
+                principal=principal,
+            )
+            isolated_db.commit()
+            isolated_db.refresh(entry)
+            return entry
+        except Exception:
+            if isolated_db:
+                try:
+                    isolated_db.rollback()
+                except Exception:
+                    pass
+            return AuditLogger.create_entry(
+                db,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                payload=payload,
+                actor_name=actor_name,
+                actor_email=actor_email,
+                principal=principal,
+            )
+        finally:
+            if isolated_db:
+                try:
+                    isolated_db.close()
+                except Exception:
+                    pass
+
+    log_isolated = log_live

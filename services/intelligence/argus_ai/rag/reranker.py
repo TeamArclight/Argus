@@ -18,14 +18,21 @@ class KeywordOverlapReranker:
     def rerank(self, query: str, chunks: list[EvidenceChunk], top_k: int) -> list[EvidenceChunk]:
         query_terms = set(re.findall(r"\w+", query.lower()))
         query_phrase = query.lower()
-        
+        clause_match = re.search(r"\b(?:clause|section|rule)?\s*([0-9]+(?:\.[0-9]+)+[a-z]?)\b", query.lower())
+        clause_num = clause_match.group(1) if clause_match else None
+
         def score(chunk: EvidenceChunk) -> float:
             text = chunk.snippet.lower()
             chunk_terms = set(re.findall(r"\w+", text))
             overlap = len(query_terms & chunk_terms)
             phrase_bonus = 5.0 if query_phrase in text else 0.0
-            return overlap + phrase_bonus
-            
+            clause_bonus = 0.0
+            if clause_num:
+                meta_clause = str((chunk.location_metadata or {}).get("clause") or "").lower()
+                if clause_num == meta_clause or f"clause {clause_num}" in text or f"section {clause_num}" in text or re.search(rf"\b{re.escape(clause_num)}\b", text):
+                    clause_bonus = 10.0
+            return overlap + phrase_bonus + clause_bonus
+
         ranked = sorted(chunks, key=score, reverse=True)
         return ranked[:top_k]
 

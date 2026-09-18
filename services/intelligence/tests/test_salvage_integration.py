@@ -670,5 +670,61 @@ def test_evaluate_bid_production_guard(monkeypatch, tmp_path):
     assert resp_demo.status_code == 200
 
 
+def test_rag_ingest_with_base64_bytes():
+    import base64
+    app = create_app(rag=InMemoryRAG())
+    client = TestClient(app)
+
+    text_content = "Clause 2.1: Valid GSTIN required and bidder must be registered."
+    b64_content = base64.b64encode(text_content.encode("utf-8")).decode("ascii")
+
+    resp = client.post("/rag-ingest", json={
+        "document_id": "doc_b64_test",
+        "title": "B64 Test Tender",
+        "document_type": "TENDER",
+        "file_bytes_base64": b64_content,
+        "tender_id": "tender_b64",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["chunks_indexed"] >= 1
+
+    # Query from tender_b64
+    q_resp = client.post("/rag-query", json={
+        "query": "clause 2.1",
+        "tender_id": "tender_b64",
+    })
+    assert q_resp.status_code == 200
+    results = q_resp.json()["results"]
+    assert len(results) >= 1
+    assert "2.1" in results[0]["snippet"]
+
+
+def test_rag_ingest_with_direct_text():
+    app = create_app(rag=InMemoryRAG())
+    client = TestClient(app)
+
+    resp = client.post("/rag-ingest", json={
+        "document_id": "doc_text_test",
+        "title": "Direct Text Tender",
+        "document_type": "TENDER",
+        "text": "2.3 The bidder must have a minimum of 3 years of experience in solar renewable equipment.",
+        "tender_id": "tender_text",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["chunks_indexed"] >= 1
+
+    q_resp = client.post("/rag-query", json={
+        "query": "What are the minimum past experience thresholds?",
+        "tender_id": "tender_text",
+    })
+    assert q_resp.status_code == 200
+    results = q_resp.json()["results"]
+    assert len(results) >= 1
+    assert "3 years" in results[0]["snippet"]
+
+
+
 
 

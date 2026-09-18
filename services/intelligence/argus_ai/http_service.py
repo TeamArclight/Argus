@@ -106,7 +106,7 @@ class RAGIngestRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     document_id: str
     title: str
-    document_uri: str
+    document_uri: Optional[str] = None
     document_type: str
     source_uri: Optional[str] = None
     version: Optional[str] = None
@@ -115,6 +115,8 @@ class RAGIngestRequest(BaseModel):
     security_level: str = "INTERNAL"
     tender_id: Optional[str] = None
     clause: Optional[str] = None
+    file_bytes_base64: Optional[str] = None
+    text: Optional[str] = None
 
 class RAGDeleteRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -509,12 +511,72 @@ def create_app(rag: Optional[Any] = None, checkpointer: Optional[Any] = None) ->
 
     @app.post("/rag-ingest")
     def rag_ingest_endpoint(payload: RAGIngestRequest, _: None = Depends(require_auth)) -> dict[str, Any]:
+        temp_file = None
         try:
-            with resolved_document(payload.document_uri) as path:
-                chunks = ingest_document(path, document_id=payload.document_id, title=payload.title, document_type=payload.document_type, indexer=store, source_uri=payload.source_uri, version=payload.version, effective_from=payload.effective_from, effective_to=payload.effective_to, security_level=payload.security_level, tender_id=payload.tender_id, clause=payload.clause)
-            return {"document_id": payload.document_id, "chunks_indexed": len(chunks), "chunks": [chunk.model_dump(mode="json") for chunk in chunks]}
-        except (ValueError, DocumentResolutionError) as exc:
+            if payload.text and payload.text.strip():
+                chunks = store.index(
+                    payload.document_id,
+                    payload.title,
+                    payload.text,
+                    page=1,
+                    document_type=payload.document_type,
+                    security_level=payload.security_level,
+                    source_uri=payload.source_uri or payload.document_uri,
+                    version=payload.version,
+                    effective_from=payload.effective_from,
+                    effective_to=payload.effective_to,
+                    tender_id=payload.tender_id,
+                    clause=payload.clause,
+                )
+                return {"document_id": payload.document_id, "chunks_indexed": len(chunks), "chunks": [chunk.model_dump(mode="json") for chunk in chunks]}
+
+            if payload.file_bytes_base64:
+                if len(payload.file_bytes_base64) > _MAX_B64_LEN:
+                    raise HTTPException(413, "Base64 document payload exceeds maximum allowed size")
+                try:
+                    file_bytes = base64.b64decode(payload.file_bytes_base64)
+                except Exception as b64_err:
+                    raise HTTPException(422, f"Invalid base64 document bytes: {b64_err}")
+                if len(file_bytes) > _MAX_DOCUMENT_BYTES:
+                    raise HTTPException(413, "Document size exceeds maximum allowed size")
+                suffix = ".pdf"
+                if payload.document_uri:
+                    ext = Path(payload.document_uri).suffix
+                    if ext:
+                        suffix = ext
+                with tempfile.NamedTemporaryFile(prefix="argus-rag-", suffix=suffix, delete=False) as handle:
+                    temp_file = Path(handle.name)
+                    handle.write(file_bytes)
+                chunks = ingest_document(
+                    temp_file,
+                    document_id=payload.document_id,
+                    title=payload.title,
+                    document_type=payload.document_type,
+                    indexer=store,
+                    source_uri=payload.source_uri or payload.document_uri,
+                    version=payload.version,
+                    effective_from=payload.effective_from,
+                    effective_to=payload.effective_to,
+                    security_level=payload.security_level,
+                    tender_id=payload.tender_id,
+                    clause=payload.clause,
+                )
+                return {"document_id": payload.document_id, "chunks_indexed": len(chunks), "chunks": [chunk.model_dump(mode="json") for chunk in chunks]}
+
+            if payload.document_uri:
+                with resolved_document(payload.document_uri) as path:
+                    chunks = ingest_document(path, document_id=payload.document_id, title=payload.title, document_type=payload.document_type, indexer=store, source_uri=payload.source_uri, version=payload.version, effective_from=payload.effective_from, effective_to=payload.effective_to, security_level=payload.security_level, tender_id=payload.tender_id, clause=payload.clause)
+                return {"document_id": payload.document_id, "chunks_indexed": len(chunks), "chunks": [chunk.model_dump(mode="json") for chunk in chunks]}
+
+            raise HTTPException(422, "Either file_bytes_base64, text, or document_uri is required")
+        except (ValueError, DocumentResolutionError, DocumentParseError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        finally:
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
 
     @app.post("/rag-delete")
     def rag_delete_endpoint(payload: RAGDeleteRequest, _: None = Depends(require_auth)) -> dict[str, Any]:

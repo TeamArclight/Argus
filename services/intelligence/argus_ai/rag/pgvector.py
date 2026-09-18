@@ -35,6 +35,15 @@ def _build_fulltext_query(query: str) -> str:
     
     terms = list(words)
     q_lower = query.lower()
+
+    # Clause / section number detection (e.g. "clause 2.1", "2.1", "section 3.2")
+    clause_nums = re.findall(r"\b([0-9]+(?:\.[0-9]+)+|[0-9]+)\b", q_lower)
+    for c_num in clause_nums:
+        if c_num not in terms:
+            terms.append(f'"{c_num}"')
+        terms.append(f'"clause {c_num}"')
+        terms.append(f'"section {c_num}"')
+
     if "emd" in q_lower or "earnest" in q_lower:
         terms.extend(["emd", '"earnest money"', '"bid security"'])
     if "msme" in q_lower or "udyam" in q_lower or "mse" in q_lower:
@@ -156,13 +165,23 @@ class PgVectorRAG:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
-            
+
+        clause_match = re.search(r"\b(?:clause|section|rule)?\s*([0-9]+(?:\.[0-9]+)+[a-z]?)\b", query.lower())
+        clause_num = clause_match.group(1) if clause_match else None
+
         retrieved_chunks: list[EvidenceChunk] = []
         for row in rows:
             raw_score = float(row[13]) if len(row) > 13 and row[13] is not None else 0.0
+            meta = dict(row[6] if isinstance(row[6], dict) else {})
+            snippet = row[3] or ""
+
+            if clause_num:
+                meta_clause = str(meta.get("clause") or "").lower()
+                if clause_num == meta_clause or f"clause {clause_num}" in snippet.lower() or f"section {clause_num}" in snippet.lower() or re.search(rf"\b{re.escape(clause_num)}\b", snippet):
+                    raw_score = max(raw_score, 0.65) + 0.20
+
             if raw_score < MIN_RELEVANCE_THRESHOLD:
                 continue
-            meta = dict(row[6] if isinstance(row[6], dict) else {})
             # Monotonic bounded relevance score in [0.0, 1.0], preserving rank order
             bounded_score = round(max(0.0, min(1.0, raw_score)), 4)
             meta["raw_score"] = round(raw_score, 4)
