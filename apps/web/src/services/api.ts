@@ -332,11 +332,11 @@ export const apiClient = {
   },
 
   async evaluateCompliance(bidderId: string): Promise<JobRead> {
-    return this.processBidderDocuments(bidderId);
+    return this.verifyBidder(bidderId);
   },
 
   async runCompliance(bidderId: string): Promise<JobRead> {
-    return this.processBidderDocuments(bidderId);
+    return this.verifyBidder(bidderId);
   },
 
   async getComplianceRuns(bidderId: string): Promise<ComplianceRunSummaryRead[]> {
@@ -418,7 +418,9 @@ export const apiClient = {
   },
 
   async getAuditLogs(params: { limit?: number; offset?: number } = {}): Promise<AuditEventRead[]> {
-    const query = params.limit ? `?limit=${params.limit}` : '';
+    const limit = params.limit ?? 200;
+    const offsetPart = params.offset !== undefined ? `&offset=${params.offset}` : '';
+    const query = `?limit=${limit}${offsetPart}`;
     const rawEvents = await request<RawAuditEvent[]>(`/api/v1/audit/events${query}`);
     if (Array.isArray(rawEvents)) {
       return rawEvents.map(normalizeAuditEvent);
@@ -766,7 +768,33 @@ export function normalizeAuditEvent(raw: RawAuditEvent | Record<string, unknown>
     actor_name: actorName,
     actor_email: actorEmail,
     actor_role: actorRole,
-    mode: (rawRecord.mode as 'AUTHENTIC' | 'DEMO') || 'AUTHENTIC',
+    mode: (() => {
+      if (rawRecord.mode === 'DEMO' || rawRecord.mode === 'AUTHENTIC') {
+        return rawRecord.mode;
+      }
+      if (payload.mode === 'DEMO' || payload.mode === 'AUTHENTIC') {
+        return payload.mode as 'AUTHENTIC' | 'DEMO';
+      }
+      if (payload.verification_mode === 'DEMO' || payload.verification_mode === 'SYNTHETIC') {
+        return 'DEMO';
+      }
+      if (payload.is_demo === true || (rawRecord as Record<string, unknown>).is_demo === true) {
+        return 'DEMO';
+      }
+      const actorStr = String(rawRecord.actor_id || rawRecord.actor_user_id || payload.actor_id || payload.actor_user_id || payload.actor_email || '').toLowerCase();
+      const bStr = String(bidderId || payload.bidder_id || '');
+      const tStr = String(tenderId || payload.tender_id || '');
+      if (
+        actorStr.includes('demo') ||
+        bStr.startsWith('bidder_gem_') ||
+        tStr.startsWith('tender_gem_') ||
+        bStr.includes('cd3d4a28-b039-40c4-97f6-bf28ca7692bc') ||
+        tStr.includes('ff2ffe2b-3f53-4733-8898-ad5ceaecdb03')
+      ) {
+        return 'DEMO';
+      }
+      return 'AUTHENTIC';
+    })(),
     source: (rawRecord.source as 'BACKEND / DATABASE' | 'DEMO_STORE / SYNTHETIC') || 'BACKEND / DATABASE',
     target_url: targetUrl,
     tender_id: tenderId,

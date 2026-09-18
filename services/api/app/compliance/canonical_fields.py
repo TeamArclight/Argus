@@ -321,11 +321,17 @@ def resolve_canonical_field(field_name: str | None) -> str:
     """Resolves an arbitrary or alias field name to its canonical key.
 
     Returns the canonical key if known; otherwise returns the stripped original field name.
+    Normalizes spaces and underscores for flexible phrase matching.
     """
     if not field_name:
         return ""
     normalized = field_name.strip().lower()
-    return ALIAS_TO_CANONICAL_MAP.get(normalized, field_name.strip())
+    return (
+        ALIAS_TO_CANONICAL_MAP.get(normalized)
+        or ALIAS_TO_CANONICAL_MAP.get(normalized.replace(" ", "_"))
+        or ALIAS_TO_CANONICAL_MAP.get(normalized.replace("_", " "))
+        or field_name.strip()
+    )
 
 
 def get_canonical_field_definition(key_or_alias: str | None) -> CanonicalFieldDefinition | None:

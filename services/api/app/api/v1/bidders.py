@@ -928,23 +928,6 @@ async def get_bidder_report(
         db, bidder, target_run, evaluations_db, verifications_db
     )
 
-    AuditLogger.log(
-        db,
-        action="REPORT_VIEWED",
-        entity_type="REPORT",
-        entity_id=id,
-        actor_id=principal.user_id,
-        actor_role=principal.role.value,
-        payload={
-            "tender_id": bidder.tender_id,
-            "bidder_id": id,
-            "bidder_name": bidder.bidder_name,
-            "run_id": target_run.id if target_run else None,
-            "target_url": f"/workspace/bidders/{id}/report",
-            "message": f"Evaluation report viewed for bidder '{bidder.bidder_name}'",
-        },
-    )
-
     # Recompute and verify deterministic snapshot integrity
     import json
 

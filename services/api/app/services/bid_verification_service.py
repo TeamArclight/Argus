@@ -843,7 +843,23 @@ class BidVerificationService:
 
             # Compute overall compliance status
             overall_status = self.compute_overall_status(evaluations_schema)
-            reason_code = "NO_APPROVED_REQUIREMENTS" if not evaluations_schema else None
+            reason_code = None
+            if not evaluations_schema:
+                has_unapproved = (
+                    self.db.query(TenderRequirement)
+                    .filter(
+                        TenderRequirement.tender_id == tender.id,
+                        TenderRequirement.is_approved == False,
+                    )
+                    .first()
+                    is not None
+                )
+                if has_unapproved:
+                    overall_status = ComplianceStatus.REVIEW_REQUIRED
+                    reason_code = "NO_APPROVED_REQUIREMENTS"
+                else:
+                    overall_status = ComplianceStatus.UNKNOWN
+                    reason_code = "NO_REQUIREMENTS"
 
             # Compute canonical snapshot hash for integrity verification
             import hashlib
@@ -865,6 +881,8 @@ class BidVerificationService:
             }
             if reason_code:
                 summary_dict["reason_code"] = reason_code
+                if reason_code == "NO_APPROVED_REQUIREMENTS":
+                    summary_dict["message"] = "No approved tender criteria are available for evaluation."
             summary_dict["verified_at"] = datetime.now(timezone.utc).isoformat()
             run.summary_json = summary_dict
             run.input_snapshot_json = input_snapshot

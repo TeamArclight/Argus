@@ -43,8 +43,10 @@ export default function AuditPage() {
   const [stageFilter, setStageFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
 
-  const loadAuditEvents = useCallback(async () => {
-    setLoading(true);
+  const loadAuditEvents = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setLoading(true);
+    }
     setError(null);
 
     if (!isAuthenticated && !isDemoPreview) {
@@ -53,17 +55,25 @@ export default function AuditPage() {
     }
 
     try {
-      const data = await api.getAuditEvents();
+      const data = await api.getAuditEvents({ limit: 200 });
       setEvents(data);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load authoritative audit event log.');
+      if (!options?.silent) {
+        setError(err instanceof Error ? err.message : 'Failed to load authoritative audit event log.');
+      }
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   }, [isDemoPreview, isAuthenticated]);
 
   useEffect(() => {
     loadAuditEvents();
+    const interval = setInterval(() => {
+      loadAuditEvents({ silent: true });
+    }, 3000);
+    return () => clearInterval(interval);
   }, [loadAuditEvents]);
 
   const filteredEvents = events.filter((ev) => {
@@ -175,12 +185,18 @@ export default function AuditPage() {
             Immutable pipeline event streams, OCR extractions, and verification telemetry.
           </p>
         </div>
-        <button
-          onClick={loadAuditEvents}
-          className="inline-flex items-center gap-2 px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg transition-colors border border-zinc-700 cursor-pointer"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh Audit Trail
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-950/60 border border-emerald-800/40 text-emerald-400 text-xs font-mono font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            LIVE (3s)
+          </div>
+          <button
+            onClick={() => loadAuditEvents()}
+            className="inline-flex items-center gap-2 px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg transition-colors border border-zinc-700 cursor-pointer"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh Audit Trail
+          </button>
+        </div>
       </div>
 
       {error && (
