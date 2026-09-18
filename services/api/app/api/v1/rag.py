@@ -471,7 +471,11 @@ async def explain_policy_or_clause(
                     ).first()
             if tdoc and tdoc.storage_uri:
                 storage = get_storage_provider()
-                t_bytes = storage.read_file(tdoc.storage_uri) if storage.file_exists(tdoc.storage_uri) else None
+                t_bytes = None
+                try:
+                    t_bytes = storage.read_file(tdoc.storage_uri)
+                except Exception:
+                    pass
                 ingest_res = await rag_adapter.ingest_document(
                     document_id=tdoc.id,
                     title=tdoc.filename,

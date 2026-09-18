@@ -253,8 +253,11 @@ class RAGServiceAdapter:
             try:
                 from app.storage.factory import get_storage_provider
                 storage = get_storage_provider()
-                if storage.file_exists(document_uri):
+                try:
                     file_bytes = storage.read_file(document_uri)
+                except Exception:
+                    if storage.file_exists(document_uri):
+                        file_bytes = storage.read_file(document_uri)
             except Exception:
                 pass
 
