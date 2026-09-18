@@ -30,6 +30,23 @@ logger = get_logger("argus.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("ARGUS API backend initializing...")
+
+    # Ensure schema is upgraded to latest Alembic revision
+    try:
+        from pathlib import Path
+        from alembic import command
+        from alembic.config import Config
+
+        base_dir = Path(__file__).resolve().parent.parent
+        ini_path = base_dir / "alembic.ini"
+        if ini_path.exists():
+            alembic_cfg = Config(str(ini_path))
+            alembic_cfg.set_main_option("script_location", str(base_dir / "alembic"))
+            command.upgrade(alembic_cfg, "head")
+            logger.info("Database schema verified and upgraded to head.")
+    except Exception as m_err:
+        logger.warning("Startup database migration check: %s", m_err)
+
     worker_task = None
     run_inline = getattr(settings, "ARGUS_RUN_INLINE_WORKER", False) or os.getenv("ARGUS_RUN_INLINE_WORKER", "false").lower() in ("true", "1", "yes")
     if run_inline:
