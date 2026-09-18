@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -695,6 +695,9 @@ class AuditEventRead(BaseModel):
             payload = getattr(data, "payload_json") or {}
             actor_id = getattr(data, "actor_id", None)
             actor_role = getattr(data, "actor_role", None)
+            ts = getattr(data, "timestamp", None)
+            if isinstance(ts, datetime) and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
             return {
                 "id": getattr(data, "id"),
                 "entity_type": getattr(data, "entity_type"),
@@ -706,13 +709,16 @@ class AuditEventRead(BaseModel):
                 "actor_name": payload.get("actor_name"),
                 "actor_email": payload.get("actor_email"),
                 "payload_json": payload,
-                "timestamp": getattr(data, "timestamp"),
+                "timestamp": ts,
             }
         elif isinstance(data, dict):
             payload = data.get("payload_json") or {}
             data.setdefault("actor_user_id", payload.get("actor_user_id") or data.get("actor_id"))
             data.setdefault("actor_name", payload.get("actor_name"))
             data.setdefault("actor_email", payload.get("actor_email"))
+            ts = data.get("timestamp")
+            if isinstance(ts, datetime) and ts.tzinfo is None:
+                data["timestamp"] = ts.replace(tzinfo=timezone.utc)
         return data
 
 

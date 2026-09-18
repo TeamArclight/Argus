@@ -26,6 +26,7 @@ import {
   getResolvedProgress,
   resolveAuditStatus,
   AuditStatusBadge,
+  formatAuditFullDate,
 } from '@/lib/audit-helpers';
 
 const SENSITIVE_KEY_PATTERNS = [
@@ -121,22 +122,7 @@ export const AuditEventDetailDrawer: React.FC<AuditEventDetailDrawerProps> = ({
   const resolvedStatus = resolveAuditStatus(event);
 
   const formatFullTimestamp = (ts?: string | null) => {
-    if (!ts || ts === '—' || ts === 'undefined' || ts === 'null') return 'Time unavailable';
-    try {
-      const d = new Date(ts);
-      if (isNaN(d.getTime())) return 'Time unavailable';
-      return d.toLocaleString([], {
-        year: 'numeric',
-        month: 'short',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        timeZoneName: 'short',
-      });
-    } catch {
-      return 'Time unavailable';
-    }
+    return formatAuditFullDate(ts);
   };
 
   const copyPayload = () => {

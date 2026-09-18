@@ -647,7 +647,11 @@ export function normalizeAuditEvent(raw: RawAuditEvent | Record<string, unknown>
   let timestampStr: string | null = null;
   const rawTs = rawRecord.timestamp || rawRecord.created_at;
   if (typeof rawTs === 'string' && rawTs.trim() !== '') {
-    timestampStr = rawTs.trim().replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/, '$1T$2');
+    let s = rawTs.trim().replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/, '$1T$2');
+    if (!s.endsWith('Z') && !/[+-]\d{2}(?::?\d{2})?$/.test(s)) {
+      s += 'Z';
+    }
+    timestampStr = s;
   }
 
   // 6. EVENT ID HANDLING (Constraint 2 - No random generated IDs):

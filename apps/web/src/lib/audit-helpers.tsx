@@ -248,3 +248,58 @@ export function AuditStatusBadge({ status }: { status: ResolvedStatus }) {
       );
   }
 }
+
+/**
+ * Safely parses an audit timestamp into a Date object.
+ * If backend sent a naive ISO string without timezone ('Z' or offset),
+ * it treats it as UTC (since all backend timestamps are stored as UTC)
+ * rather than allowing JavaScript to mistakenly treat naive ISO strings as local time.
+ */
+export function parseAuditDate(ts?: string | null): Date | null {
+  if (!ts || ts === '—' || ts === 'undefined' || ts === 'null') return null;
+  try {
+    let s = ts.trim().replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/, '$1T$2');
+    if (!s.endsWith('Z') && !/[+-]\d{2}(?::?\d{2})?$/.test(s)) {
+      s += 'Z';
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Formats an audit timestamp in the user's local timezone.
+ */
+export function formatAuditDate(ts?: string | null): string {
+  const d = parseAuditDate(ts);
+  if (!d) return '—';
+  return (
+    d.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }) +
+    ', ' +
+    d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  );
+}
+
+/**
+ * Formats full audit timestamp with seconds and timezone indicator for drawer/details.
+ */
+export function formatAuditFullDate(ts?: string | null): string {
+  const d = parseAuditDate(ts);
+  if (!d) return 'Time unavailable';
+  return d.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+

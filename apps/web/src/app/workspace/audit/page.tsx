@@ -24,6 +24,7 @@ import {
   getResolvedProgress,
   resolveAuditStatus,
   AuditStatusBadge,
+  formatAuditDate,
 } from '@/lib/audit-helpers';
 import { formatDisplayValue, formatExpectedCondition } from '@/lib/formatters';
 
@@ -107,22 +108,7 @@ export default function AuditPage() {
   });
 
   const formatTimestamp = (ts?: string | null) => {
-    if (!ts || ts === '—' || ts === 'undefined' || ts === 'null') return '—';
-    try {
-      const d = new Date(ts);
-      if (isNaN(d.getTime())) return '—';
-      return (
-        d.toLocaleDateString('en-GB', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-        }) +
-        ', ' +
-        d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-      );
-    } catch {
-      return '—';
-    }
+    return formatAuditDate(ts);
   };
 
   const getModeBadge = (mode?: string, source?: string) => {

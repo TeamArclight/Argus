@@ -6,6 +6,7 @@ import {
   formatCurrencyINR,
   isStructuredValue,
 } from '../formatters.ts';
+import { parseAuditDate, formatAuditDate } from '../audit-helpers.tsx';
 
 describe('formatDisplayValue', () => {
   it('handles null and undefined with default and custom fallback', () => {
@@ -166,5 +167,48 @@ describe('isStructuredValue', () => {
     assert.strictEqual(isStructuredValue('hello'), false);
     assert.strictEqual(isStructuredValue(123), false);
     assert.strictEqual(isStructuredValue(true), false);
+  });
+});
+
+describe('parseAuditDate and formatAuditDate', () => {
+  it('safely treats naive UTC ISO string as UTC rather than local time', () => {
+    const naiveIso = '2026-09-18T20:53:21.411800';
+    const parsed = parseAuditDate(naiveIso);
+    assert.ok(parsed !== null);
+    assert.strictEqual(parsed.getUTCFullYear(), 2026);
+    assert.strictEqual(parsed.getUTCMonth(), 8); // 0-indexed September
+    assert.strictEqual(parsed.getUTCDate(), 18);
+    assert.strictEqual(parsed.getUTCHours(), 20);
+    assert.strictEqual(parsed.getUTCMinutes(), 53);
+  });
+
+  it('handles space-separated date and time strings as UTC', () => {
+    const spaceSep = '2026-09-18 20:53:21.411800';
+    const parsed = parseAuditDate(spaceSep);
+    assert.ok(parsed !== null);
+    assert.strictEqual(parsed.getUTCHours(), 20);
+    assert.strictEqual(parsed.getUTCMinutes(), 53);
+  });
+
+  it('handles explicit Z and timezone offset without alteration', () => {
+    const withZ = '2026-09-18T20:53:21.411800Z';
+    const parsedZ = parseAuditDate(withZ);
+    assert.ok(parsedZ !== null);
+    assert.strictEqual(parsedZ.getUTCHours(), 20);
+
+    const withOffset = '2026-09-19T02:23:21+05:30';
+    const parsedOffset = parseAuditDate(withOffset);
+    assert.ok(parsedOffset !== null);
+    assert.strictEqual(parsedOffset.getUTCHours(), 20);
+    assert.strictEqual(parsedOffset.getUTCMinutes(), 53);
+  });
+
+  it('handles invalid or empty strings gracefully with fallback', () => {
+    assert.strictEqual(parseAuditDate(null), null);
+    assert.strictEqual(parseAuditDate('—'), null);
+    assert.strictEqual(parseAuditDate('invalid'), null);
+    assert.strictEqual(formatAuditDate(null), '—');
+    assert.strictEqual(formatAuditDate('—'), '—');
+    assert.strictEqual(formatAuditDate('undefined'), '—');
   });
 });

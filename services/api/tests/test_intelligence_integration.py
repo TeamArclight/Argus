@@ -420,7 +420,7 @@ def test_approval_rbac_and_validation():
 
 
 def test_compliance_execution_zero_approved_rules_fallback(monkeypatch):
-    """Test that zero approved rules results in UNKNOWN status and NO_APPROVED_REQUIREMENTS reason code."""
+    """Test that zero approved rules with candidate unapproved rules results in REVIEW_REQUIRED status."""
     officer_headers = get_auth_headers(UserRole.PROCUREMENT_OFFICER, user_id="OFFICER-4400")
     client = TestClient(app)
 
@@ -482,7 +482,7 @@ def test_compliance_execution_zero_approved_rules_fallback(monkeypatch):
     assert c_res.status_code == 200
     comp = c_res.json()
 
-    assert comp["overall_status"] == "UNKNOWN"
+    assert comp["overall_status"] == "REVIEW_REQUIRED"
     assert len(comp["rule_evaluations"]) == 0
 
     # Now approve requirement and re-run evaluation
