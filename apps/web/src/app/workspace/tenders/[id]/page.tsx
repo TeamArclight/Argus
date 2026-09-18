@@ -469,7 +469,7 @@ export default function TenderDetailPage() {
                   title={isCanonicalDemo ? "Canonical demo documents cannot be deleted." : "Delete failed document"}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  Delete Document
+                  Delete Failed Document
                 </button>
                 {isCanonicalDemo && (
                   <div className="absolute right-0 bottom-full mb-1 hidden group-hover:block z-20 px-2 py-1 text-[11px] font-sans text-amber-300 bg-zinc-900 border border-zinc-700 rounded shadow-lg whitespace-nowrap">
@@ -804,7 +804,7 @@ export default function TenderDetailPage() {
               <h3 className="text-lg font-semibold text-zinc-100">Delete failed tender document?</h3>
             </div>
             <p className="text-sm text-zinc-400 mb-6 leading-relaxed">
-              This removes the uploaded source document and any unapproved criteria extracted from it. Processing history and audit records will be preserved.
+              This will remove the uploaded source document and any unapproved extracted criteria. Processing history and audit records will be preserved.
             </p>
             <div className="flex justify-end gap-3">
               <button

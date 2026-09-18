@@ -139,7 +139,7 @@ def test_approved_requirement_blocks_deletion_with_409():
         resp = client.delete("/api/v1/tenders/t_del_appr/documents/doc_appr", headers=headers)
         assert resp.status_code == 409
         msg = resp.json()["error"]["message"]
-        assert "approved tender requirements reference this source document" in msg
+        assert "Document cannot be deleted because approved tender requirements depend on it." in msg
 
 
 def test_storage_failure_fails_safely_500(monkeypatch):

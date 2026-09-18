@@ -832,7 +832,7 @@ def delete_tender_document(
     if approved_reqs:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete document: approved tender requirements reference this source document. Deleting source evidence for approved requirements would destroy provenance.",
+            detail="Document cannot be deleted because approved tender requirements depend on it.",
         )
 
     unapproved_reqs = [r for r in reqs if not r.is_approved]
