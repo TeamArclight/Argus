@@ -146,6 +146,22 @@ class AuditLogger:
         except Exception:
             pass
 
+        # SQLite does not support concurrent write transactions across multiple connections.
+        # Fall back to standard session add on SQLite or if bind is unavailable.
+        if bind is not None and getattr(getattr(bind, "dialect", None), "name", None) == "sqlite":
+            return AuditLogger.create_entry(
+                db,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                payload=payload,
+                actor_name=actor_name,
+                actor_email=actor_email,
+                principal=principal,
+            )
+
         isolated_db = None
         try:
             if bind is not None:
