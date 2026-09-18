@@ -326,9 +326,9 @@ async def process_tender(
             request_id=req_id,
         )
 
-        if not ai_result.success or not ai_result.data:
+        if not ai_result.success or ai_result.data is None:
             job.status = JobStatus.FAILED
-            job.error_message = ai_result.message
+            job.error_message = ai_result.message or "Tender extraction failed."
             job.progress = 100
             job.completed_at = datetime.now(timezone.utc)
             tender.status = JobStatus.FAILED

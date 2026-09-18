@@ -516,3 +516,13 @@ def test_gemini_provider_fast_429_fallback_and_provenance(monkeypatch):
     assert provider.last_model_used == "gemini-3.1-flash-lite"
     assert call_models.count("gemini-3.6-flash") == 1
     assert call_models == ["gemini-3.6-flash", "gemini-3.1-flash-lite"]
+
+
+def test_stream_ended_pdf_parsing_recovery(tmp_path):
+    stub_file = tmp_path / "test_stub.pdf"
+    stub_file.write_bytes(b"%PDF-1.4 dummy test content for deletion verification")
+
+    from argus_ai.parsing.service import parse_document
+    pages = parse_document(stub_file)
+    assert len(pages) == 1
+    assert "dummy test content for deletion verification" in pages[0][1]

@@ -49,6 +49,47 @@ def _validate_adapter_inputs(
     return True, None, None
 
 
+def _sanitize_4xx_error(status_code: int, resp: httpx.Response) -> tuple[str, str]:
+    """Extract a safe, sanitized error_code and user-facing message from 4xx responses without leaking internals."""
+    raw_detail = ""
+    try:
+        data = resp.json()
+        if isinstance(data, dict):
+            detail_val = data.get("detail") or data.get("message") or data.get("error")
+            if isinstance(detail_val, str):
+                raw_detail = detail_val
+            elif isinstance(detail_val, list) and detail_val:
+                first = detail_val[0]
+                if isinstance(first, dict):
+                    raw_detail = first.get("msg") or str(first)
+                else:
+                    raw_detail = str(first)
+    except Exception:
+        raw_detail = resp.text[:200] if resp.text else ""
+
+    lower = raw_detail.lower()
+
+    if status_code == 413 or "too large" in lower or "exceeds maximum" in lower:
+        return "DOCUMENT_TOO_LARGE", "Document exceeds maximum allowed size."
+
+    if "sha-256" in lower or "digest mismatch" in lower or "hash mismatch" in lower:
+        return "DOCUMENT_SHA256_MISMATCH", "Document SHA-256 digest mismatch."
+
+    if "parse" in lower or "stream has ended" in lower or "corrupt" in lower or "unsupported document" in lower or "ocr produced no readable text" in lower:
+        return "DOCUMENT_PARSE_FAILED", "Document parsing failed: file appears corrupt, truncated, or unreadable."
+
+    if "base64" in lower or "file_bytes" in lower or "document_uri" in lower:
+        return "INVALID_DOCUMENT_PAYLOAD", "Invalid document payload."
+
+    if status_code == 400:
+        return "AI_SERVICE_REQUEST_REJECTED", "Intelligence service rejected request."
+
+    if status_code == 422:
+        return "INVALID_DOCUMENT_PAYLOAD", "Intelligence service rejected document payload as unprocessable."
+
+    return "AI_SERVICE_REQUEST_REJECTED", "Intelligence service rejected request."
+
+
 class AIServiceAdapter:
     """Interface for ARGUS Intelligence Service (document parsing & LLM requirement extraction).
 
@@ -140,16 +181,7 @@ class AIServiceAdapter:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(url, headers=headers, json=payload)
 
-                    if resp.status_code == 400:
-                        logger.warning("Intelligence service rejected request (HTTP 400).")
-                        return AIServiceResult(
-                            success=False,
-                            data=None,
-                            error_code="AI_SERVICE_REQUEST_REJECTED",
-                            retryable=False,
-                            message="Intelligence service rejected request.",
-                        )
-                    elif resp.status_code in (401, 403):
+                    if resp.status_code in (401, 403):
                         logger.warning(f"Intelligence service authentication error (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
@@ -177,13 +209,14 @@ class AIServiceAdapter:
                             message="Intelligence service unavailable.",
                         )
                     elif 400 <= resp.status_code < 500:
-                        logger.warning(f"Intelligence service rejected request (HTTP {resp.status_code}).")
+                        err_code, err_msg = _sanitize_4xx_error(resp.status_code, resp)
+                        logger.warning(f"Intelligence service rejected request (HTTP {resp.status_code}): {err_code} - {err_msg}")
                         return AIServiceResult(
                             success=False,
                             data=None,
-                            error_code="AI_SERVICE_REQUEST_REJECTED",
+                            error_code=err_code,
                             retryable=False,
-                            message="Intelligence service rejected request.",
+                            message=err_msg,
                         )
                     elif resp.status_code >= 500:
                         logger.warning(f"Intelligence service HTTP server error (HTTP {resp.status_code}).")
@@ -481,16 +514,7 @@ class AIServiceAdapter:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(url, headers=headers, json=payload)
 
-                    if resp.status_code == 400:
-                        logger.warning("Intelligence service rejected request (HTTP 400).")
-                        return AIServiceResult(
-                            success=False,
-                            data=None,
-                            error_code="AI_SERVICE_REQUEST_REJECTED",
-                            retryable=False,
-                            message="Intelligence service rejected request.",
-                        )
-                    elif resp.status_code in (401, 403):
+                    if resp.status_code in (401, 403):
                         logger.warning(f"Intelligence service auth error (HTTP {resp.status_code}).")
                         return AIServiceResult(
                             success=False,
@@ -518,13 +542,14 @@ class AIServiceAdapter:
                             message="Intelligence service unavailable.",
                         )
                     elif 400 <= resp.status_code < 500:
-                        logger.warning(f"Intelligence service rejected request (HTTP {resp.status_code}).")
+                        err_code, err_msg = _sanitize_4xx_error(resp.status_code, resp)
+                        logger.warning(f"Intelligence service rejected request (HTTP {resp.status_code}): {err_code} - {err_msg}")
                         return AIServiceResult(
                             success=False,
                             data=None,
-                            error_code="AI_SERVICE_REQUEST_REJECTED",
+                            error_code=err_code,
                             retryable=False,
-                            message="Intelligence service rejected request.",
+                            message=err_msg,
                         )
                     elif resp.status_code >= 500:
                         logger.warning(f"Intelligence service HTTP server error (HTTP {resp.status_code}).")
