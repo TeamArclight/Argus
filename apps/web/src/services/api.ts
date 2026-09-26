@@ -819,14 +819,14 @@ export function normalizeAuditEvent(raw: RawAuditEvent | Record<string, unknown>
     requirement_id: reqId,
     clause_reference: clauseRef,
     payload_json: payload,
-    event_hash: (rawRecord.event_hash as string) || null,
-    blockchain_status: (rawRecord.blockchain_status as string) || 'NOT_ANCHORED',
-    blockchain_network: (rawRecord.blockchain_network as string) || null,
-    blockchain_tx_hash: (rawRecord.blockchain_tx_hash as string) || null,
+    event_hash: rawRecord.event_hash ?? null,
+    blockchain_status: rawRecord.blockchain_status ?? 'NOT_ANCHORED',
+    blockchain_network: rawRecord.blockchain_network ?? null,
+    blockchain_tx_hash: rawRecord.blockchain_tx_hash ?? null,
     blockchain_block_number: typeof rawRecord.blockchain_block_number === 'number' ? rawRecord.blockchain_block_number : null,
-    anchored_at: (rawRecord.anchored_at as string) || null,
-    blockchain_error: (rawRecord.blockchain_error as string) || null,
-    audit_hash_version: (rawRecord.audit_hash_version as string) || 'v1',
+    anchored_at: rawRecord.anchored_at ?? null,
+    blockchain_error: rawRecord.blockchain_error ?? null,
+    audit_hash_version: rawRecord.audit_hash_version ?? 'v1',
   };
 }
 

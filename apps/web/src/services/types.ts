@@ -45,7 +45,17 @@ export interface RawAuditEvent {
   target_url?: string | null;
   mode?: 'AUTHENTIC' | 'DEMO';
   source?: 'BACKEND / DATABASE' | 'DEMO_STORE / SYNTHETIC';
+  event_hash?: string | null;
+  blockchain_status?: string | null;
+  blockchain_network?: string | null;
+  blockchain_tx_hash?: string | null;
+  blockchain_block_number?: number | null;
+  anchored_at?: string | null;
+  blockchain_error?: string | null;
+  audit_hash_version?: string | null;
 }
+
+export type AuditEvent = AuditEventRead;
 
 export type AuditEventCategory =
   | 'PIPELINE'
