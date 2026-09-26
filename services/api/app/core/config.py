@@ -172,6 +172,14 @@ class Settings(BaseSettings):
     BLOCKCHAIN_MAX_RETRIES: int = 5
     BLOCKCHAIN_ANCHOR_ACTIONS: str | list[str] | None = None
 
+    @field_validator("BLOCKCHAIN_PRIVATE_KEY", "BLOCKCHAIN_CONTRACT_ADDRESS", "BLOCKCHAIN_RPC_URL", mode="before")
+    @classmethod
+    def clean_blockchain_strings(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            clean = v.strip().strip("'\"").strip()
+            return clean if clean else None
+        return v
+
     def get_blockchain_anchor_actions(self) -> set[str]:
         """Returns the set of audit actions eligible for blockchain anchoring."""
         if not self.BLOCKCHAIN_ANCHOR_ACTIONS:

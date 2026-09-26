@@ -106,7 +106,8 @@ class BlockchainAuditService:
         if self._contract is None:
             if not self.cfg.BLOCKCHAIN_CONTRACT_ADDRESS:
                 raise ValueError("BLOCKCHAIN_CONTRACT_ADDRESS is not configured.")
-            checksum_addr = Web3.to_checksum_address(self.cfg.BLOCKCHAIN_CONTRACT_ADDRESS)
+            clean_addr = self.cfg.BLOCKCHAIN_CONTRACT_ADDRESS.strip().strip("'\"").strip()
+            checksum_addr = Web3.to_checksum_address(clean_addr)
             self._contract = self.w3.eth.contract(address=checksum_addr, abi=ARGUS_AUDIT_ANCHOR_ABI)
         return self._contract
 
@@ -191,12 +192,13 @@ class BlockchainAuditService:
 
         # 2. Prepare transaction
         priv_key = self.cfg.BLOCKCHAIN_PRIVATE_KEY
-        if not priv_key:
+        if not priv_key or not priv_key.strip():
             raise RuntimeError("BLOCKCHAIN_PRIVATE_KEY is missing.")
-        if not priv_key.startswith("0x"):
-            priv_key = "0x" + priv_key
+        clean_key = priv_key.strip().strip("'\"").strip()
+        if not clean_key.startswith("0x"):
+            clean_key = "0x" + clean_key
 
-        account = self.w3.eth.account.from_key(priv_key)
+        account = self.w3.eth.account.from_key(clean_key)
         sender_address = account.address
 
         chain_id = self.cfg.BLOCKCHAIN_CHAIN_ID
@@ -229,7 +231,7 @@ class BlockchainAuditService:
         })
 
         # 3. Sign locally and broadcast
-        signed_tx = self.w3.eth.account.sign_transaction(tx_dict, private_key=priv_key)
+        signed_tx = self.w3.eth.account.sign_transaction(tx_dict, private_key=clean_key)
         raw_tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
         tx_hash_hex = raw_tx_hash.hex()
         if not tx_hash_hex.startswith("0x"):
