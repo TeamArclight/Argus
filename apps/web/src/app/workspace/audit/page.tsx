@@ -12,6 +12,8 @@ import {
   Database,
   Sparkles,
   ArrowUpRight,
+  Link2,
+  Clock,
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type { AuditEventRead } from '@/services/types';
@@ -416,6 +418,28 @@ export default function AuditPage() {
                           </span>
                         </div>
                       )}
+                      {/* Blockchain On-Chain Status Indicator */}
+                      {ev.blockchain_status === 'CONFIRMED' ? (
+                        <div className="mt-1 flex items-center gap-1 text-[10px] font-mono text-emerald-400" title="Anchored on Polygon Amoy">
+                          <Link2 className="w-2.5 h-2.5 text-emerald-400 flex-shrink-0" />
+                          <span className="font-semibold">Polygon (Amoy)</span>
+                        </div>
+                      ) : ev.blockchain_status === 'SUBMITTED' ? (
+                        <div className="mt-1 flex items-center gap-1 text-[10px] font-mono text-cyan-400" title="Transaction submitted to mempool">
+                          <RefreshCw className="w-2.5 h-2.5 text-cyan-400 animate-spin flex-shrink-0" />
+                          <span>Submitted</span>
+                        </div>
+                      ) : ev.blockchain_status === 'PENDING' ? (
+                        <div className="mt-1 flex items-center gap-1 text-[10px] font-mono text-amber-400" title="Queued for blockchain anchor">
+                          <Clock className="w-2.5 h-2.5 text-amber-400 flex-shrink-0" />
+                          <span>Anchoring...</span>
+                        </div>
+                      ) : ev.blockchain_status === 'FAILED' ? (
+                        <div className="mt-1 flex items-center gap-1 text-[10px] font-mono text-rose-400" title="Anchor transaction failed">
+                          <AlertCircle className="w-2.5 h-2.5 text-rose-400 flex-shrink-0" />
+                          <span>Anchor Failed</span>
+                        </div>
+                      ) : null}
                     </td>
 
                     {/* Message & Action Traces (Details) */}

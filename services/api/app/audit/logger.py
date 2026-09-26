@@ -83,14 +83,30 @@ class AuditLogger:
 
         sanitized = sanitize_payload(payload_data)
 
+        import uuid
+        from datetime import datetime, timezone
+        from app.audit.canonical import AUDIT_HASH_VERSION, hash_audit_event
+        from app.audit.policy import determine_initial_blockchain_status
+
+        init_status = determine_initial_blockchain_status(action)
+        now_ts = datetime.now(timezone.utc)
+        entry_id = str(uuid.uuid4())
+
         audit_entry = AuditEvent(
+            id=entry_id,
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,
             actor_id=actor_id,
             actor_role=actor_role,
             payload_json=sanitized,
+            timestamp=now_ts,
+            blockchain_status=init_status,
+            audit_hash_version=AUDIT_HASH_VERSION,
         )
+
+        audit_entry.event_hash = hash_audit_event(audit_entry)
+
         db.add(audit_entry)
         return audit_entry
 

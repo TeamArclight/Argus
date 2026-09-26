@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -346,6 +347,21 @@ class AuditEvent(Base):
     actor_role: Mapped[str] = mapped_column(String, nullable=False)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+
+    # Blockchain Anchoring Fields
+    event_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    blockchain_status: Mapped[str] = mapped_column(String(32), default="NOT_ANCHORED", nullable=False, index=True)
+    blockchain_network: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    blockchain_tx_hash: Mapped[str | None] = mapped_column(String(66), nullable=True, index=True)
+    blockchain_block_number: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    anchored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    blockchain_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    audit_hash_version: Mapped[str | None] = mapped_column(String(16), default="v1", nullable=True)
+
+    # Blockchain Retry & Concurrency Metadata
+    blockchain_retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    blockchain_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    blockchain_next_retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     @property
     def actor_user_id(self) -> str:

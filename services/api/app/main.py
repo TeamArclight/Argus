@@ -52,8 +52,11 @@ async def lifespan(app: FastAPI):
     if run_inline:
         logger.info("ARGUS_RUN_INLINE_WORKER enabled: starting inline worker background task.")
         from app.workers.worker import claim_job, execute_job
+        from app.services.blockchain_anchor_worker import BlockchainAnchorWorker
 
         async def _inline_worker_loop():
+            anchor_worker = BlockchainAnchorWorker()
+            last_anchor_sweep = 0.0
             while True:
                 try:
                     claimed = claim_job()
@@ -61,6 +64,14 @@ async def lifespan(app: FastAPI):
                         await execute_job(*claimed)
                     else:
                         await asyncio.sleep(2.0)
+
+                    loop_time = asyncio.get_event_loop().time()
+                    if loop_time - last_anchor_sweep >= 5.0:
+                        try:
+                            anchor_worker.process_batch(limit=5)
+                        except Exception as bc_err:
+                            logger.error("Error during inline blockchain sweep: %s", bc_err)
+                        last_anchor_sweep = loop_time
                 except asyncio.CancelledError:
                     break
                 except Exception as w_err:

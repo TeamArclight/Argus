@@ -687,6 +687,14 @@ class AuditEventRead(BaseModel):
     actor_email: str | None = None
     payload_json: dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime
+    event_hash: str | None = None
+    blockchain_status: str = "NOT_ANCHORED"
+    blockchain_network: str | None = None
+    blockchain_tx_hash: str | None = None
+    blockchain_block_number: int | None = None
+    anchored_at: datetime | None = None
+    blockchain_error: str | None = None
+    audit_hash_version: str | None = "v1"
 
     @model_validator(mode="before")
     @classmethod
@@ -710,6 +718,14 @@ class AuditEventRead(BaseModel):
                 "actor_email": payload.get("actor_email"),
                 "payload_json": payload,
                 "timestamp": ts,
+                "event_hash": getattr(data, "event_hash", None),
+                "blockchain_status": getattr(data, "blockchain_status", "NOT_ANCHORED") or "NOT_ANCHORED",
+                "blockchain_network": getattr(data, "blockchain_network", None),
+                "blockchain_tx_hash": getattr(data, "blockchain_tx_hash", None),
+                "blockchain_block_number": getattr(data, "blockchain_block_number", None),
+                "anchored_at": getattr(data, "anchored_at", None),
+                "blockchain_error": getattr(data, "blockchain_error", None),
+                "audit_hash_version": getattr(data, "audit_hash_version", "v1") or "v1",
             }
         elif isinstance(data, dict):
             payload = data.get("payload_json") or {}
@@ -720,6 +736,33 @@ class AuditEventRead(BaseModel):
             if isinstance(ts, datetime) and ts.tzinfo is None:
                 data["timestamp"] = ts.replace(tzinfo=timezone.utc)
         return data
+
+
+class AuditEventBlockchainRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    event_id: str
+    event_hash: str | None = None
+    blockchain_status: str
+    network: str | None = None
+    chain_id: int | None = None
+    transaction_hash: str | None = None
+    block_number: int | None = None
+    anchored_at: datetime | None = None
+    explorer_url: str | None = None
+    audit_hash_version: str | None = "v1"
+    blockchain_error: str | None = None
+
+
+class AuditEventIntegrityVerifyResponse(BaseModel):
+    event_id: str
+    integrity: str
+    computed_hash: str | None = None
+    onchain_hash: str | None = None
+    transaction_hash: str | None = None
+    block_number: int | None = None
+    anchored_at: str | None = None
+    verified_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    details: str
 
 
 class ComplianceRunRead(BaseModel):

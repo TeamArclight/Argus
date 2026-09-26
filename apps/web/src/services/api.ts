@@ -31,7 +31,9 @@ import type {
   DemoStatusRead,
 } from '@/types/api';
 import type {
+  AuditEventBlockchainRead,
   AuditEventCategory,
+  AuditEventIntegrityVerifyResponse,
   AuditEventRead,
   DeepAuditStatusResponse,
   RAGExplainRequest,
@@ -432,6 +434,16 @@ export const apiClient = {
     return this.getAuditLogs(params);
   },
 
+  async getAuditEventBlockchain(eventId: string): Promise<AuditEventBlockchainRead> {
+    return request<AuditEventBlockchainRead>(`/api/v1/audit/${eventId}/blockchain`);
+  },
+
+  async verifyAuditEventIntegrity(eventId: string): Promise<AuditEventIntegrityVerifyResponse> {
+    return request<AuditEventIntegrityVerifyResponse>(`/api/v1/audit/${eventId}/verify`, {
+      method: 'POST',
+    });
+  },
+
   // System Health
   async getProviders(): Promise<ProviderHealthRead[]> {
     return request<ProviderHealthRead[]>('/api/v1/providers');
@@ -807,6 +819,14 @@ export function normalizeAuditEvent(raw: RawAuditEvent | Record<string, unknown>
     requirement_id: reqId,
     clause_reference: clauseRef,
     payload_json: payload,
+    event_hash: (rawRecord.event_hash as string) || null,
+    blockchain_status: (rawRecord.blockchain_status as string) || 'NOT_ANCHORED',
+    blockchain_network: (rawRecord.blockchain_network as string) || null,
+    blockchain_tx_hash: (rawRecord.blockchain_tx_hash as string) || null,
+    blockchain_block_number: typeof rawRecord.blockchain_block_number === 'number' ? rawRecord.blockchain_block_number : null,
+    anchored_at: (rawRecord.anchored_at as string) || null,
+    blockchain_error: (rawRecord.blockchain_error as string) || null,
+    audit_hash_version: (rawRecord.audit_hash_version as string) || 'v1',
   };
 }
 

@@ -16,8 +16,15 @@ import {
   Layers,
   Activity,
   Hash,
+  Link2,
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
+  ShieldAlert,
+  Clock,
 } from 'lucide-react';
-import type { AuditEventRead } from '@/services/types';
+import type { AuditEventRead, AuditEventIntegrityVerifyResponse } from '@/services/types';
+import { api } from '@/services/api';
 import { formatDisplayValue, formatExpectedCondition, isStructuredValue } from '@/lib/formatters';
 import { StructuredValueView } from './StructuredValueView';
 import {
@@ -83,6 +90,45 @@ export const AuditEventDetailDrawer: React.FC<AuditEventDetailDrawerProps> = ({
   event,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [copiedHash, setCopiedHash] = useState(false);
+  const [copiedTx, setCopiedTx] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<AuditEventIntegrityVerifyResponse | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  // Reset verification when viewed event changes
+  useEffect(() => {
+    setVerifyResult(null);
+    setVerifyError(null);
+  }, [event?.id]);
+
+  const handleVerify = async () => {
+    if (!event?.id) return;
+    setVerifying(true);
+    setVerifyError(null);
+    try {
+      const res = await api.verifyAuditEventIntegrity(event.id);
+      setVerifyResult(res);
+    } catch (err: unknown) {
+      setVerifyError(err instanceof Error ? err.message : 'Verification request failed');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const copyEventHash = () => {
+    if (!event?.event_hash) return;
+    navigator.clipboard.writeText(event.event_hash);
+    setCopiedHash(true);
+    setTimeout(() => setCopiedHash(false), 2000);
+  };
+
+  const copyTxHash = () => {
+    if (!event?.blockchain_tx_hash) return;
+    navigator.clipboard.writeText(event.blockchain_tx_hash);
+    setCopiedTx(true);
+    setTimeout(() => setCopiedTx(false), 2000);
+  };
 
   // Close on Escape key
   useEffect(() => {
@@ -249,6 +295,36 @@ export const AuditEventDetailDrawer: React.FC<AuditEventDetailDrawerProps> = ({
               <span className="text-zinc-500 text-[11px] font-mono">Not applicable</span>
             )}
           </div>
+
+          {/* Blockchain Anchor Status */}
+          <div className="flex items-center gap-1">
+            <span className="text-zinc-500 text-[11px]">Blockchain:</span>
+            {event.blockchain_status === 'CONFIRMED' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">
+                <Link2 className="w-2.5 h-2.5 text-emerald-400" />
+                POLYGON AMOY
+              </span>
+            ) : event.blockchain_status === 'SUBMITTED' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800/60">
+                <Loader2 className="w-2.5 h-2.5 animate-spin text-cyan-400" />
+                SUBMITTED
+              </span>
+            ) : event.blockchain_status === 'PENDING' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/80 text-amber-300 border border-amber-800/60">
+                <Clock className="w-2.5 h-2.5 text-amber-400" />
+                PENDING ANCHOR
+              </span>
+            ) : event.blockchain_status === 'FAILED' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-800/60">
+                <AlertTriangle className="w-2.5 h-2.5 text-rose-400" />
+                ANCHOR FAILED
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono text-zinc-400 bg-zinc-800/80 border border-zinc-700">
+                NOT ANCHORED
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Vertically Scrollable Content Body */}
@@ -347,6 +423,236 @@ export const AuditEventDetailDrawer: React.FC<AuditEventDetailDrawerProps> = ({
                   <span className="text-zinc-300 break-all">
                     {String(event.run_id || payload.run_id || payload.compliance_run_id)}
                   </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 2.5 Blockchain Cryptographic Proof & Tamper Verification */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5 text-purple-400" />
+                Blockchain Tamper Verification (Polygon Amoy)
+              </span>
+              <button
+                onClick={handleVerify}
+                disabled={verifying}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:opacity-60 text-white font-mono text-xs font-semibold shadow transition-colors cursor-pointer"
+                title="Recompute canonical event hash and verify against immutable on-chain record"
+              >
+                {verifying ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin text-white" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-3 h-3 text-white" />
+                    <span>Verify Integrity</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl bg-zinc-900/80 border border-purple-900/40 space-y-3 text-xs font-mono shadow-inner">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <span className="text-zinc-500 text-[11px] block">On-Chain Anchor Status</span>
+                  <div className="mt-1">
+                    {event.blockchain_status === 'CONFIRMED' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        CONFIRMED ON-CHAIN
+                      </span>
+                    ) : event.blockchain_status === 'PENDING' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-950 text-amber-300 border border-amber-800">
+                        <Clock className="w-3 h-3 text-amber-400" />
+                        QUEUED FOR ANCHORING
+                      </span>
+                    ) : event.blockchain_status === 'SUBMITTED' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
+                        <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
+                        TRANSACTION BROADCAST
+                      </span>
+                    ) : event.blockchain_status === 'FAILED' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-950 text-rose-300 border border-rose-800">
+                        <AlertTriangle className="w-3 h-3 text-rose-400" />
+                        ANCHORING FAILED
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-zinc-400 bg-zinc-800 border border-zinc-700">
+                        NOT ANCHORED (OFF-CHAIN)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-zinc-500 text-[11px] block">Network &amp; Chain ID</span>
+                  <span className="text-zinc-200 font-medium">
+                    {event.blockchain_network || 'polygon-amoy'} (Chain ID: 80002)
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-zinc-500 text-[11px] block">Block Number</span>
+                  <span className="text-zinc-200 font-medium">
+                    {event.blockchain_block_number ? `#${event.blockchain_block_number}` : '—'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-zinc-500 text-[11px] block">Anchored Timestamp</span>
+                  <span className="text-zinc-200 font-medium">
+                    {event.anchored_at ? formatFullTimestamp(event.anchored_at) : '—'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Canonical Event Hash */}
+              <div className="pt-2 border-t border-zinc-800/80">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-zinc-500 text-[11px]">
+                    Deterministic SHA-256 Digest ({event.audit_hash_version || 'v1'})
+                  </span>
+                  {event.event_hash && (
+                    <button
+                      onClick={copyEventHash}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-mono border border-zinc-700 transition-colors cursor-pointer"
+                    >
+                      {copiedHash ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5 text-zinc-400" />}
+                      <span>{copiedHash ? 'Copied' : 'Copy Hash'}</span>
+                    </button>
+                  )}
+                </div>
+                <div className="p-2 rounded bg-zinc-950 border border-zinc-800/80 text-purple-300 text-[11px] break-all select-all font-mono">
+                  {event.event_hash || 'No hash computed'}
+                </div>
+              </div>
+
+              {/* On-Chain Transaction Hash */}
+              {event.blockchain_tx_hash && (
+                <div className="pt-2 border-t border-zinc-800/80">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-zinc-500 text-[11px]">On-Chain Transaction</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={copyTxHash}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-mono border border-zinc-700 transition-colors cursor-pointer"
+                      >
+                        {copiedTx ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5 text-zinc-400" />}
+                        <span>{copiedTx ? 'Copied' : 'Copy Tx'}</span>
+                      </button>
+                      <a
+                        href={`https://amoy.polygonscan.com/tx/${event.blockchain_tx_hash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-950/80 hover:bg-purple-900 text-purple-300 text-[10px] font-mono border border-purple-800 transition-colors"
+                      >
+                        <span>PolygonScan</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    </div>
+                  </div>
+                  <div className="p-2 rounded bg-zinc-950 border border-zinc-800/80 text-zinc-300 text-[11px] break-all select-all font-mono">
+                    {event.blockchain_tx_hash}
+                  </div>
+                </div>
+              )}
+
+              {/* Error Box if Anchor Failed */}
+              {event.blockchain_error && (
+                <div className="p-2.5 rounded-lg bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs">
+                  <div className="flex items-center gap-1.5 font-bold mb-1">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Anchor Error</span>
+                  </div>
+                  <div className="font-mono text-[11px] break-words">{event.blockchain_error}</div>
+                </div>
+              )}
+
+              {/* Interactive Verification Result Card */}
+              {verifyResult && (
+                <div
+                  className={`mt-3 p-3.5 rounded-xl border space-y-2 ${
+                    verifyResult.integrity === 'VERIFIED'
+                      ? 'bg-emerald-950/70 border-emerald-600/80 text-emerald-200'
+                      : verifyResult.integrity === 'TAMPERED'
+                      ? 'bg-rose-950/90 border-rose-600 text-rose-200 shadow-lg'
+                      : 'bg-zinc-950 border-zinc-700 text-zinc-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      {verifyResult.integrity === 'VERIFIED' ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                          <span className="font-bold text-sm font-mono text-emerald-300">
+                            ✓ INTEGRITY VERIFIED
+                          </span>
+                        </>
+                      ) : verifyResult.integrity === 'TAMPERED' ? (
+                        <>
+                          <ShieldAlert className="w-4 h-4 text-rose-400 flex-shrink-0 animate-bounce" />
+                          <span className="font-bold text-sm font-mono text-rose-300">
+                            ⚠ TAMPERING DETECTED
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                          <span className="font-bold text-sm font-mono text-amber-300">
+                            {verifyResult.integrity}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-400">
+                      {verifyResult.verified_at}
+                    </span>
+                  </div>
+
+                  <p className="text-xs font-sans leading-relaxed">
+                    {verifyResult.details}
+                  </p>
+
+                  <div className="space-y-1 font-mono text-[10px] pt-2 border-t border-zinc-800">
+                    {verifyResult.computed_hash && (
+                      <div>
+                        <span className="text-zinc-400">Current Computed Hash: </span>
+                        <span className="text-zinc-200 break-all select-all font-mono">
+                          {verifyResult.computed_hash}
+                        </span>
+                      </div>
+                    )}
+                    {verifyResult.onchain_hash && (
+                      <div>
+                        <span className="text-zinc-400">Immutable On-Chain Hash: </span>
+                        <span className="text-zinc-200 break-all select-all font-mono">
+                          {verifyResult.onchain_hash}
+                        </span>
+                      </div>
+                    )}
+                    {verifyResult.block_number && (
+                      <div>
+                        <span className="text-zinc-400">Anchored At Block: </span>
+                        <span className="text-zinc-200 font-mono">
+                          #{verifyResult.block_number}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {verifyError && (
+                <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-800 text-rose-300 text-xs">
+                  <div className="font-semibold flex items-center gap-1.5 mb-1">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Verification Request Failed</span>
+                  </div>
+                  <div className="font-mono text-[11px]">{verifyError}</div>
                 </div>
               )}
             </div>

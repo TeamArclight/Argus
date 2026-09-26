@@ -161,6 +161,36 @@ class Settings(BaseSettings):
         return None
 
 
+    # Blockchain Audit Anchoring Configuration
+    BLOCKCHAIN_ENABLED: bool = False
+    BLOCKCHAIN_RPC_URL: str | None = None
+    BLOCKCHAIN_CHAIN_ID: int = 80002
+    BLOCKCHAIN_CONTRACT_ADDRESS: str | None = None
+    BLOCKCHAIN_PRIVATE_KEY: str | None = None
+    BLOCKCHAIN_TIMEOUT_SECONDS: float = 15.0
+    BLOCKCHAIN_EXPLORER_URL: str = "https://amoy.polygonscan.com"
+    BLOCKCHAIN_MAX_RETRIES: int = 5
+    BLOCKCHAIN_ANCHOR_ACTIONS: str | list[str] | None = None
+
+    def get_blockchain_anchor_actions(self) -> set[str]:
+        """Returns the set of audit actions eligible for blockchain anchoring."""
+        if not self.BLOCKCHAIN_ANCHOR_ACTIONS:
+            return {
+                "COMPLIANCE_EVALUATION_COMPLETED",
+                "COMPLIANCE_EVALUATION_FAILED",
+                "CLAUSE_EVALUATED",
+                "STATUTORY_PAN_VERIFICATION_COMPLETED",
+                "STATUTORY_GST_VERIFICATION_COMPLETED",
+                "HUMAN_DECISION_RECORDED",
+                "REQUIREMENT_APPROVED",
+                "REQUIREMENT_REJECTED",
+                "DOCUMENT_UPLOADED",
+                "DEEP_AUDIT_INVESTIGATION_COMPLETED",
+            }
+        if isinstance(self.BLOCKCHAIN_ANCHOR_ACTIONS, str):
+            return {a.strip() for a in self.BLOCKCHAIN_ANCHOR_ACTIONS.split(",") if a.strip()}
+        return set(self.BLOCKCHAIN_ANCHOR_ACTIONS)
+
     def get_cors_origins(self) -> list[str]:
         """Returns list of allowed origins parsed from string or list."""
         origins = []
@@ -189,4 +219,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_settings() -> Settings:
+    return settings
 

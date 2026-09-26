@@ -86,6 +86,42 @@ export interface AuditEventRead {
   requirement_id?: string | null;
   clause_reference?: string | null;
   payload_json?: Record<string, unknown> | null;
+  event_hash?: string | null;
+  blockchain_status?: string | null;
+  blockchain_network?: string | null;
+  blockchain_tx_hash?: string | null;
+  blockchain_block_number?: number | null;
+  anchored_at?: string | null;
+  blockchain_error?: string | null;
+  audit_hash_version?: string | null;
+}
+
+export type BlockchainAnchorStatus = 'NOT_ANCHORED' | 'PENDING' | 'SUBMITTED' | 'CONFIRMED' | 'FAILED';
+
+export interface AuditEventBlockchainRead {
+  event_id: string;
+  event_hash?: string | null;
+  blockchain_status: string;
+  network?: string | null;
+  chain_id?: number | null;
+  transaction_hash?: string | null;
+  block_number?: number | null;
+  anchored_at?: string | null;
+  explorer_url?: string | null;
+  audit_hash_version?: string | null;
+  blockchain_error?: string | null;
+}
+
+export interface AuditEventIntegrityVerifyResponse {
+  event_id: string;
+  integrity: 'VERIFIED' | 'TAMPERED' | 'NOT_ANCHORED' | 'VERIFICATION_ERROR' | 'NOT_FOUND';
+  computed_hash?: string | null;
+  onchain_hash?: string | null;
+  transaction_hash?: string | null;
+  block_number?: number | null;
+  anchored_at?: string | null;
+  verified_at: string;
+  details: string;
 }
 
 export interface RAGExplainRequest {

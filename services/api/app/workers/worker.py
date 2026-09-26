@@ -375,6 +375,10 @@ def run(poll_interval: float = 1.0, max_iterations: int | None = None) -> None:
     """Worker polling loop."""
     logging.basicConfig(level=logging.INFO)
     iterations = 0
+    from app.services.blockchain_anchor_worker import BlockchainAnchorWorker
+    anchor_worker = BlockchainAnchorWorker()
+    last_anchor_sweep = 0.0
+
     while True:
         if max_iterations is not None and iterations >= max_iterations:
             break
@@ -383,6 +387,15 @@ def run(poll_interval: float = 1.0, max_iterations: int | None = None) -> None:
             asyncio.run(execute_job(*claimed))
         else:
             time.sleep(poll_interval)
+
+        now_time = time.time()
+        if now_time - last_anchor_sweep >= 5.0:
+            try:
+                anchor_worker.process_batch(limit=5)
+            except Exception as e:
+                logger.error("Error during blockchain anchoring sweep: %s", e)
+            last_anchor_sweep = now_time
+
         iterations += 1
 
 
