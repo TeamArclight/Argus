@@ -139,7 +139,7 @@ def health() -> dict[str, str]:
     # Deliberately touches no dependency: an orchestrator uses this to decide
     # whether to restart the container, which a database outage must not trigger.
     # Deployment readiness is /health/readiness.
-    return {"status": "ok", "service": "argus-api"}
+    return {"status": "ok", "service": "argus-api", "version": "1.1.0-amoy"}
 #: One representative table per core domain. Their presence is what distinguishes
 #: a usable database from a connected-but-empty one.
 _SCHEMA_PROBE_TABLES = ("tenders", "bidders", "processing_jobs")

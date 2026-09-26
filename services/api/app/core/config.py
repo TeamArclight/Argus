@@ -172,9 +172,33 @@ class Settings(BaseSettings):
     BLOCKCHAIN_MAX_RETRIES: int = 5
     BLOCKCHAIN_ANCHOR_ACTIONS: str | list[str] | None = None
 
-    @field_validator("BLOCKCHAIN_PRIVATE_KEY", "BLOCKCHAIN_CONTRACT_ADDRESS", "BLOCKCHAIN_RPC_URL", mode="before")
+    @field_validator("BLOCKCHAIN_PRIVATE_KEY", mode="before")
     @classmethod
-    def clean_blockchain_strings(cls, v: Any) -> Any:
+    def clean_blockchain_private_key(cls, v: Any) -> str | None:
+        if isinstance(v, str):
+            import re
+            m = re.search(r"([0-9a-fA-F]{64})", v)
+            if m:
+                return "0x" + m.group(1).lower()
+            clean = v.strip().strip("'\"").strip()
+            return clean if clean else None
+        return v
+
+    @field_validator("BLOCKCHAIN_CONTRACT_ADDRESS", mode="before")
+    @classmethod
+    def clean_blockchain_contract_address(cls, v: Any) -> str | None:
+        if isinstance(v, str):
+            import re
+            m = re.search(r"(0x[0-9a-fA-F]{40})", v, re.IGNORECASE)
+            if m:
+                return m.group(1)
+            clean = v.strip().strip("'\"").strip()
+            return clean if clean else None
+        return v
+
+    @field_validator("BLOCKCHAIN_RPC_URL", mode="before")
+    @classmethod
+    def clean_blockchain_rpc_url(cls, v: Any) -> str | None:
         if isinstance(v, str):
             clean = v.strip().strip("'\"").strip()
             return clean if clean else None

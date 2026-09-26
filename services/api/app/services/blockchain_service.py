@@ -106,7 +106,9 @@ class BlockchainAuditService:
         if self._contract is None:
             if not self.cfg.BLOCKCHAIN_CONTRACT_ADDRESS:
                 raise ValueError("BLOCKCHAIN_CONTRACT_ADDRESS is not configured.")
-            clean_addr = self.cfg.BLOCKCHAIN_CONTRACT_ADDRESS.strip().strip("'\"").strip()
+            import re
+            m = re.search(r"(0x[0-9a-fA-F]{40})", self.cfg.BLOCKCHAIN_CONTRACT_ADDRESS, re.IGNORECASE)
+            clean_addr = m.group(1) if m else self.cfg.BLOCKCHAIN_CONTRACT_ADDRESS.strip().strip("'\"").strip()
             checksum_addr = Web3.to_checksum_address(clean_addr)
             self._contract = self.w3.eth.contract(address=checksum_addr, abi=ARGUS_AUDIT_ANCHOR_ABI)
         return self._contract
@@ -194,9 +196,14 @@ class BlockchainAuditService:
         priv_key = self.cfg.BLOCKCHAIN_PRIVATE_KEY
         if not priv_key or not priv_key.strip():
             raise RuntimeError("BLOCKCHAIN_PRIVATE_KEY is missing.")
-        clean_key = priv_key.strip().strip("'\"").strip()
-        if not clean_key.startswith("0x"):
-            clean_key = "0x" + clean_key
+        import re
+        m = re.search(r"([0-9a-fA-F]{64})", priv_key)
+        if m:
+            clean_key = "0x" + m.group(1).lower()
+        else:
+            clean_key = priv_key.strip().strip("'\"").strip()
+            if not clean_key.startswith("0x"):
+                clean_key = "0x" + clean_key
 
         account = self.w3.eth.account.from_key(clean_key)
         sender_address = account.address
